@@ -1,0 +1,6 @@
+# Google Cloud Buildpacks config (used by Choreo's buildpack builds).
+# The module has multiple main packages under cmd/; tell the Go buildpack
+# which one to build instead of the default "." (which has no Go files).
+[[build.env]]
+name = "GOOGLE_BUILDABLE"
+value = "./cmd/server"
