@@ -1,0 +1,69 @@
+# Copy to config.yaml and fill in real values. config.yaml is gitignored.
+server:
+  port: 8081
+
+database:
+  url: "postgres://chathura@localhost:5432/purchasing?sslmode=disable"
+
+oidc:
+  # WSO2 Identity Server. `issuer` must equal the "issuer" claim in issued
+  # tokens (for the default tenant: https://localhost:9443/oauth2/token).
+  # The server appends /.well-known/openid-configuration to fetch discovery, so
+  # leave discovery_url blank unless the IdP hosts discovery under a different
+  # base than the issuer claim (the well-known suffix is stripped if included).
+  issuer: "https://localhost:9443/oauth2/token"
+  discovery_url: ""
+  client_id: "<wso2-client-id>"
+  insecure_skip_verify: true   # dev only — trusts the self-signed WSO2 cert
+
+storage:
+  backend: "local"             # "local" (filesystem) or "gdrive" (Google Drive)
+  files_root: "../files"       # local backend only; relative to the backend working dir
+
+  # Google Drive backend (files under base_folder_id, one subfolder per PR).
+  # See docs/file-storage.md. Set backend: "gdrive" and one of the blocks below.
+  #
+  # gdrive:
+  #   # --- OAuth (recommended) — acts as a real user, fine-grained drive.file scope.
+  #   # Put only the static GCP artifacts here; an admin then connects the account
+  #   # and picks the folder from the app UI (Settings → File storage). Requires
+  #   # security.secret_key below.
+  #   auth: "oauth"
+  #   oauth:
+  #     client_id: "<oauth-web-client-id>"
+  #     client_secret: "<oauth-web-client-secret>"
+  #     api_key: "<google-api-key>"          # Picker developer key
+  #     app_id: ""                           # optional; default = client_id prefix (project number)
+  #     # Optional CLI/headless bootstrap (skip if configuring from the UI):
+  #     #   base_folder_id: "<drive-folder-id>"   # from `go run ./cmd/gdrive-grant`
+  #     #   refresh_token: "<refresh-token>"      # from `go run ./cmd/gdrive-auth`
+  #
+  #   # --- Service account — app acts as itself. Needs a Shared Drive (plain
+  #   # service accounts have no personal quota). No in-app configuration.
+  #   # auth: "service_account"
+  #   # credentials_file: "./gdrive-sa.json"      # JSON key (gitignore it)
+  #   # base_folder_id: "<shared-drive-folder-id>"
+
+# Encrypts secrets at rest (the Drive refresh token saved via the in-app storage
+# settings). Required only when an admin connects Drive from the UI. Generate with:
+#   head -c 32 /dev/urandom | base64
+security:
+  secret_key: ""
+
+bootstrap_admin:
+  email: "chathura@wso2.com"
+
+cors:
+  allowed_origins:
+    - "http://localhost:5173"
+
+# Optional. When enabled is false (the default), approval-request notifications
+# are written to the log instead of emailed, so dev needs no SMTP server.
+email:
+  enabled: false
+  smtp_host: ""
+  smtp_port: 587
+  username: ""
+  password: ""
+  from_address: "purchasing@wso2.com"
+  app_base_url: ""           # frontend origin for links; defaults to first CORS origin

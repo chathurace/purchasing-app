@@ -1,0 +1,7 @@
+config.yaml
+config.choreo.yaml
+logs/
+resources/terraform.tfvars
+resources/.terraform/
+resources/*.tfstate
+resources/*.tfstate.*

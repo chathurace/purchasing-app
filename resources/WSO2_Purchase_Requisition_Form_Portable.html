@@ -1,0 +1,640 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WSO2 — Purchase Requisition</title>
+
+<style>
+:root {
+  --orange: #FF7300;
+  --orange-light: rgba(255,115,0,0.08);
+  --orange-mid: rgba(255,115,0,0.18);
+  --black: #000000;
+  --dark: #1A1A1A;
+  --mid: #5A5A5A;
+  --light: #F7F7F7;
+  --bg: #F0F0F0;
+  --white: #FFFFFF;
+  --border: #E2E2E2;
+  --success-bg: #E8F5E9;
+  --success-fg: #2E7D32;
+  --danger-bg: #FFEBEE;
+  --danger-fg: #C62828;
+  --font: 'Segoe UI', system-ui, Arial, sans-serif;
+  --radius: 8px;
+  --radius-lg: 12px;
+}
+
+
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: var(--font); background: var(--bg); color: var(--dark); min-height: 100vh; padding: 32px 16px 64px; font-size: 15px; }
+.wrap { max-width: 860px; margin: 0 auto; }
+
+/* HEADER */
+.hdr { background: var(--black); padding: 20px 28px; display: flex; align-items: center; justify-content: space-between; border-radius: var(--radius-lg) var(--radius-lg) 0 0; }
+.hdr-badge { background: var(--orange); color: #fff; font-size: 11px; font-weight: 600; padding: 5px 12px; border-radius: var(--radius); letter-spacing: 0.5px; }
+.orange-bar { height: 3px; background: var(--orange); }
+
+/* CARD */
+.card { background: var(--white); border: 1px solid var(--border); border-top: none; border-radius: 0 0 var(--radius-lg) var(--radius-lg); }
+
+/* STEPS */
+.steps { display: flex; border-bottom: 1px solid var(--border); background: var(--light); }
+.step { flex: 1; padding: 14px 8px; display: flex; align-items: center; justify-content: center; gap: 8px; cursor: pointer; font-size: 12px; font-weight: 500; color: var(--mid); border-right: 1px solid var(--border); transition: background .15s, color .15s; position: relative; }
+.step:last-child { border-right: none; }
+.step.active { background: var(--white); color: var(--dark); }
+.step.active::after { content: ''; position: absolute; bottom: 0; left: 0; right: 0; height: 2px; background: var(--orange); }
+.sn { width: 22px; height: 22px; border-radius: 50%; background: var(--border); color: var(--mid); font-size: 11px; font-weight: 600; display: flex; align-items: center; justify-content: center; flex-shrink: 0; transition: background .2s, color .2s; }
+.step.active .sn { background: var(--orange); color: #fff; }
+.step.done .sn { background: var(--success-bg); color: var(--success-fg); }
+.slbl { display: none; }
+@media(min-width:480px){ .slbl { display: block; } }
+
+/* PROGRESS */
+.prog { height: 2px; background: var(--border); }
+.prog-fill { height: 100%; background: var(--orange); transition: width .3s ease; }
+
+/* CONTENT */
+.content { padding: 28px; }
+.panel { display: none; }
+.panel.active { display: block; }
+
+.stitle { font-size: 17px; font-weight: 600; color: var(--dark); padding-bottom: 10px; border-bottom: 2px solid var(--orange); display: inline-block; margin-bottom: 6px; }
+.sdesc { font-size: 13px; color: var(--mid); margin: 6px 0 22px; line-height: 1.6; }
+
+/* FIELDS */
+.fg { display: flex; flex-direction: column; gap: 5px; margin-bottom: 0; }
+.grid { display: grid; gap: 16px; margin-bottom: 16px; }
+.g2 { grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); }
+.g3 { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+.g1 { grid-template-columns: 1fr; }
+
+label.lbl { font-size: 11px; font-weight: 600; color: var(--mid); letter-spacing: 0.4px; text-transform: uppercase; }
+.req { color: var(--orange); margin-left: 1px; }
+.hint { font-size: 11px; color: var(--mid); font-style: italic; margin-top: 2px; }
+
+input[type=text], input[type=email], input[type=date], input[type=number], select, textarea {
+  font-family: var(--font); font-size: 14px; color: var(--dark); background: var(--white);
+  border: 1.5px solid var(--border); border-radius: var(--radius); padding: 9px 12px;
+  width: 100%; outline: none; transition: border-color .15s, box-shadow .15s;
+}
+input:focus, select:focus, textarea:focus { border-color: var(--orange); box-shadow: 0 0 0 3px rgba(255,115,0,0.1); }
+select { appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='7' viewBox='0 0 12 7'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%23999' stroke-width='1.5' fill='none'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 11px center; padding-right: 32px; }
+textarea { resize: vertical; min-height: 80px; line-height: 1.5; }
+
+/* CAT TOGGLE */
+.cat-tog { display: flex; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; margin-bottom: 22px; }
+.cat-opt { flex: 1; padding: 14px 16px; background: var(--light); border: none; cursor: pointer; font-family: var(--font); font-size: 13px; font-weight: 500; color: var(--mid); display: flex; align-items: center; gap: 10px; transition: all .15s; border-right: 1px solid var(--border); }
+.cat-opt:last-child { border-right: none; }
+.cat-opt.sel { background: var(--black); color: #fff; }
+.cat-ico { width: 30px; height: 30px; border-radius: 50%; background: var(--border); display: flex; align-items: center; justify-content: center; flex-shrink: 0; font-size: 15px; transition: background .15s; }
+.cat-opt.sel .cat-ico { background: var(--orange); color: #fff; }
+.cat-sub { font-size: 11px; font-weight: 400; opacity: .65; margin-top: 1px; }
+
+/* YES/NO */
+.yn-grp { display: flex; gap: 8px; }
+.yn { flex: 1; padding: 9px 10px; border: 1.5px solid var(--border); border-radius: var(--radius); background: var(--white); cursor: pointer; font-family: var(--font); font-size: 13px; font-weight: 500; color: var(--mid); display: flex; align-items: center; justify-content: center; gap: 5px; transition: all .12s; }
+.yn:hover { border-color: var(--orange); }
+.yn.y-sel { background: var(--success-bg); border-color: var(--success-fg); color: var(--success-fg); }
+.yn.n-sel { background: var(--danger-bg); border-color: var(--danger-fg); color: var(--danger-fg); }
+
+/* CONDITIONAL */
+.cond { display: none; margin-top: 10px; }
+.cond.show { display: block; }
+
+/* DIVIDER + SUBSECTION */
+.divr { height: 1px; background: var(--border); margin: 20px 0; }
+.fsub { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.6px; color: var(--mid); padding: 9px 14px; background: var(--light); border-left: 3px solid var(--orange); border-radius: 0 var(--radius) var(--radius) 0; margin-bottom: 16px; }
+
+/* INFO BOX */
+.info { background: var(--orange-light); border: 1px solid var(--orange-mid); border-radius: var(--radius); padding: 14px 16px; font-size: 13px; line-height: 1.6; color: var(--dark); display: flex; gap: 10px; align-items: flex-start; margin-bottom: 16px; }
+.info i { font-size: 18px; flex-shrink: 0; margin-top: 1px; color: var(--orange); }
+
+/* SUMMARY */
+.sum-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 18px; }
+.sum-card { background: var(--light); border-radius: var(--radius); padding: 12px 14px; }
+.sum-lbl { font-size: 10.5px; color: var(--mid); text-transform: uppercase; letter-spacing: 0.4px; font-weight: 600; margin-bottom: 4px; }
+.sum-val { font-size: 13px; font-weight: 500; color: var(--dark); word-break: break-word; }
+
+/* DECLARATION */
+.decl { background: var(--light); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; margin-bottom: 18px; font-size: 13px; color: var(--mid); line-height: 1.7; }
+.decl-chk { display: flex; gap: 10px; align-items: flex-start; margin-top: 12px; }
+.decl-chk input { margin-top: 3px; accent-color: var(--orange); flex-shrink: 0; }
+.decl-chk label { font-size: 13px; font-weight: 500; color: var(--dark); cursor: pointer; }
+
+/* BUTTONS */
+.btn-row { display: flex; gap: 10px; justify-content: flex-end; margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--border); }
+.btn { padding: 10px 22px; font-family: var(--font); font-size: 13px; font-weight: 600; border-radius: var(--radius); cursor: pointer; transition: all .15s; border: 1.5px solid var(--border); background: var(--white); color: var(--dark); display: inline-flex; align-items: center; gap: 6px; }
+.btn:hover { background: var(--light); }
+.btn-next { background: var(--orange); border-color: var(--orange); color: #fff; }
+.btn-next:hover { background: #E06600; border-color: #E06600; }
+.btn-submit { background: var(--black); border-color: var(--black); color: #fff; }
+.btn-submit:hover { opacity: .85; }
+
+/* SUCCESS */
+.suc { display: none; text-align: center; padding: 52px 24px; }
+.suc-icon { width: 64px; height: 64px; border-radius: 50%; background: var(--success-bg); display: flex; align-items: center; justify-content: center; margin: 0 auto 18px; }
+.suc-icon i { font-size: 30px; color: var(--success-fg); }
+.suc-title { font-size: 20px; font-weight: 600; color: var(--dark); margin-bottom: 8px; }
+.suc-desc { font-size: 13px; color: var(--mid); max-width: 400px; margin: 0 auto 18px; line-height: 1.7; }
+.suc-ref { display: inline-block; background: var(--light); border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 20px; font-size: 13px; color: var(--mid); margin-bottom: 20px; }
+.suc-ref strong { color: var(--orange); font-size: 15px; letter-spacing: 1px; }
+
+/* FOOTER */
+.ftr { background: var(--light); border-top: 1px solid var(--border); border-radius: 0 0 var(--radius-lg) var(--radius-lg); padding: 12px 28px; display: flex; align-items: center; justify-content: space-between; font-size: 11px; color: var(--mid); flex-wrap: wrap; gap: 6px; }
+.ftr-req { color: var(--orange); font-weight: 700; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="hdr">
+    <div>
+      <svg width="168" height="40" viewBox="0 0 168 40" fill="none" xmlns="http://www.w3.org/2000/svg" aria-label="WSO2">
+        <!-- Thick circle ring -->
+        <circle cx="20" cy="20" r="17.5" stroke="white" stroke-width="4" fill="none"/>
+        <!-- Pulse waveform: flat → sharp peak up → deep V down → flat
+             Matches WSO2Pulse exactly: horizontal line, spike up, drop to bottom, back up, horizontal -->
+        <polyline
+          points="6,20 12,20 14.5,20 17,10 20,28 23,14 25.5,20 34,20"
+          stroke="white" stroke-width="2.8" fill="none"
+          stroke-linecap="round" stroke-linejoin="round"/>
+        <!-- WSO2 wordmark -->
+        <text x="47" y="28" font-family="Arial Black, Arial, sans-serif" font-size="24" font-weight="900" fill="white" letter-spacing="-0.3">WSO2</text>
+      </svg>
+    </div>
+    <div class="hdr-badge">Purchase Requisition · SOP-85000</div>
+  </div>
+  <div class="orange-bar"></div>
+
+  <div class="card">
+
+    <div class="steps">
+      <div class="step active" id="tab-1" onclick="goTo(1)">
+        <div class="sn" id="sn-1">1</div>
+        <div class="slbl">Requester</div>
+      </div>
+      <div class="step" id="tab-2" onclick="goTo(2)">
+        <div class="sn" id="sn-2">2</div>
+        <div class="slbl">Purchase</div>
+      </div>
+      <div class="step" id="tab-3" onclick="goTo(3)">
+        <div class="sn" id="sn-3">3</div>
+        <div class="slbl">Vendor & Budget</div>
+      </div>
+      <div class="step" id="tab-4" onclick="goTo(4)">
+        <div class="sn" id="sn-4">4</div>
+        <div class="slbl">Review & Submit</div>
+      </div>
+    </div>
+
+    <div class="prog"><div class="prog-fill" id="pf" style="width:25%"></div></div>
+
+    <div class="content" id="main-form">
+
+      <!-- ── STEP 1 ── -->
+      <div class="panel active" id="panel-1">
+        <div class="stitle">Requester details</div>
+        <p class="sdesc">Fill in your details and explain why this purchase is needed. This is the <strong>only step you need to complete</strong> — the Procurement Team manages everything from Step 2 onwards.</p>
+
+        <div class="grid g3">
+          <div class="fg"><label class="lbl">Date <span class="req">*</span></label><input type="date" id="f-date"></div>
+          <div class="fg"><label class="lbl">Your full name <span class="req">*</span></label><input type="text" id="f-name" placeholder="First and last name"></div>
+          <div class="fg"><label class="lbl">WSO2 email address <span class="req">*</span></label><input type="email" id="f-email" placeholder="you@wso2.com"></div>
+        </div>
+        <div class="grid g2">
+          <div class="fg">
+            <label class="lbl">Team / Business unit <span class="req">*</span></label>
+            <select id="f-team">
+              <option value="">Select your team</option>
+              <option>Engineering</option><option>Sales</option><option>Revenue Operations</option>
+              <option>Finance</option><option>Marketing</option><option>HR & People</option>
+              <option>Legal</option><option>Customer Success</option><option>IT / DigiOps</option>
+              <option>Security & Compliance</option><option>Facilities</option>
+              <option>Executive / Leadership</option><option>Other</option>
+            </select>
+          </div>
+          <div class="fg">
+            <label class="lbl">WSO2 entity <span class="req">*</span></label>
+            <select id="f-entity">
+              <option value="">Select entity</option>
+              <option>WSO2 Lanka Private Limited</option><option>WSO2 LLC (USA)</option>
+              <option>WSO2 UK Limited</option><option>WSO2 Australia</option>
+              <option>WSO2 India</option><option>Other</option>
+            </select>
+          </div>
+        </div>
+        <div class="grid g1">
+          <div class="fg"><label class="lbl">Business justification <span class="req">*</span></label><textarea id="f-just" placeholder="Why is this purchase needed? What business problem does it solve?"></textarea></div>
+        </div>
+        <div class="btn-row">
+          <button class="btn btn-next" onclick="goTo(2)">Next <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button>
+        </div>
+      </div>
+
+      <!-- ── STEP 2 ── -->
+      <div class="panel" id="panel-2">
+        <div class="stitle">Purchase details</div>
+        <p class="sdesc">Select the type of purchase and complete the relevant section below.</p>
+
+        <div class="cat-tog">
+          <button class="cat-opt sel" id="cat-it" onclick="setCat('IT')">
+            <div class="cat-ico"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle"><rect x="3" y="5" width="18" height="12" rx="1"/><path d="M1 19h22"/></svg></div>
+            <div><div>IT solution</div><div class="cat-sub">Software, SaaS, cloud, hardware</div></div>
+          </button>
+          <button class="cat-opt" id="cat-nit" onclick="setCat('NON-IT')">
+            <div class="cat-ico"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle"><path d="M12 3l9 5v8l-9 5-9-5V8z"/><polyline points="12 3 12 13"/><polyline points="3 8 12 13 21 8"/></svg></div>
+            <div><div>Non-IT solution</div><div class="cat-sub">Facilities, insurance, goods, services</div></div>
+          </button>
+        </div>
+
+        <div id="sec-it">
+          <div class="fsub">Section A — IT solution details</div>
+          <div class="grid g2">
+            <div class="fg">
+              <label class="lbl">IT category <span class="req">*</span></label>
+              <select id="it-cat">
+                <option value="">Select category</option>
+                <option>Software licences & subscriptions (incl. renewals)</option>
+                <option>SaaS platform / cloud service</option>
+                <option>IT support services</option>
+                <option>Hosting services & domain names</option>
+                <option>IT hardware & equipment</option>
+                <option>Free / open-source tool (approval required)</option>
+                <option>Other IT solution</option>
+              </select>
+            </div>
+            <div class="fg"><label class="lbl">Product / solution name <span class="req">*</span></label><input type="text" id="it-prod" placeholder="e.g. Salesforce, GitHub Enterprise, AWS"></div>
+          </div>
+          <div class="grid g1">
+            <div class="fg"><label class="lbl">Description of the solution <span class="req">*</span></label><textarea id="it-desc" placeholder="Describe what it does and how WSO2 will use it..."></textarea></div>
+          </div>
+          <div class="grid g2">
+            <div class="fg"><label class="lbl">Plan / subscription tier <span class="req">*</span></label><input type="text" id="it-plan" placeholder="e.g. Enterprise, Pro, Standard"></div>
+            <div class="fg"><label class="lbl">Expected number of users</label><input type="text" id="it-users" placeholder="e.g. 20 — Sales team"></div>
+          </div>
+          <div class="grid g2">
+            <div class="fg"><label class="lbl">Administrators (names & count) <span class="req">*</span></label><input type="text" id="it-adm" placeholder="e.g. 2 — John S., Maria L."></div>
+            <div class="fg"><label class="lbl">Expected day-to-day usage <span class="req">*</span></label><input type="text" id="it-use" placeholder="How will this be used?"></div>
+          </div>
+          <div class="divr"></div>
+          <div class="fsub">Data & security assessment</div>
+          <div class="grid g2">
+            <div class="fg">
+              <label class="lbl">Stores or processes sensitive / confidential WSO2 data? <span class="req">*</span></label>
+              <div class="yn-grp">
+                <button class="yn" id="yn-s-y" onclick="yn_set('s','yes')"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle"><path d="M5 12l5 5L20 7"/></svg> Yes</button>
+                <button class="yn" id="yn-s-n" onclick="yn_set('s','no')"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle"><path d="M18 6L6 18M6 6l12 12"/></svg> No</button>
+              </div>
+            </div>
+            <div class="fg">
+              <label class="lbl">Captures external PII (customers / prospects)? <span class="req">*</span></label>
+              <div class="yn-grp">
+                <button class="yn" id="yn-p-y" onclick="yn_set('p','yes')"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle"><path d="M5 12l5 5L20 7"/></svg> Yes</button>
+                <button class="yn" id="yn-p-n" onclick="yn_set('p','no')"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle"><path d="M18 6L6 18M6 6l12 12"/></svg> No</button>
+              </div>
+              <div class="cond" id="cond-p"><input type="text" id="pii-det" placeholder="Specify what PII data will be captured" style="margin-top:6px"></div>
+            </div>
+          </div>
+          <div class="grid g2">
+            <div class="fg">
+              <label class="lbl">Captures internal employee PII? <span class="req">*</span></label>
+              <div class="yn-grp">
+                <button class="yn" id="yn-e-y" onclick="yn_set('e','yes')"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle"><path d="M5 12l5 5L20 7"/></svg> Yes</button>
+                <button class="yn" id="yn-e-n" onclick="yn_set('e','no')"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle"><path d="M18 6L6 18M6 6l12 12"/></svg> No</button>
+              </div>
+            </div>
+            <div class="fg">
+              <label class="lbl">Integrates with WSO2 internal systems? <span class="req">*</span></label>
+              <div class="yn-grp">
+                <button class="yn" id="yn-i-y" onclick="yn_set('i','yes')"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle"><path d="M5 12l5 5L20 7"/></svg> Yes</button>
+                <button class="yn" id="yn-i-n" onclick="yn_set('i','no')"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle"><path d="M18 6L6 18M6 6l12 12"/></svg> No</button>
+              </div>
+              <div class="cond" id="cond-i"><textarea id="int-det" placeholder="Which systems? What kind of integration (API, SSO, data sync)? Has the vendor provided documentation?" style="min-height:60px;margin-top:6px"></textarea></div>
+            </div>
+          </div>
+        </div>
+
+        <div id="sec-nit" style="display:none">
+          <div class="fsub">Section B — Non-IT solution details</div>
+          <div class="grid g1">
+            <div class="fg">
+              <label class="lbl">Non-IT category <span class="req">*</span></label>
+              <select id="nit-cat">
+                <option value="">Select category</option>
+                <option>Fixed assets & hardware equipment</option>
+                <option>Insurance (Medical, Life, Public Liability)</option>
+                <option>Seasonal gifts, hampers, employee welcome packs</option>
+                <option>Corporate merchandise & bulk printing</option>
+                <option>Facilities — Soft services (security, janitorial)</option>
+                <option>Facilities — Hard services (engineering, maintenance)</option>
+                <option>Travel & accommodation</option>
+                <option>Event management</option>
+                <option>Other non-IT solution</option>
+              </select>
+            </div>
+          </div>
+          <div class="grid g1">
+            <div class="fg"><label class="lbl">Details of goods / services required <span class="req">*</span></label><textarea id="nit-desc" placeholder="Describe what you need, including quantities, specifications, and any relevant details..."></textarea></div>
+          </div>
+          <div class="grid g1">
+            <div class="fg"><label class="lbl">Additional specifications or document links</label><textarea id="nit-spec" placeholder="Any links, spec sheets, or other context..." style="min-height:60px"></textarea></div>
+          </div>
+        </div>
+
+        <div class="btn-row">
+          <button class="btn" onclick="goTo(1)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle"><path d="M19 12H5M11 6l-6 6 6 6"/></svg> Back</button>
+          <button class="btn btn-next" onclick="goTo(3)">Next <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button>
+        </div>
+      </div>
+
+      <!-- ── STEP 3 ── -->
+      <div class="panel" id="panel-3">
+        <div class="stitle">Vendor & budget</div>
+        <p class="sdesc">Provide the proposed supplier's details and identify the budget owner for this purchase.</p>
+
+        <div class="fsub">Proposed supplier</div>
+        <div class="grid g2">
+          <div class="fg"><label class="lbl">Supplier name <span class="req">*</span></label><input type="text" id="v-name" placeholder="Legal name of the supplier"></div>
+          <div class="fg"><label class="lbl">Supplier website</label><input type="text" id="v-web" placeholder="https://..."></div>
+        </div>
+        <div class="grid g2">
+          <div class="fg"><label class="lbl">Supplier contact person</label><input type="text" id="v-con" placeholder="Account manager or sales representative"></div>
+          <div class="fg"><label class="lbl">Supplier contact email</label><input type="email" id="v-cem" placeholder="contact@supplier.com"></div>
+        </div>
+        <div class="grid g1">
+          <div class="fg">
+            <label class="lbl">Has this supplier worked with WSO2 before? <span class="req">*</span></label>
+            <div class="yn-grp">
+              <button class="yn" id="yn-x-y" onclick="yn_set('x','yes')"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle"><rect x="3" y="3" width="18" height="18" rx="1"/><path d="M9 3v18M3 9h6M3 15h6M15 9h3M15 15h3M15 3v4"/></svg> Yes — registered vendor</button>
+              <button class="yn" id="yn-x-n" onclick="yn_set('x','no')"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle"><circle cx="9" cy="7" r="4"/><path d="M3 21v-2a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v2"/><path d="M19 8v6M16 11h6"/></svg> No — new vendor</button>
+            </div>
+            <div class="hint">New vendors must complete an RFI. The Procurement Team will guide you through this process.</div>
+          </div>
+        </div>
+
+        <div class="divr"></div>
+        <div class="fsub">Commercial details</div>
+        <div class="grid g3">
+          <div class="fg"><label class="lbl">Estimated value <span class="req">*</span></label><input type="number" id="v-val" placeholder="0.00" step="0.01" min="0"></div>
+          <div class="fg">
+            <label class="lbl">Currency</label>
+            <select id="v-cur"><option>USD</option><option>LKR</option><option>GBP</option><option>AUD</option><option>INR</option><option>EUR</option></select>
+          </div>
+          <div class="fg">
+            <label class="lbl">Engagement type</label>
+            <select id="v-per"><option value="">Select</option><option>One-time purchase</option><option>Monthly subscription</option><option>Annual subscription</option><option>Multi-year agreement</option><option>Other</option></select>
+          </div>
+        </div>
+        <div class="grid g1">
+          <div class="fg">
+            <label class="lbl">Is this within the approved budget? <span class="req">*</span></label>
+            <div class="yn-grp">
+              <button class="yn" id="yn-b-y" onclick="yn_set('b','yes')"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle"><path d="M5 12l5 5L20 7"/></svg> Yes — within budget</button>
+              <button class="yn" id="yn-b-n" onclick="yn_set('b','no')"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12" y2="17" stroke-width="3"/></svg> No — special approval needed</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="divr"></div>
+        <div class="fsub">Budget approval</div>
+        <div class="grid g2">
+          <div class="fg"><label class="lbl">Budget approver's name <span class="req">*</span></label><input type="text" id="b-appr" placeholder="Name of the budget owner"></div>
+          <div class="fg"><label class="lbl">Budget approver's email <span class="req">*</span></label><input type="email" id="b-mail" placeholder="approver@wso2.com"></div>
+        </div>
+
+        <div class="divr"></div>
+        <div class="fsub">Budget coding</div>
+        <div class="grid g2">
+          <div class="fg">
+            <label class="lbl">Budget category <span class="req">*</span></label>
+            <select id="b-cat">
+              <option value="">Select category</option>
+              <option>Software & Subscriptions</option>
+              <option>Hardware & Equipment</option>
+              <option>Cloud & Hosting</option>
+              <option>Professional Services</option>
+              <option>Marketing & Events</option>
+              <option>Facilities & Office</option>
+              <option>HR & People</option>
+              <option>Travel & Accommodation</option>
+              <option>Insurance</option>
+              <option>Other</option>
+            </select>
+          </div>
+          <div class="fg">
+            <label class="lbl">Business unit (BU) <span class="req">*</span></label>
+            <select id="b-bu">
+              <option value="">Select BU</option>
+              <option>Engineering</option>
+              <option>Sales</option>
+              <option>Revenue Operations</option>
+              <option>Finance</option>
+              <option>Marketing</option>
+              <option>HR & People</option>
+              <option>Legal</option>
+              <option>Customer Success</option>
+              <option>IT / DigiOps</option>
+              <option>Security & Compliance</option>
+              <option>Facilities</option>
+              <option>Executive / Leadership</option>
+              <option>Shared Services</option>
+            </select>
+          </div>
+        </div>
+        <div class="grid g3">
+          <div class="fg">
+            <label class="lbl">Product <span class="req">*</span></label>
+            <select id="b-prod">
+              <option value="">Select product</option>
+              <option>WSO2 API Manager</option>
+              <option>WSO2 Identity Server</option>
+              <option>WSO2 MI / Integration</option>
+              <option>Choreo</option>
+              <option>Asgardeo</option>
+              <option>Ballerina</option>
+              <option>Cross-product / Platform</option>
+              <option>Not product-specific</option>
+            </select>
+          </div>
+          <div class="fg">
+            <label class="lbl">Region <span class="req">*</span></label>
+            <select id="b-reg">
+              <option value="">Select region</option>
+              <option>APAC — Sri Lanka</option>
+              <option>APAC — India</option>
+              <option>APAC — Australia</option>
+              <option>APAC — Other</option>
+              <option>Americas — USA</option>
+              <option>Americas — Other</option>
+              <option>EMEA — UK</option>
+              <option>EMEA — Europe</option>
+              <option>EMEA — Other</option>
+              <option>Global / Multi-region</option>
+            </select>
+          </div>
+          <div class="fg">
+            <label class="lbl">Engagement code</label>
+            <input type="text" id="b-eng" placeholder="e.g. ENG-2026-0042">
+            <div class="hint">Finance / NetSuite engagement or cost centre code, if known.</div>
+          </div>
+        </div>
+
+        <div class="divr"></div>
+        <div class="grid g1">
+          <div class="fg"><label class="lbl">Notes for the Procurement Team</label><textarea id="b-note" placeholder="Any urgency, context, vendor commitments, or special considerations..." style="min-height:60px"></textarea></div>
+        </div>
+
+        <div class="btn-row">
+          <button class="btn" onclick="goTo(2)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle"><path d="M19 12H5M11 6l-6 6 6 6"/></svg> Back</button>
+          <button class="btn btn-next" onclick="goTo(4)">Review <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button>
+        </div>
+      </div>
+
+      <!-- ── STEP 4 ── -->
+      <div class="panel" id="panel-4">
+        <div class="stitle">Review & submit</div>
+        <p class="sdesc">Please review your details below before sending to the Procurement Team.</p>
+
+        <div class="sum-grid" id="sum-grid"></div>
+
+        <div class="info">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;flex-shrink:0"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="8" stroke-width="3"/><line x1="12" y1="12" x2="12" y2="16"/></svg>
+          <div><strong>What happens next?</strong> The Procurement Team will pick up your request within 1 working day. They will collect quotes, confirm the budget with your approver, and keep you updated at every step. You have done your part — they handle everything from here.</div>
+        </div>
+
+        <div class="decl">
+          By submitting this form, I confirm that the information provided is accurate and complete to the best of my knowledge. I understand that no commitment may be made to a vendor until the Procurement Team issues a formal Purchase Order (PO).
+          <div class="decl-chk">
+            <input type="checkbox" id="d-chk">
+            <label for="d-chk">I confirm the above and authorise the Procurement Team to proceed with evaluating this request.</label>
+          </div>
+        </div>
+
+        <div class="btn-row">
+          <button class="btn" onclick="goTo(3)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle"><path d="M19 12H5M11 6l-6 6 6 6"/></svg> Back</button>
+          <button class="btn btn-submit" onclick="submitPR()">Submit requisition <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle"><path d="M10 14L21 3M21 3L14 21l-4-7-7-4 18-7z"/></svg></button>
+        </div>
+      </div>
+
+    </div><!-- end main-form -->
+
+    <!-- SUCCESS -->
+    <div class="suc" id="suc-screen">
+      <div class="suc-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle"><path d="M5 12l5 5L20 7"/></svg></div>
+      <div class="suc-title">Requisition submitted successfully</div>
+      <p class="suc-desc">Your request has been sent to the Procurement Team. You will receive a confirmation and be kept updated at every step of the process.</p>
+      <div class="suc-ref">Your reference number: <strong id="pr-ref">—</strong></div>
+      <div class="info" style="max-width:440px;margin:0 auto 20px;text-align:left">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;flex-shrink:0"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12" y2="16" stroke-width="3"/></svg>
+        <div>Do not contact the vendor or make any commitments until the Procurement Team issues a Purchase Order. Questions? Email <a href="mailto:supplier-comms-group@wso2.com" style="color:var(--orange)">supplier-comms-group@wso2.com</a></div>
+      </div>
+      <button class="btn" onclick="resetForm()">Submit another request</button>
+    </div>
+
+  </div><!-- end card -->
+
+  <div class="ftr">
+    <div><span class="ftr-req">*</span> Required fields</div>
+    <div>WSO2 Global Procurement Office &nbsp;·&nbsp; SOP-85000 &nbsp;·&nbsp; Internal use only</div>
+  </div>
+
+</div><!-- end wrap -->
+
+<script>
+let curStep = 1;
+let selCat = 'IT';
+const ynState = {};
+const STEPS = 4;
+
+document.getElementById('f-date').valueAsDate = new Date();
+
+function goTo(n) {
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.step').forEach(t => { t.classList.remove('active'); });
+  for (let i = 1; i < n; i++) {
+    const el = document.getElementById('sn-' + i);
+    if (el) el.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle"><path d="M5 12l5 5L20 7"/></svg>';
+    const tab = document.getElementById('tab-' + i);
+    if (tab) tab.classList.add('done');
+  }
+  document.getElementById('sn-' + n).textContent = n;
+  document.getElementById('panel-' + n).classList.add('active');
+  const tab = document.getElementById('tab-' + n);
+  tab.classList.add('active'); tab.classList.remove('done');
+  document.getElementById('pf').style.width = (n / STEPS * 100) + '%';
+  curStep = n;
+  if (n === 4) buildSummary();
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+function setCat(c) {
+  selCat = c;
+  document.getElementById('cat-it').classList.toggle('sel', c === 'IT');
+  document.getElementById('cat-nit').classList.toggle('sel', c === 'NON-IT');
+  document.getElementById('sec-it').style.display = c === 'IT' ? 'block' : 'none';
+  document.getElementById('sec-nit').style.display = c === 'NON-IT' ? 'block' : 'none';
+}
+
+function yn_set(id, val) {
+  ynState[id] = val;
+  const y = document.getElementById('yn-' + id + '-y');
+  const n = document.getElementById('yn-' + id + '-n');
+  y.className = 'yn' + (val === 'yes' ? ' y-sel' : '');
+  n.className = 'yn' + (val === 'no' ? ' n-sel' : '');
+  const cond = document.getElementById('cond-' + id);
+  if (cond) cond.classList.toggle('show', val === 'yes');
+}
+
+function g(id) { const el = document.getElementById(id); return el && el.value ? el.value : '—'; }
+
+function buildSummary() {
+  const items = [
+    ['Requester', g('f-name')], ['Date', g('f-date')],
+    ['Team', g('f-team')], ['Entity', g('f-entity')],
+    ['Category', selCat === 'IT' ? 'IT solution' : 'Non-IT solution'],
+    ['Solution', selCat === 'IT' ? g('it-prod') : g('nit-cat')],
+    ['Supplier', g('v-name')],
+    ['Estimated value', g('v-cur') + ' ' + g('v-val')],
+    ['Budget approver', g('b-appr')],
+    ['Vendor status', ynState['x'] === 'yes' ? 'Registered vendor' : ynState['x'] === 'no' ? 'New vendor (RFI required)' : '—'],
+    ['Budget category', g('b-cat')],
+    ['Business unit', g('b-bu')],
+    ['Product', g('b-prod')],
+    ['Region', g('b-reg')],
+    ['Engagement code', g('b-eng')],
+  ];
+  document.getElementById('sum-grid').innerHTML = items.map(([l, v]) =>
+    '<div class="sum-card"><div class="sum-lbl">' + l + '</div><div class="sum-val">' + v + '</div></div>'
+  ).join('');
+}
+
+function submitPR() {
+  if (!document.getElementById('d-chk').checked) {
+    alert('Please confirm the declaration before submitting.');
+    return;
+  }
+  const ref = 'PR-' + new Date().getFullYear() + '-' + String(Math.floor(Math.random() * 9000 + 1000));
+  document.getElementById('pr-ref').textContent = ref;
+  document.getElementById('main-form').style.display = 'none';
+  document.getElementById('suc-screen').style.display = 'block';
+  document.querySelectorAll('.step').forEach(t => { t.classList.remove('active'); t.classList.add('done'); });
+  document.getElementById('pf').style.width = '100%';
+}
+
+function resetForm() {
+  document.getElementById('main-form').style.display = 'block';
+  document.getElementById('suc-screen').style.display = 'none';
+  for (let i = 1; i <= STEPS; i++) {
+    const sn = document.getElementById('sn-' + i);
+    if (sn) sn.textContent = i;
+    const tab = document.getElementById('tab-' + i);
+    if (tab) tab.classList.remove('active', 'done');
+  }
+  goTo(1);
+}
+</script>
+</body>
+</html>

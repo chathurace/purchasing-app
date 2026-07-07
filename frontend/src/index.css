@@ -1,0 +1,87 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    color-scheme: light;
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    @apply text-slate-800 antialiased;
+    /* A whisper of warmth behind the white cards so they read as "lifted". */
+    background-color: #f6f7fb;
+    background-image:
+      radial-gradient(60rem 60rem at 100% -10%, rgb(99 102 241 / 0.05), transparent 55%),
+      radial-gradient(50rem 50rem at -10% 0%, rgb(79 70 229 / 0.04), transparent 50%);
+    background-attachment: fixed;
+    font-feature-settings: "cv11", "ss01";
+  }
+
+  h1,
+  h2,
+  h3 {
+    @apply text-slate-900;
+    letter-spacing: -0.01em;
+  }
+
+  /* Calm, consistent keyboard focus across the app. */
+  :focus-visible {
+    @apply outline-none ring-2 ring-indigo-500/60 ring-offset-2 ring-offset-white;
+  }
+
+  /* Subtle, modern scrollbars. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: rgb(203 213 225) transparent;
+  }
+  *::-webkit-scrollbar {
+    height: 10px;
+    width: 10px;
+  }
+  *::-webkit-scrollbar-thumb {
+    @apply rounded-full bg-slate-300;
+    border: 2px solid transparent;
+    background-clip: content-box;
+  }
+  *::-webkit-scrollbar-thumb:hover {
+    @apply bg-slate-400;
+  }
+}
+
+@layer components {
+  /* The standard surface: a white card that floats over the tinted background. */
+  .app-card {
+    @apply rounded-xl border border-slate-200/80 bg-white shadow-sm;
+  }
+
+  /* Buttons — one base, three intents. */
+  .btn {
+    @apply inline-flex items-center justify-center gap-1.5 rounded-lg px-3.5 py-2 text-sm font-medium transition
+      focus-visible:ring-2 focus-visible:ring-indigo-500/60 disabled:cursor-not-allowed disabled:opacity-50;
+  }
+  .btn-primary {
+    @apply btn bg-indigo-600 text-white shadow-sm hover:bg-indigo-700 active:bg-indigo-800;
+  }
+  .btn-secondary {
+    @apply btn border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 hover:text-slate-900;
+  }
+  .btn-danger {
+    @apply btn bg-red-600 text-white shadow-sm hover:bg-red-700;
+  }
+
+  /* Form fields. */
+  .field {
+    @apply w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm transition
+      placeholder:text-slate-400 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/30;
+  }
+
+  /* Pill badge base; callers add color (bg/text/ring) utilities. */
+  .badge {
+    @apply inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium ring-1 ring-inset;
+  }
+}

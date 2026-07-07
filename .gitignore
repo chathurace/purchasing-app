@@ -1,0 +1,33 @@
+# Secrets — never commit
+private/
+backend/config.yaml
+backend/config.choreo.yaml
+.env
+.env.local
+
+# Terraform (backend/resources)
+**/terraform.tfvars
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl
+crash.log
+crash.*.log
+
+# Dependencies & build output
+node_modules/
+frontend/dist/
+*.tsbuildinfo
+
+# Logs
+logs/
+*.log
+
+# Uploaded files (runtime data)
+files/purchase-requests/
+
+# OS / editor
+.DS_Store
+
+# Local Claude Code settings
+.claude/settings.local.json
