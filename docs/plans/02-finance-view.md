@@ -143,7 +143,7 @@ New structs (`Vendor`, `RFQ`, `Quotation`, `QuotationItem`, `Contract`, `Contrac
 
 ## Frontend
 
-### Types & helpers (`frontend/src/types/api.ts`)
+### Types & helpers (`webapp/src/types/api.ts`)
 Add `Vendor`, `RFQ`/`RFQStatus`, `Quotation`/`QuotationItem`/`QuotationStatus`,
 `Contract`/`ContractStatus`, `ContractApproval`, and `*Input` types. Add `"order_signed"` to
 `PRStatus`. Add `rfqRef`/`quoRef`/`conRef` helpers next to `prRef`.
@@ -158,7 +158,7 @@ Add `Vendor`, `RFQ`/`RFQStatus`, `Quotation`/`QuotationItem`/`QuotationStatus`,
 - `hooks/useFinanceAccess.ts` — `me.roles` includes finance/finance_admin/admin. UX-only gate;
   backend enforces.
 
-### Shared components (`frontend/src/components/`)
+### Shared components (`webapp/src/components/`)
 - `DocumentList.tsx` — extract the existing `DocumentRow` + upload-label block from
   `PurchaseRequestDetailPage` into a reusable component (callbacks for upload/download/delete), reused
   on RFQ/quotation/contract pages.
@@ -186,7 +186,7 @@ Add `Vendor`, `RFQ`/`RFQStatus`, `Quotation`/`QuotationItem`/`QuotationStatus`,
 | 10 | List contracts | `/contracts` | `ContractListPage` |
 | 11 | View/edit contract + approvals + signed PDF | `/contracts/:id` | `ContractDetailPage` |
 
-### Layout (`frontend/src/components/Layout.tsx`)
+### Layout (`webapp/src/components/Layout.tsx`)
 Add finance-gated nav links (`useFinanceAccess`): **RFQs**, **Quotations**, **Contracts**.
 "Requests" stays visible to all. Optionally a `RequireRole` wrapper redirects non-finance users from
 finance-only routes (backend still enforces).

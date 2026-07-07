@@ -17,7 +17,7 @@ CREATE TABLE config_options (
 CREATE INDEX idx_config_options_key ON config_options(list_key, sort_order);
 
 -- Seed with the values that were previously hardcoded in the frontend
--- (frontend/src/types/api.ts). sort_order preserves the original ordering.
+-- (webapp/src/types/api.ts). sort_order preserves the original ordering.
 INSERT INTO config_options (list_key, value, sort_order) VALUES
     -- WSO2 entity
     ('entity', 'WSO2 Lanka Private Limited', 0),

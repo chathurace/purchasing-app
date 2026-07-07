@@ -46,8 +46,8 @@ Gating per endpoint:
 
 Frontend mirrors this with a new hook `useCanManageVendors()` returning
 `roles.includes("admin") || roles.includes("finance_admin")`, modeled on
-[useFinanceAccess.ts](purchasing-app/frontend/src/hooks/useFinanceAccess.ts) /
-[useIsAdmin.ts](purchasing-app/frontend/src/hooks/useIsAdmin.ts).
+[useFinanceAccess.ts](purchasing-app/webapp/src/hooks/useFinanceAccess.ts) /
+[useIsAdmin.ts](purchasing-app/webapp/src/hooks/useIsAdmin.ts).
 
 ## Backend changes
 
@@ -89,16 +89,16 @@ add `r.Get("/vendors/{id}/usage", vendors.Usage)`.
 ## Frontend changes
 
 ### Types & API
-- [types/api.ts](purchasing-app/frontend/src/types/api.ts): add `is_active`,
+- [types/api.ts](purchasing-app/webapp/src/types/api.ts): add `is_active`,
   `tax_id`, `address_line`, `city`, `postal_code`, `country` to `Vendor` and
   `VendorInput`. Add a `VendorUsage` interface. `vendorRef()` already exists.
-- [api/vendors.ts](purchasing-app/frontend/src/api/vendors.ts): add
+- [api/vendors.ts](purchasing-app/webapp/src/api/vendors.ts): add
   `getVendorUsage(id)`. Reuse existing `listVendors`/`getVendor`/`createVendor`/
   `updateVendor`.
-- Hooks: keep [useVendors.ts](purchasing-app/frontend/src/hooks/useVendors.ts);
+- Hooks: keep [useVendors.ts](purchasing-app/webapp/src/hooks/useVendors.ts);
   add `useVendor(id)`, `useVendorUsage(id)`, and `useCanManageVendors()`.
 
-### Pages (new) — pattern from [UserManagementPage.tsx](purchasing-app/frontend/src/pages/UserManagementPage.tsx)
+### Pages (new) — pattern from [UserManagementPage.tsx](purchasing-app/webapp/src/pages/UserManagementPage.tsx)
 - **`pages/VendorListPage.tsx`**: top-of-page role guard (show "You need admin or
   finance_admin role…" message if not, like `UserManagementPage`); name search
   box + active/inactive filter; table showing `VEN-NNNNNN`, name, contact, status
@@ -112,12 +112,12 @@ add `r.Get("/vendors/{id}/usage", vendors.Usage)`.
   modeled on existing `*Fields.tsx` components.
 
 ### Wiring
-- [App.tsx](purchasing-app/frontend/src/App.tsx): add
+- [App.tsx](purchasing-app/webapp/src/App.tsx): add
   `<Route path="/vendors" element={<VendorListPage />} />` and
   `<Route path="/vendors/:id" element={<VendorDetailPage />} />`.
-- [Layout.tsx](purchasing-app/frontend/src/components/Layout.tsx): add a
+- [Layout.tsx](purchasing-app/webapp/src/components/Layout.tsx): add a
   `Vendors` nav link gated by `useCanManageVendors()` (place near Users).
-- [VendorSelect.tsx](purchasing-app/frontend/src/components/VendorSelect.tsx):
+- [VendorSelect.tsx](purchasing-app/webapp/src/components/VendorSelect.tsx):
   filter the dropdown to `is_active` vendors only, but keep the currently selected
   vendor visible even if inactive (so existing quotations still render their
   vendor). Inline create is unchanged.

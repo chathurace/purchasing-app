@@ -4,7 +4,7 @@
 
 Cost centers currently exist only as a **free-text string** on purchase requests
 (`purchase_requests.cost_center`, rendered as a plain text input in
-[RequestFields.tsx](purchasing-app/frontend/src/components/RequestFields.tsx#L37-L44)). There is no
+[RequestFields.tsx](purchasing-app/webapp/src/components/RequestFields.tsx#L37-L44)). There is no
 master list, so values are inconsistent and unmanaged.
 
 We will introduce a **Cost Center master entity** with a dedicated management page (admin /
@@ -116,46 +116,46 @@ Register `/cost-centers/lookup` **before** `/cost-centers/{id}` so it isn't capt
 
 ## Frontend (React + TS)
 
-### 7. Types — `frontend/src/types/api.ts`
+### 7. Types — `webapp/src/types/api.ts`
 Add (mirroring `Vendor`/`VendorInput` and the `vendorRef`/`formatMoney` helpers):
 - `CostCenter`, `CostCenterInput`, `CostCenterSummary`, `CostCenterUsage`.
 - `emptyCostCenter` const and `costCenterRef(id) => "CC-" + pad6`.
 - Add `cost_center_id?: number | null` to `PurchaseRequest` and `PurchaseRequestInput`.
 
-### 8. API client — `frontend/src/api/costCenters.ts` (new)
-Copy [vendors.ts](purchasing-app/frontend/src/api/vendors.ts): `listCostCenters`, `getCostCenter`,
+### 8. API client — `webapp/src/api/costCenters.ts` (new)
+Copy [vendors.ts](purchasing-app/webapp/src/api/vendors.ts): `listCostCenters`, `getCostCenter`,
 `getCostCenterUsage`, `createCostCenter`, `updateCostCenter`, plus
 `lookupCostCenters() => apiFetch<CostCenterSummary[]>("/api/v1/cost-centers/lookup")`.
 
-### 9. Hooks — `frontend/src/hooks/`
-- `useCostCenters` / `useCostCenterLookup` (model [useVendors](purchasing-app/frontend/src/hooks/useUserLookup.ts)).
+### 9. Hooks — `webapp/src/hooks/`
+- `useCostCenters` / `useCostCenterLookup` (model [useVendors](purchasing-app/webapp/src/hooks/useUserLookup.ts)).
 - `useCanManageCostCenters` — `admin || finance_admin`, a copy of
-  [useCanManageVendors.ts](purchasing-app/frontend/src/hooks/useCanManageVendors.ts).
+  [useCanManageVendors.ts](purchasing-app/webapp/src/hooks/useCanManageVendors.ts).
 
-### 10. Form component — `frontend/src/components/CostCenterFields.tsx` (new)
-Model [VendorFields.tsx](purchasing-app/frontend/src/components/VendorFields.tsx). Inputs: code,
+### 10. Form component — `webapp/src/components/CostCenterFields.tsx` (new)
+Model [VendorFields.tsx](purchasing-app/webapp/src/components/VendorFields.tsx). Inputs: code,
 name, description (textarea), budget (`type=number step="any"`) + currency, and `is_active`.
 - **Primary owner**: single `<select>` of active users from `useUserLookup` (blank = none).
-- **Secondary owners**: reuse [ApproverPicker.tsx](purchasing-app/frontend/src/components/ApproverPicker.tsx)
+- **Secondary owners**: reuse [ApproverPicker.tsx](purchasing-app/webapp/src/components/ApproverPicker.tsx)
   directly (multi-select chips). Filter the primary owner out of the secondary candidate list.
 
 ### 11. Pages
-- `frontend/src/pages/CostCenterListPage.tsx` (new) — copy
-  [VendorListPage.tsx](purchasing-app/frontend/src/pages/VendorListPage.tsx): permission guard via
+- `webapp/src/pages/CostCenterListPage.tsx` (new) — copy
+  [VendorListPage.tsx](purchasing-app/webapp/src/pages/VendorListPage.tsx): permission guard via
   `useCanManageCostCenters`, inline add form, search, active/inactive/all filter, table linking to
   detail (`CC-…` ref).
-- `frontend/src/pages/CostCenterDetailPage.tsx` (new) — copy `VendorDetailPage.tsx`: view/edit
+- `webapp/src/pages/CostCenterDetailPage.tsx` (new) — copy `VendorDetailPage.tsx`: view/edit
   toggle, Deactivate/Reactivate button, and a "where used" count from `getCostCenterUsage`.
 
 ### 12. Routing & nav
-- `frontend/src/App.tsx`: import the pages, add `/cost-centers` and `/cost-centers/:id` routes
-  beside the vendor routes ([App.tsx:63-64](purchasing-app/frontend/src/App.tsx#L63-L64)).
-- `frontend/src/components/Layout.tsx`: add a `Cost centers` nav link gated by
+- `webapp/src/App.tsx`: import the pages, add `/cost-centers` and `/cost-centers/:id` routes
+  beside the vendor routes ([App.tsx:63-64](purchasing-app/webapp/src/App.tsx#L63-L64)).
+- `webapp/src/components/Layout.tsx`: add a `Cost centers` nav link gated by
   `useCanManageCostCenters`, beside the Vendors link
-  ([Layout.tsx:56-60](purchasing-app/frontend/src/components/Layout.tsx#L56-L60)).
+  ([Layout.tsx:56-60](purchasing-app/webapp/src/components/Layout.tsx#L56-L60)).
 
 ### 13. PR form — replace free-text with dropdown
-In [RequestFields.tsx:37-44](purchasing-app/frontend/src/components/RequestFields.tsx#L37-L44),
+In [RequestFields.tsx:37-44](purchasing-app/webapp/src/components/RequestFields.tsx#L37-L44),
 replace the text input with a `<select>` populated from `useCostCenterLookup`, bound to
 `value.cost_center_id`. Keep it optional. (Existing PRs with legacy text-only cost centers still
 display their stored name.)

@@ -16,7 +16,7 @@ crash.*.log
 
 # Dependencies & build output
 node_modules/
-frontend/dist/
+webapp/dist/
 *.tsbuildinfo
 
 # Logs

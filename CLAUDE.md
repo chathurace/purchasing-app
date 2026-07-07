@@ -8,7 +8,7 @@ storage. No workflow engine.
 
 - **Backend** (`backend/`): Go 1.25 · `go-chi/chi/v5` · `jackc/pgx/v5` (pgxpool) ·
   `coreos/go-oidc/v3` (SSO) · `rs/zerolog`. Config from **`config.yaml`** (not env vars).
-- **Frontend** (`frontend/`): React 18 + TypeScript · Vite · React Router v6 · TanStack Query v5 ·
+- **Frontend** (`webapp/`): React 18 + TypeScript · Vite · React Router v6 · TanStack Query v5 ·
   `oidc-client-ts` · Tailwind CSS.
 - **DB**: local PostgreSQL, database `purchasing`.
 - **Files**: stored on local disk under `storage.files_root` (default `purchasing-app/files`),
@@ -43,7 +43,7 @@ for f in backend/migrations/*.sql; do psql -h localhost -d purchasing -f "$f"; d
 cd backend && go run ./cmd/server
 
 # frontend
-cd frontend && npm install && npm run dev   # http://localhost:5173
+cd webapp && npm install && npm run dev   # http://localhost:5173
 ```
 
 ## Status

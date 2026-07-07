@@ -4,7 +4,7 @@
 
 Every dropdown in the requisition wizard (WSO2 entity, IT/Non-IT category, currency,
 engagement type, budget category, product, region) is a **hardcoded array** in
-`frontend/src/types/api.ts` (lines 228–284). Changing any option needs a code change + redeploy.
+`webapp/src/types/api.ts` (lines 228–284). Changing any option needs a code change + redeploy.
 The user wants all of these editable at runtime from a new **Settings page**, and the
 **engagement code** — today a free-text input — turned into a configurable dropdown too.
 

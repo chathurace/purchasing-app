@@ -12,7 +12,7 @@ on each detail page:
 
 All three are driven by one backend bundle, `GET /api/v1/purchase-requests/{id}/related`
 (`relatedDocuments` struct), and the in-memory graph logic in
-[caseGraph.ts](purchasing-app/frontend/src/lib/caseGraph.ts).
+[caseGraph.ts](purchasing-app/webapp/src/lib/caseGraph.ts).
 
 **GRNs and invoices are missing from this graph.** They hang off a signed contract (Phase 3),
 are shown only in the contract page's `ContractFulfillment` section, and have no related-documents
@@ -46,7 +46,7 @@ These return summaries (vendor name, dates, totals, status) — enough for cross
 - In `Related()`, after loading contracts, call the two new methods and include them in the response. Stays finance-gated as today.
 
 ## Frontend types
-[frontend/src/types/api.ts](purchasing-app/frontend/src/types/api.ts)
+[webapp/src/types/api.ts](purchasing-app/webapp/src/types/api.ts)
 
 Add to the `RelatedDocuments` interface:
 ```ts
@@ -55,7 +55,7 @@ invoices: Invoice[];
 ```
 
 ## Frontend graph logic
-[frontend/src/lib/caseGraph.ts](purchasing-app/frontend/src/lib/caseGraph.ts)
+[webapp/src/lib/caseGraph.ts](purchasing-app/webapp/src/lib/caseGraph.ts)
 
 - **`CaseKind`**: add `"grn" | "invoice"`. **`CaseStatus`**: add `InvoiceStatus`.
 - **`CaseRecord.status`**: make optional (`status?`) — GRNs have no status.
@@ -74,15 +74,15 @@ invoices: Invoice[];
   - `contract`: **unchanged** (ContractFulfillment already lists them).
 
 ## Frontend rendering
-[frontend/src/components/RecordCard.tsx](purchasing-app/frontend/src/components/RecordCard.tsx) (`RecordRow`)
+[webapp/src/components/RecordCard.tsx](purchasing-app/webapp/src/components/RecordCard.tsx) (`RecordRow`)
 
 Handle the new kinds: render no badge when `record.status` is undefined (GRN); route `invoice`
 status through the existing `EntityStatusBadge` (it already includes `InvoiceStatus`/`paid`).
 
 ## Frontend pages
 
-[frontend/src/pages/GrnDetailPage.tsx](purchasing-app/frontend/src/pages/GrnDetailPage.tsx) and
-[frontend/src/pages/InvoiceDetailPage.tsx](purchasing-app/frontend/src/pages/InvoiceDetailPage.tsx),
+[webapp/src/pages/GrnDetailPage.tsx](purchasing-app/webapp/src/pages/GrnDetailPage.tsx) and
+[webapp/src/pages/InvoiceDetailPage.tsx](purchasing-app/webapp/src/pages/InvoiceDetailPage.tsx),
 following the `ContractDetailPage` pattern:
 
 - Add `<ChainStepper prId={entity.purchase_request_id} current={{kind, id}} />` after the breadcrumb.

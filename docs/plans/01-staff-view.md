@@ -68,7 +68,7 @@ purchasing-app/
 │           ├── respond.go            # writeJSON/writeError/parseID/decodeJSON (copied)
 │           ├── users.go              # Me
 │           └── purchase_requests.go  # list/create/get/update + documents up/down/delete
-└── frontend/
+└── webapp/
     ├── package.json · vite.config.ts · tsconfig.json · tailwind.config.js · index.css
     ├── .env.example                  # VITE_OIDC_* + VITE_API_BASE_URL
     └── src/

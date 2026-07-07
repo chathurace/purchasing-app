@@ -126,7 +126,7 @@ New repo helper `IsApproverForPR` (single-PR predicate) is reused by items 5 and
 
 ---
 
-## Frontend (`frontend/src`)
+## Frontend (`webapp/src`)
 
 ### 7. Types + capability hook
 
@@ -137,7 +137,7 @@ New repo helper `IsApproverForPR` (single-PR predicate) is reused by items 5 and
 ### 8. Nav gating (`components/Layout.tsx`)
 
 Add the **Approvals** `NavLink` (route `/approvals`) after Requests, and update gates
-([Layout.tsx](frontend/src/components/Layout.tsx#L26)):
+([Layout.tsx](webapp/src/components/Layout.tsx#L26)):
 
 - Approvals: `finance || isApprover`
 - Quotations: `finance || isApprover` (was `finance`)

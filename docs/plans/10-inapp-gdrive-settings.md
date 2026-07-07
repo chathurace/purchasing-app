@@ -86,10 +86,10 @@ Admin-only (reuse the `requireAdmin` pattern from
   table (id PK check =1, columns per §2).
 
 ### 7. Frontend files
-- `frontend/src/api/storage.ts` (new): `getStatus`, `getParams`, `connect(code)`,
+- `webapp/src/api/storage.ts` (new): `getStatus`, `getParams`, `connect(code)`,
   `setFolder(id,name)` via `apiFetch`.
-- `frontend/src/hooks/useStorage.ts` (new): TanStack Query wrappers.
-- Extend [SettingsPage.tsx](frontend/src/pages/SettingsPage.tsx) with an
+- `webapp/src/hooks/useStorage.ts` (new): TanStack Query wrappers.
+- Extend [SettingsPage.tsx](webapp/src/pages/SettingsPage.tsx) with an
   **admin-only** "File storage" section (page is already admin/finance_admin; gate
   this section to `admin`). A small `GoogleDrivePicker` component loads the Google
   JS (`api.js` + `gsi/client`) dynamically. UI = Connect → Choose folder → status
@@ -113,10 +113,10 @@ Admin-only (reuse the `requireAdmin` pattern from
 ## Files to create / modify
 - New: `internal/storage/manager.go`, `internal/crypto/secret.go`,
   `internal/repository/storage_settings.go`, `internal/handler/storage.go`,
-  `migrations/033_storage_settings.sql`, `frontend/src/api/storage.ts`,
-  `frontend/src/hooks/useStorage.ts`, a `GoogleDrivePicker` component.
+  `migrations/033_storage_settings.sql`, `webapp/src/api/storage.ts`,
+  `webapp/src/hooks/useStorage.ts`, a `GoogleDrivePicker` component.
 - Modify: `internal/config/config.go`, `cmd/server/main.go`,
-  `internal/handler/router.go` (+ `Deps`), `frontend/src/pages/SettingsPage.tsx`,
+  `internal/handler/router.go` (+ `Deps`), `webapp/src/pages/SettingsPage.tsx`,
   `docs/file-storage.md`; archive plan to `docs/plans/10-inapp-gdrive-settings.md`.
 
 ## Verification
