@@ -12,3 +12,16 @@ interface ImportMetaEnv {
 interface ImportMeta {
   readonly env: ImportMetaEnv;
 }
+
+// Runtime config injected by public/config.js (empty in dev, overridden by a
+// Choreo file mount in production). Takes priority over the build-time VITE_*
+// vars so the same build can be pointed at any environment without a rebuild.
+interface AppConfig {
+  apiBaseUrl?: string;
+  oidcAuthority?: string;
+  oidcClientId?: string;
+}
+
+interface Window {
+  config?: AppConfig;
+}

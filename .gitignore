@@ -18,6 +18,7 @@ crash.*.log
 node_modules/
 webapp/dist/
 *.tsbuildinfo
+.vite/
 
 # Logs
 logs/

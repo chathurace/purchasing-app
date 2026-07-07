@@ -1,10 +1,26 @@
 import { UserManager, WebStorageStateStore } from "oidc-client-ts";
 
+// Config precedence: runtime window.config (Choreo file mount) → build-time
+// VITE_* env (.env for local dev) → sensible defaults. This lets a single
+// production build be pointed at any environment without a rebuild.
+export const oidcAuthority =
+  window.config?.oidcAuthority ?? import.meta.env.VITE_OIDC_AUTHORITY;
+const oidcClientId =
+  window.config?.oidcClientId ?? import.meta.env.VITE_OIDC_CLIENT_ID;
+
+// Redirect URIs default to the current origin so they follow the deployed host
+// automatically. VITE_OIDC_* still overrides for local dev (e.g. a non-default
+// port); in Choreo those vars are absent so the origin-derived values are used.
+const redirectUri =
+  import.meta.env.VITE_OIDC_REDIRECT_URI ?? `${window.location.origin}/callback`;
+export const postLogoutRedirectUri =
+  import.meta.env.VITE_OIDC_POST_LOGOUT_REDIRECT_URI ?? `${window.location.origin}/login`;
+
 export const userManager = new UserManager({
-  authority: import.meta.env.VITE_OIDC_AUTHORITY,
-  client_id: import.meta.env.VITE_OIDC_CLIENT_ID,
-  redirect_uri: import.meta.env.VITE_OIDC_REDIRECT_URI,
-  post_logout_redirect_uri: import.meta.env.VITE_OIDC_POST_LOGOUT_REDIRECT_URI,
+  authority: oidcAuthority,
+  client_id: oidcClientId,
+  redirect_uri: redirectUri,
+  post_logout_redirect_uri: postLogoutRedirectUri,
   scope: import.meta.env.VITE_OIDC_SCOPE || "openid profile email",
   response_type: "code",
   automaticSilentRenew: true,

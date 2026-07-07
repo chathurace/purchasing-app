@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useState, ReactNode } from "react";
 import type { User } from "oidc-client-ts";
-import { userManager } from "./userManager";
+import { userManager, oidcAuthority, postLogoutRedirectUri } from "./userManager";
 
 interface AuthState {
   user: User | null;
@@ -51,7 +51,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const detail = err instanceof Error ? err.message : String(err);
       setLoginError(
         `Could not start sign-in: ${detail}. If the identity provider uses a self-signed ` +
-          `certificate, open ${import.meta.env.VITE_OIDC_AUTHORITY} once and accept the warning, then retry.`,
+          `certificate, open ${oidcAuthority} once and accept the warning, then retry.`,
       );
     });
   };
@@ -60,7 +60,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // Local logout only — clears stored tokens and returns to /login without
     // round-tripping the IdP's end-session endpoint.
     void userManager.removeUser().then(() => {
-      window.location.href = import.meta.env.VITE_OIDC_POST_LOGOUT_REDIRECT_URI || "/login";
+      window.location.href = postLogoutRedirectUri;
     });
   };
 
