@@ -1,3 +1,10 @@
+// Asgardeo's JWKS ships an x5c cert with a negative X.509 serial number, which
+// Go 1.23+ rejects by default — go-jose fails to decode the key set and every
+// OIDC token verification fails with "x509: negative serial number". The RSA
+// key itself (n/e) is fine; only the attached cert is non-compliant. Restore
+// the pre-1.23 behavior of tolerating it. See docs/oidc-asgardeo.md.
+//
+//go:debug x509negativeserial=1
 package main
 
 import (
