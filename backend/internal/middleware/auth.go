@@ -3,6 +3,8 @@ package middleware
 import (
 	"context"
 	"crypto/tls"
+	"encoding/base64"
+	"encoding/json"
 	"net/http"
 	"strings"
 
@@ -11,6 +13,26 @@ import (
 	"github.com/cs/purchasing-app/internal/repository"
 	"github.com/rs/zerolog"
 )
+
+// unverifiedTokenClaims decodes a JWT's payload WITHOUT verifying its signature.
+// Diagnostics only — never trust these values. Used to log what the incoming
+// token actually carries (iss/aud/exp) when verification fails, so a config
+// mismatch is obvious from the logs.
+func unverifiedTokenClaims(raw string) map[string]any {
+	parts := strings.Split(raw, ".")
+	if len(parts) != 3 {
+		return nil
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return nil
+	}
+	var m map[string]any
+	if json.Unmarshal(payload, &m) != nil {
+		return nil
+	}
+	return m
+}
 
 type contextKey string
 
@@ -62,6 +84,14 @@ func NewAuth(ctx context.Context, cfg AuthConfig, repo *repository.Repository, l
 		return nil, err
 	}
 	verifier := provider.Verifier(&oidc.Config{ClientID: cfg.ClientID})
+	// Log the EFFECTIVE OIDC config the running server loaded, so "is the deploy
+	// actually using my config.yaml?" is answerable from the boot logs alone.
+	log.Info().
+		Str("issuer", cfg.Issuer).
+		Str("discovery_url", discoveryURL).
+		Str("client_id", cfg.ClientID).
+		Bool("insecure_skip_verify", cfg.InsecureSkipVerify).
+		Msg("OIDC initialized")
 	if cfg.BootstrapAdminEmail != "" {
 		log.Info().Str("email", cfg.BootstrapAdminEmail).Msg("bootstrap admin configured")
 	}
@@ -83,7 +113,16 @@ func (a *AuthMiddleware) Authenticate(next http.Handler) http.Handler {
 
 		idToken, err := a.verifier.Verify(r.Context(), rawToken)
 		if err != nil {
-			a.log.Warn().Err(err).Msg("token verification failed")
+			// Surface the reason AND what the (unverified) token actually claims,
+			// so an iss/aud/exp mismatch vs the server's config is obvious. The
+			// decoded claims are untrusted — logging only.
+			ev := a.log.Warn().Str("verify_error", err.Error())
+			if c := unverifiedTokenClaims(rawToken); c != nil {
+				ev = ev.Interface("token_iss", c["iss"]).
+					Interface("token_aud", c["aud"]).
+					Interface("token_exp", c["exp"])
+			}
+			ev.Msg("token verification failed")
 			http.Error(w, "invalid token", http.StatusUnauthorized)
 			return
 		}

@@ -148,10 +148,17 @@ func (r *Repository) ProvisionUserOnLogin(ctx context.Context, sub, email, name 
 				return nil, err
 			}
 		}
-		// (3) Brand-new user.
+		// (3) Brand-new user. Upsert on sub so concurrent first-login requests
+		// (the frontend fires several API calls in parallel, none of which find
+		// the user by sub yet) don't collide on the users_sub_key unique
+		// constraint — the losers take the DO UPDATE path instead of erroring.
 		if !claimed {
 			if err = tx.QueryRow(ctx, `
 				INSERT INTO users (sub, email, name) VALUES ($1, $2, $3)
+				ON CONFLICT (sub) DO UPDATE
+					SET email = COALESCE($2, users.email),
+					    name = COALESCE($3, users.name),
+					    updated_at = NOW()
 				RETURNING id`, sub, emailArg, nameArg).Scan(&id); err != nil {
 				return nil, err
 			}
