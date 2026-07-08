@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -113,16 +114,14 @@ func (a *AuthMiddleware) Authenticate(next http.Handler) http.Handler {
 
 		idToken, err := a.verifier.Verify(r.Context(), rawToken)
 		if err != nil {
-			// Surface the reason AND what the (unverified) token actually claims,
-			// so an iss/aud/exp mismatch vs the server's config is obvious. The
-			// decoded claims are untrusted — logging only.
-			ev := a.log.Warn().Str("verify_error", err.Error())
-			if c := unverifiedTokenClaims(rawToken); c != nil {
-				ev = ev.Interface("token_iss", c["iss"]).
-					Interface("token_aud", c["aud"]).
-					Interface("token_exp", c["exp"])
-			}
-			ev.Msg("token verification failed")
+			// Put the reason AND the (unverified) token's iss/aud/exp directly in
+			// the message string — Choreo's log viewer drops structured fields, so
+			// the message is the only reliably-visible channel. Claims are
+			// untrusted; logging only.
+			c := unverifiedTokenClaims(rawToken)
+			a.log.Warn().Msg(fmt.Sprintf(
+				"token verification failed: %v | token iss=%v aud=%v exp=%v",
+				err, c["iss"], c["aud"], c["exp"]))
 			http.Error(w, "invalid token", http.StatusUnauthorized)
 			return
 		}
