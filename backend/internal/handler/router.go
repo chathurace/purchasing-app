@@ -31,8 +31,9 @@ type Deps struct {
 
 func NewRouter(d Deps) http.Handler {
 	r := chi.NewRouter()
-	r.Use(chimiddleware.Recoverer)
-	r.Use(chimiddleware.RequestID)
+	r.Use(chimiddleware.RequestID)          // stamp a request_id first...
+	r.Use(middleware.RequestLogger(d.Log))  // ...so the access log and every request-scoped line carry it
+	r.Use(chimiddleware.Recoverer)          // inside RequestLogger: a recovered panic still gets a 500 access line
 	r.Use(middleware.CORS(d.AllowedOrigins))
 
 	users := &UsersHandler{Repo: d.Repo, Log: d.Log}

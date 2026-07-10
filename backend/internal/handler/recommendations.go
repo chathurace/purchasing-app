@@ -57,6 +57,7 @@ func (h *PurchaseRequestsHandler) loadViewablePR(w http.ResponseWriter, r *http.
 func (h *PurchaseRequestsHandler) vendorHasQuotation(r *http.Request, prID, vendorID int64) (bool, error) {
 	quotes, err := h.Repo.ListQuotations(r.Context(), &prID)
 	if err != nil {
+		reqLog(r).Error().Err(err).Int64("pr_id", prID).Msg("validate vendor: list quotations")
 		return false, err
 	}
 	for _, q := range quotes {
@@ -106,7 +107,7 @@ func (h *PurchaseRequestsHandler) CreateRecommendation(w http.ResponseWriter, r 
 	}
 	user := middleware.UserFromCtx(r.Context())
 	if _, err := h.Repo.CreateRecommendation(r.Context(), pr.ID, in.VendorID, strings.TrimSpace(in.Description), types, user.ID); err != nil {
-		h.Log.Error().Err(err).Msg("create recommendation")
+		reqLog(r).Error().Err(err).Msg("create recommendation")
 		writeError(w, http.StatusInternalServerError, "failed to create recommendation")
 		return
 	}
@@ -153,7 +154,7 @@ func (h *PurchaseRequestsHandler) UpdateRecommendation(w http.ResponseWriter, r 
 	}
 	paths, err := h.Repo.UpdateRecommendation(r.Context(), pr.ID, in.VendorID, strings.TrimSpace(in.Description), types)
 	if err != nil {
-		h.Log.Error().Err(err).Msg("update recommendation")
+		reqLog(r).Error().Err(err).Msg("update recommendation")
 		writeError(w, http.StatusInternalServerError, "failed to update recommendation")
 		return
 	}
@@ -179,7 +180,7 @@ func (h *PurchaseRequestsHandler) DeleteRecommendation(w http.ResponseWriter, r 
 	}
 	paths, err := h.Repo.DeleteRecommendation(r.Context(), pr.ID)
 	if err != nil {
-		h.Log.Error().Err(err).Msg("delete recommendation")
+		reqLog(r).Error().Err(err).Msg("delete recommendation")
 		writeError(w, http.StatusInternalServerError, "failed to delete recommendation")
 		return
 	}
@@ -224,7 +225,7 @@ func (h *PurchaseRequestsHandler) CreateRecommendationContract(w http.ResponseWr
 			writeError(w, http.StatusConflict, "this recommendation already has a contract")
 			return
 		}
-		h.Log.Error().Err(err).Msg("create recommendation contract")
+		reqLog(r).Error().Err(err).Msg("create recommendation contract")
 		writeError(w, http.StatusInternalServerError, "failed to create contract")
 		return
 	}
@@ -252,7 +253,7 @@ func (h *PurchaseRequestsHandler) DeleteRecommendationContract(w http.ResponseWr
 			writeError(w, http.StatusConflict, "only a draft contract can be removed here; manage it from the contract page")
 			return
 		}
-		h.Log.Error().Err(err).Msg("delete recommendation contract")
+		reqLog(r).Error().Err(err).Msg("delete recommendation contract")
 		writeError(w, http.StatusInternalServerError, "failed to remove contract")
 		return
 	}
@@ -285,7 +286,7 @@ func (h *PurchaseRequestsHandler) SetRecommendationRFI(w http.ResponseWriter, r 
 		return
 	}
 	if err := h.Repo.SetRecommendationRFIDescription(r.Context(), pr.ID, strings.TrimSpace(in.Description)); err != nil {
-		h.Log.Error().Err(err).Msg("set recommendation rfi")
+		reqLog(r).Error().Err(err).Msg("set recommendation rfi")
 		writeError(w, http.StatusInternalServerError, "failed to update RFI")
 		return
 	}
@@ -309,7 +310,7 @@ func (h *PurchaseRequestsHandler) DeleteRecommendationRFI(w http.ResponseWriter,
 	}
 	paths, err := h.Repo.ClearRecommendationRFI(r.Context(), pr.ID)
 	if err != nil {
-		h.Log.Error().Err(err).Msg("clear recommendation rfi")
+		reqLog(r).Error().Err(err).Msg("clear recommendation rfi")
 		writeError(w, http.StatusInternalServerError, "failed to remove RFI")
 		return
 	}
@@ -333,7 +334,7 @@ func (h *PurchaseRequestsHandler) UploadRecRFIDocument(w http.ResponseWriter, r 
 		writeError(w, http.StatusNotFound, "no recommendation on this request")
 		return
 	}
-	doc, ok := saveUploadedDoc(w, r, h.Repo, h.Storage, h.Log, pr.ID, model.OwnerRecommendationRFI, pr.Recommendation.ID, pdfOnly)
+	doc, ok := saveUploadedDoc(w, r, h.Repo, h.Storage, pr.ID, model.OwnerRecommendationRFI, pr.Recommendation.ID, pdfOnly)
 	if !ok {
 		return
 	}
@@ -355,7 +356,7 @@ func (h *PurchaseRequestsHandler) DownloadRecRFIDocument(w http.ResponseWriter, 
 		writeError(w, http.StatusBadRequest, "invalid document id")
 		return
 	}
-	downloadOwnedDoc(w, r, h.Repo, h.Storage, h.Log, model.OwnerRecommendationRFI, pr.Recommendation.ID, docID)
+	downloadOwnedDoc(w, r, h.Repo, h.Storage, model.OwnerRecommendationRFI, pr.Recommendation.ID, docID)
 }
 
 // DeleteRecRFIDocument removes an RFI attachment. Finance only.
@@ -419,7 +420,7 @@ func (h *PurchaseRequestsHandler) SetRecApproval(w http.ResponseWriter, r *http.
 		err = h.Repo.ClearRecApproval(r.Context(), pr.ID, approvalType)
 	}
 	if err != nil {
-		h.Log.Error().Err(err).Msg("set recommendation approval")
+		reqLog(r).Error().Err(err).Msg("set recommendation approval")
 		writeError(w, http.StatusInternalServerError, "failed to update approval")
 		return
 	}
@@ -461,7 +462,7 @@ func (h *PurchaseRequestsHandler) AddRecComment(w http.ResponseWriter, r *http.R
 	user := middleware.UserFromCtx(r.Context())
 	comment, err := h.Repo.AddRecComment(r.Context(), pr.ID, in.ApprovalType, user.ID, strings.TrimSpace(in.Comment))
 	if err != nil {
-		h.Log.Error().Err(err).Msg("add recommendation comment")
+		reqLog(r).Error().Err(err).Msg("add recommendation comment")
 		writeError(w, http.StatusInternalServerError, "failed to add comment")
 		return
 	}
@@ -499,7 +500,7 @@ func (h *PurchaseRequestsHandler) UploadRecCommentDocument(w http.ResponseWriter
 		writeError(w, http.StatusForbidden, "only the comment's author can attach documents")
 		return
 	}
-	doc, ok := saveUploadedDoc(w, r, h.Repo, h.Storage, h.Log, pr.ID, model.OwnerRecommendationComment, c.ID, allowedExtensions)
+	doc, ok := saveUploadedDoc(w, r, h.Repo, h.Storage, pr.ID, model.OwnerRecommendationComment, c.ID, allowedExtensions)
 	if !ok {
 		return
 	}
@@ -516,7 +517,7 @@ func (h *PurchaseRequestsHandler) DownloadRecCommentDocument(w http.ResponseWrit
 		writeError(w, http.StatusBadRequest, "invalid document id")
 		return
 	}
-	downloadOwnedDoc(w, r, h.Repo, h.Storage, h.Log, model.OwnerRecommendationComment, c.ID, docID)
+	downloadOwnedDoc(w, r, h.Repo, h.Storage, model.OwnerRecommendationComment, c.ID, docID)
 }
 
 func (h *PurchaseRequestsHandler) DeleteRecCommentDocument(w http.ResponseWriter, r *http.Request) {

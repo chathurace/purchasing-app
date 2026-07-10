@@ -145,7 +145,11 @@ func (h *PurchaseRequestsHandler) canActOnRecType(r *http.Request, pr *repositor
 		if user == nil {
 			return false, nil
 		}
-		return h.Repo.IsBudgetOwnerForPR(ctx, pr.ID, user.ID)
+		ok, err := h.Repo.IsBudgetOwnerForPR(ctx, pr.ID, user.ID)
+		if err != nil {
+			zerolog.Ctx(ctx).Error().Err(err).Int64("pr_id", pr.ID).Msg("check budget owner")
+		}
+		return ok, err
 	}
 	return false, nil
 }
@@ -200,7 +204,7 @@ func (h *PurchaseRequestsHandler) List(w http.ResponseWriter, r *http.Request) {
 	prs, err := h.Repo.ListPurchaseRequests(ctx, user.ID, seesAll,
 		middleware.HasRole(ctx, model.RoleLegal), middleware.HasRole(ctx, model.RoleSecurity), scope)
 	if err != nil {
-		h.Log.Error().Err(err).Msg("list purchase requests")
+		reqLog(r).Error().Err(err).Msg("list purchase requests")
 		writeError(w, http.StatusInternalServerError, "failed to list requests")
 		return
 	}
@@ -231,7 +235,7 @@ func (h *PurchaseRequestsHandler) Create(w http.ResponseWriter, r *http.Request)
 	}
 	pr, err := h.Repo.CreatePurchaseRequest(r.Context(), user.ID, repoIn)
 	if err != nil {
-		h.Log.Error().Err(err).Msg("create purchase request")
+		reqLog(r).Error().Err(err).Msg("create purchase request")
 		writeError(w, http.StatusInternalServerError, "failed to create request")
 		return
 	}
@@ -247,7 +251,7 @@ func (h *PurchaseRequestsHandler) Create(w http.ResponseWriter, r *http.Request)
 func (h *PurchaseRequestsHandler) validateApprovers(ctx context.Context, requesterID int64, ids []int64) ([]int64, string) {
 	active, err := h.Repo.ListActiveUsers(ctx)
 	if err != nil {
-		h.Log.Error().Err(err).Msg("validate approvers: list users")
+		zerolog.Ctx(ctx).Error().Err(err).Msg("validate approvers: list users")
 		return nil, "failed to validate approvers"
 	}
 	activeSet := make(map[int64]bool, len(active))
@@ -320,25 +324,25 @@ func (h *PurchaseRequestsHandler) Related(w http.ResponseWriter, r *http.Request
 	}
 	quotations, err := h.Repo.ListQuotationsForPR(r.Context(), pr.ID)
 	if err != nil {
-		h.Log.Error().Err(err).Msg("related: list quotations")
+		reqLog(r).Error().Err(err).Msg("related: list quotations")
 		writeError(w, http.StatusInternalServerError, "failed to load related documents")
 		return
 	}
 	contracts, err := h.Repo.ListContracts(r.Context(), &pr.ID)
 	if err != nil {
-		h.Log.Error().Err(err).Msg("related: list contracts")
+		reqLog(r).Error().Err(err).Msg("related: list contracts")
 		writeError(w, http.StatusInternalServerError, "failed to load related documents")
 		return
 	}
 	grns, err := h.Repo.ListGRNsForPR(r.Context(), pr.ID)
 	if err != nil {
-		h.Log.Error().Err(err).Msg("related: list grns")
+		reqLog(r).Error().Err(err).Msg("related: list grns")
 		writeError(w, http.StatusInternalServerError, "failed to load related documents")
 		return
 	}
 	invoices, err := h.Repo.ListInvoicesForPR(r.Context(), pr.ID)
 	if err != nil {
-		h.Log.Error().Err(err).Msg("related: list invoices")
+		reqLog(r).Error().Err(err).Msg("related: list invoices")
 		writeError(w, http.StatusInternalServerError, "failed to load related documents")
 		return
 	}
@@ -366,12 +370,13 @@ func (h *PurchaseRequestsHandler) Update(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if err := h.Repo.UpdatePurchaseRequest(r.Context(), pr.ID, in.toRepo()); err != nil {
-		h.Log.Error().Err(err).Msg("update purchase request")
+		reqLog(r).Error().Err(err).Msg("update purchase request")
 		writeError(w, http.StatusInternalServerError, "failed to update request")
 		return
 	}
 	updated, err := h.Repo.GetPurchaseRequest(r.Context(), pr.ID)
 	if err != nil {
+		reqLog(r).Error().Err(err).Int64("pr_id", pr.ID).Msg("reload purchase request after mutation")
 		writeError(w, http.StatusInternalServerError, "failed to reload request")
 		return
 	}
@@ -407,12 +412,13 @@ func (h *PurchaseRequestsHandler) Reject(w http.ResponseWriter, r *http.Request)
 	}
 	user := middleware.UserFromCtx(r.Context())
 	if err := h.Repo.RejectPurchaseRequest(r.Context(), pr.ID, strings.TrimSpace(in.Comment), user.ID); err != nil {
-		h.Log.Error().Err(err).Msg("reject purchase request")
+		reqLog(r).Error().Err(err).Msg("reject purchase request")
 		writeError(w, http.StatusInternalServerError, "failed to reject request")
 		return
 	}
 	updated, err := h.Repo.GetPurchaseRequest(r.Context(), pr.ID)
 	if err != nil {
+		reqLog(r).Error().Err(err).Int64("pr_id", pr.ID).Msg("reload purchase request after mutation")
 		writeError(w, http.StatusInternalServerError, "failed to reload request")
 		return
 	}
@@ -456,7 +462,7 @@ func (h *PurchaseRequestsHandler) AddApprover(w http.ResponseWriter, r *http.Req
 	}
 	approval, err := h.Repo.AddApprover(r.Context(), pr.ID, ids[0])
 	if err != nil {
-		h.Log.Error().Err(err).Msg("add approver")
+		reqLog(r).Error().Err(err).Msg("add approver")
 		writeError(w, http.StatusInternalServerError, "failed to add approver")
 		return
 	}
@@ -488,7 +494,7 @@ func (h *PurchaseRequestsHandler) RemoveApprover(w http.ResponseWriter, r *http.
 			writeError(w, http.StatusConflict, "a request must keep at least one approver")
 			return
 		}
-		h.Log.Error().Err(err).Msg("remove approver")
+		reqLog(r).Error().Err(err).Msg("remove approver")
 		writeError(w, http.StatusInternalServerError, "failed to remove approver")
 		return
 	}
@@ -516,7 +522,7 @@ func (h *PurchaseRequestsHandler) RequestApprovalAgain(w http.ResponseWriter, r 
 			writeError(w, http.StatusConflict, "only a rejected approval can be re-requested")
 			return
 		}
-		h.Log.Error().Err(err).Msg("re-request approval")
+		reqLog(r).Error().Err(err).Msg("re-request approval")
 		writeError(w, http.StatusInternalServerError, "failed to re-request approval")
 		return
 	}
@@ -538,7 +544,7 @@ func (h *PurchaseRequestsHandler) RecordApprovalDecision(w http.ResponseWriter, 
 	user := middleware.UserFromCtx(r.Context())
 	isApprover, err := h.Repo.IsApprover(r.Context(), pr.ID, user.ID)
 	if err != nil {
-		h.Log.Error().Err(err).Msg("check approver")
+		reqLog(r).Error().Err(err).Msg("check approver")
 		writeError(w, http.StatusInternalServerError, "failed to record decision")
 		return
 	}
@@ -578,7 +584,7 @@ func (h *PurchaseRequestsHandler) RecordApprovalDecision(w http.ResponseWriter, 
 			writeError(w, http.StatusForbidden, "only a named approver can act on this request")
 			return
 		}
-		h.Log.Error().Err(err).Msg("record approval decision")
+		reqLog(r).Error().Err(err).Msg("record approval decision")
 		writeError(w, http.StatusInternalServerError, "failed to record decision")
 		return
 	}
@@ -591,6 +597,7 @@ func (h *PurchaseRequestsHandler) RecordApprovalDecision(w http.ResponseWriter, 
 func (h *PurchaseRequestsHandler) reloadPR(w http.ResponseWriter, r *http.Request, id int64) {
 	pr, err := h.Repo.GetPurchaseRequest(r.Context(), id)
 	if err != nil {
+		reqLog(r).Error().Err(err).Int64("pr_id", id).Msg("reload purchase request")
 		writeError(w, http.StatusInternalServerError, "failed to reload request")
 		return
 	}
@@ -628,6 +635,8 @@ func (h *PurchaseRequestsHandler) sendAsync(to, subject, body string) {
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
 		if err := h.Mailer.Send(ctx, to, subject, body); err != nil {
+			// Detached goroutine (outlives the request): use the base logger,
+			// not the request-scoped one, to avoid racing the access-log read.
 			h.Log.Warn().Err(err).Str("to", to).Msg("approval email send failed")
 		}
 	}()
@@ -718,7 +727,7 @@ func (h *PurchaseRequestsHandler) UploadDocument(w http.ResponseWriter, r *http.
 
 	storedPath, size, err := h.Storage.Save(pr.ID, header.Filename, file)
 	if err != nil {
-		h.Log.Error().Err(err).Msg("save document")
+		reqLog(r).Error().Err(err).Msg("save document")
 		writeError(w, http.StatusInternalServerError, "failed to store file")
 		return
 	}
@@ -726,7 +735,7 @@ func (h *PurchaseRequestsHandler) UploadDocument(w http.ResponseWriter, r *http.
 	doc, err := h.Repo.AddDocument(r.Context(), pr.ID, header.Filename, storedPath, contentType, size, user.ID)
 	if err != nil {
 		_ = h.Storage.Delete(storedPath)
-		h.Log.Error().Err(err).Msg("record document")
+		reqLog(r).Error().Err(err).Msg("record document")
 		writeError(w, http.StatusInternalServerError, "failed to record file")
 		return
 	}
@@ -754,7 +763,7 @@ func (h *PurchaseRequestsHandler) DownloadDocument(w http.ResponseWriter, r *htt
 	}
 	f, err := h.Storage.Open(doc.StoredPath)
 	if err != nil {
-		h.Log.Error().Err(err).Str("path", doc.StoredPath).Msg("open document")
+		reqLog(r).Error().Err(err).Str("path", doc.StoredPath).Msg("open document")
 		writeError(w, http.StatusInternalServerError, "failed to open file")
 		return
 	}
@@ -764,7 +773,7 @@ func (h *PurchaseRequestsHandler) DownloadDocument(w http.ResponseWriter, r *htt
 	w.Header().Set("Content-Disposition", "attachment; filename=\""+sanitizeHeaderFilename(doc.Filename)+"\"")
 	w.WriteHeader(http.StatusOK)
 	if _, err := io.Copy(w, f); err != nil {
-		h.Log.Warn().Err(err).Msg("stream document")
+		reqLog(r).Warn().Err(err).Msg("stream document")
 	}
 }
 
@@ -809,7 +818,7 @@ func (h *PurchaseRequestsHandler) load(w http.ResponseWriter, r *http.Request) (
 			writeError(w, http.StatusNotFound, "request not found")
 			return nil, false
 		}
-		h.Log.Error().Err(err).Msg("get purchase request")
+		reqLog(r).Error().Err(err).Msg("get purchase request")
 		writeError(w, http.StatusInternalServerError, "failed to load request")
 		return nil, false
 	}

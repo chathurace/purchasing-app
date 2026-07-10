@@ -70,7 +70,7 @@ func (h *ContractsHandler) CreateFromQuotation(w http.ResponseWriter, r *http.Re
 			writeError(w, http.StatusConflict, "the procurement recommendation must be fully approved before drafting a contract")
 			return
 		}
-		h.Log.Error().Err(err).Msg("create contract")
+		reqLog(r).Error().Err(err).Msg("create contract")
 		writeError(w, http.StatusInternalServerError, "failed to create contract")
 		return
 	}
@@ -93,7 +93,7 @@ func (h *ContractsHandler) List(w http.ResponseWriter, r *http.Request) {
 			middleware.HasRole(ctx, model.RoleLegal), middleware.HasRole(ctx, model.RoleSecurity))
 	}
 	if err != nil {
-		h.Log.Error().Err(err).Msg("list contracts")
+		reqLog(r).Error().Err(err).Msg("list contracts")
 		writeError(w, http.StatusInternalServerError, "failed to list contracts")
 		return
 	}
@@ -123,12 +123,13 @@ func (h *ContractsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.Repo.UpdateContract(r.Context(), c.ID, in.toRepo()); err != nil {
-		h.Log.Error().Err(err).Msg("update contract")
+		reqLog(r).Error().Err(err).Msg("update contract")
 		writeError(w, http.StatusInternalServerError, "failed to update contract")
 		return
 	}
 	updated, err := h.Repo.GetContract(r.Context(), c.ID)
 	if err != nil {
+		reqLog(r).Error().Err(err).Msg("reload contract after mutation")
 		writeError(w, http.StatusInternalServerError, "failed to reload contract")
 		return
 	}
@@ -143,7 +144,7 @@ func (h *ContractsHandler) UploadSignedDocument(w http.ResponseWriter, r *http.R
 	if !ok {
 		return
 	}
-	doc, ok := saveUploadedDoc(w, r, h.Repo, h.Storage, h.Log, c.PurchaseRequestID, model.OwnerContract, c.ID, pdfOnly)
+	doc, ok := saveUploadedDoc(w, r, h.Repo, h.Storage, c.PurchaseRequestID, model.OwnerContract, c.ID, pdfOnly)
 	if !ok {
 		return
 	}
@@ -155,7 +156,7 @@ func (h *ContractsHandler) UploadSignedDocument(w http.ResponseWriter, r *http.R
 			writeError(w, http.StatusConflict, "this contract cannot be signed in its current state")
 			return
 		}
-		h.Log.Error().Err(err).Msg("sign contract")
+		reqLog(r).Error().Err(err).Msg("sign contract")
 		writeError(w, http.StatusInternalServerError, "failed to sign contract")
 		return
 	}
@@ -168,6 +169,7 @@ func (h *ContractsHandler) UploadSignedDocument(w http.ResponseWriter, r *http.R
 	}
 	updated, err := h.Repo.GetContract(r.Context(), c.ID)
 	if err != nil {
+		reqLog(r).Error().Err(err).Msg("reload contract after mutation")
 		writeError(w, http.StatusInternalServerError, "failed to reload contract")
 		return
 	}
@@ -186,7 +188,7 @@ func (h *ContractsHandler) DeleteSignedDocument(w http.ResponseWriter, r *http.R
 			writeError(w, http.StatusConflict, "cannot remove the signed PDF: none set, or the contract already has GRNs/invoices")
 			return
 		}
-		h.Log.Error().Err(err).Msg("clear signed contract")
+		reqLog(r).Error().Err(err).Msg("clear signed contract")
 		writeError(w, http.StatusInternalServerError, "failed to remove signed document")
 		return
 	}
@@ -195,6 +197,7 @@ func (h *ContractsHandler) DeleteSignedDocument(w http.ResponseWriter, r *http.R
 	}
 	updated, err := h.Repo.GetContract(r.Context(), c.ID)
 	if err != nil {
+		reqLog(r).Error().Err(err).Msg("reload contract after mutation")
 		writeError(w, http.StatusInternalServerError, "failed to reload contract")
 		return
 	}
@@ -208,7 +211,7 @@ func (h *ContractsHandler) UploadDocument(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
-	doc, ok := saveUploadedDoc(w, r, h.Repo, h.Storage, h.Log, c.PurchaseRequestID, model.OwnerContract, c.ID, pdfOnly)
+	doc, ok := saveUploadedDoc(w, r, h.Repo, h.Storage, c.PurchaseRequestID, model.OwnerContract, c.ID, pdfOnly)
 	if !ok {
 		return
 	}
@@ -243,6 +246,7 @@ func (h *ContractsHandler) UpdateDocument(w http.ResponseWriter, r *http.Request
 	}
 	updated, err := h.Repo.GetContract(r.Context(), c.ID)
 	if err != nil {
+		reqLog(r).Error().Err(err).Msg("reload contract after mutation")
 		writeError(w, http.StatusInternalServerError, "failed to reload contract")
 		return
 	}
@@ -259,7 +263,7 @@ func (h *ContractsHandler) DownloadDocument(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusBadRequest, "invalid document id")
 		return
 	}
-	downloadOwnedDoc(w, r, h.Repo, h.Storage, h.Log, model.OwnerContract, c.ID, docID)
+	downloadOwnedDoc(w, r, h.Repo, h.Storage, model.OwnerContract, c.ID, docID)
 }
 
 func (h *ContractsHandler) DeleteDocument(w http.ResponseWriter, r *http.Request) {
@@ -303,7 +307,7 @@ func (h *ContractsHandler) loadViewable(w http.ResponseWriter, r *http.Request) 
 		ok, err := h.Repo.IsApproverForPR(ctx, c.PurchaseRequestID, user.ID,
 			middleware.HasRole(ctx, model.RoleLegal), middleware.HasRole(ctx, model.RoleSecurity))
 		if err != nil {
-			h.Log.Error().Err(err).Msg("check contract approver access")
+			reqLog(r).Error().Err(err).Msg("check contract approver access")
 			writeError(w, http.StatusInternalServerError, "failed to load contract")
 			return nil, false
 		}
@@ -327,7 +331,7 @@ func (h *ContractsHandler) fetch(w http.ResponseWriter, r *http.Request) (*repos
 			writeError(w, http.StatusNotFound, "contract not found")
 			return nil, false
 		}
-		h.Log.Error().Err(err).Msg("get contract")
+		reqLog(r).Error().Err(err).Msg("get contract")
 		writeError(w, http.StatusInternalServerError, "failed to load contract")
 		return nil, false
 	}

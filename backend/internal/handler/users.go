@@ -8,6 +8,7 @@ import (
 	"github.com/cs/purchasing-app/internal/middleware"
 	"github.com/cs/purchasing-app/internal/model"
 	"github.com/cs/purchasing-app/internal/repository"
+	"github.com/jackc/pgx/v5"
 	"github.com/rs/zerolog"
 )
 
@@ -31,7 +32,7 @@ func (h *UsersHandler) Me(w http.ResponseWriter, r *http.Request) {
 	isApprover, err := h.Repo.HasApprovableWork(ctx, user.ID,
 		middleware.HasRole(ctx, model.RoleLegal), middleware.HasRole(ctx, model.RoleSecurity))
 	if err != nil {
-		h.Log.Error().Err(err).Msg("resolve is_approver")
+		reqLog(r).Error().Err(err).Msg("resolve is_approver")
 		writeError(w, http.StatusInternalServerError, "failed to load profile")
 		return
 	}
@@ -51,7 +52,7 @@ func (h *UsersHandler) Me(w http.ResponseWriter, r *http.Request) {
 func (h *UsersHandler) Lookup(w http.ResponseWriter, r *http.Request) {
 	users, err := h.Repo.ListActiveUsers(r.Context())
 	if err != nil {
-		h.Log.Error().Err(err).Msg("lookup users")
+		reqLog(r).Error().Err(err).Msg("lookup users")
 		writeError(w, http.StatusInternalServerError, "failed to list users")
 		return
 	}
@@ -74,7 +75,7 @@ func (h *UsersHandler) List(w http.ResponseWriter, r *http.Request) {
 	}
 	users, err := h.Repo.ListUsersWithRoles(r.Context())
 	if err != nil {
-		h.Log.Error().Err(err).Msg("list users")
+		reqLog(r).Error().Err(err).Msg("list users")
 		writeError(w, http.StatusInternalServerError, "failed to list users")
 		return
 	}
@@ -111,7 +112,7 @@ func (h *UsersHandler) Create(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusConflict, "a user with this email already exists")
 			return
 		}
-		h.Log.Error().Err(err).Msg("create invited user")
+		reqLog(r).Error().Err(err).Msg("create invited user")
 		writeError(w, http.StatusInternalServerError, "failed to create user")
 		return
 	}
@@ -142,11 +143,16 @@ func (h *UsersHandler) AddRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err := h.Repo.GetUserByID(r.Context(), userID); err != nil {
-		writeError(w, http.StatusNotFound, "user not found")
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "user not found")
+			return
+		}
+		reqLog(r).Error().Err(err).Int64("target_user_id", userID).Msg("add role: look up user")
+		writeError(w, http.StatusInternalServerError, "failed to add role")
 		return
 	}
 	if err := h.Repo.EnsureUserHasRole(r.Context(), userID, in.Role); err != nil {
-		h.Log.Error().Err(err).Msg("add user role")
+		reqLog(r).Error().Err(err).Msg("add user role")
 		writeError(w, http.StatusInternalServerError, "failed to add role")
 		return
 	}
@@ -176,7 +182,7 @@ func (h *UsersHandler) RemoveRole(w http.ResponseWriter, r *http.Request) {
 	if role == model.RoleAdmin {
 		ok, err := h.Repo.OtherActiveAdminExists(r.Context(), userID)
 		if err != nil {
-			h.Log.Error().Err(err).Msg("check other admins")
+			reqLog(r).Error().Err(err).Msg("check other admins")
 			writeError(w, http.StatusInternalServerError, "failed to remove role")
 			return
 		}
@@ -186,7 +192,7 @@ func (h *UsersHandler) RemoveRole(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if err := h.Repo.RemoveUserRole(r.Context(), userID, role); err != nil {
-		h.Log.Error().Err(err).Msg("remove user role")
+		reqLog(r).Error().Err(err).Msg("remove user role")
 		writeError(w, http.StatusInternalServerError, "failed to remove role")
 		return
 	}
@@ -220,7 +226,7 @@ func (h *UsersHandler) SetActive(w http.ResponseWriter, r *http.Request) {
 		}
 		ok, err := h.Repo.OtherActiveAdminExists(r.Context(), userID)
 		if err != nil {
-			h.Log.Error().Err(err).Msg("check other admins")
+			reqLog(r).Error().Err(err).Msg("check other admins")
 			writeError(w, http.StatusInternalServerError, "failed to update user")
 			return
 		}
@@ -232,7 +238,7 @@ func (h *UsersHandler) SetActive(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if err := h.Repo.SetUserActive(r.Context(), userID, in.Active); err != nil {
-		h.Log.Error().Err(err).Msg("set user active")
+		reqLog(r).Error().Err(err).Msg("set user active")
 		writeError(w, http.StatusInternalServerError, "failed to update user")
 		return
 	}
@@ -243,7 +249,7 @@ func (h *UsersHandler) SetActive(w http.ResponseWriter, r *http.Request) {
 func (h *UsersHandler) writeUser(w http.ResponseWriter, r *http.Request, userID int64) {
 	users, err := h.Repo.ListUsersWithRoles(r.Context())
 	if err != nil {
-		h.Log.Error().Err(err).Msg("reload users")
+		reqLog(r).Error().Err(err).Msg("reload users")
 		writeError(w, http.StatusInternalServerError, "failed to reload user")
 		return
 	}

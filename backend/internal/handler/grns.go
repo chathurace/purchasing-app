@@ -75,7 +75,7 @@ func (h *GRNsHandler) Create(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusConflict, "a GRN can only be recorded against a signed contract")
 			return
 		}
-		h.Log.Error().Err(err).Msg("create grn")
+		reqLog(r).Error().Err(err).Msg("create grn")
 		writeError(w, http.StatusInternalServerError, "failed to create GRN")
 		return
 	}
@@ -95,7 +95,7 @@ func (h *GRNsHandler) ListForContract(w http.ResponseWriter, r *http.Request) {
 	}
 	grns, err := h.Repo.ListGRNs(r.Context(), &contractID)
 	if err != nil {
-		h.Log.Error().Err(err).Msg("list grns for contract")
+		reqLog(r).Error().Err(err).Msg("list grns for contract")
 		writeError(w, http.StatusInternalServerError, "failed to list GRNs")
 		return
 	}
@@ -109,7 +109,7 @@ func (h *GRNsHandler) List(w http.ResponseWriter, r *http.Request) {
 	}
 	grns, err := h.Repo.ListGRNs(r.Context(), nil)
 	if err != nil {
-		h.Log.Error().Err(err).Msg("list grns")
+		reqLog(r).Error().Err(err).Msg("list grns")
 		writeError(w, http.StatusInternalServerError, "failed to list GRNs")
 		return
 	}
@@ -135,12 +135,13 @@ func (h *GRNsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.Repo.UpdateGRN(r.Context(), g.ID, in.toRepo()); err != nil {
-		h.Log.Error().Err(err).Msg("update grn")
+		reqLog(r).Error().Err(err).Msg("update grn")
 		writeError(w, http.StatusInternalServerError, "failed to update GRN")
 		return
 	}
 	updated, err := h.Repo.GetGRN(r.Context(), g.ID)
 	if err != nil {
+		reqLog(r).Error().Err(err).Msg("reload GRN after mutation")
 		writeError(w, http.StatusInternalServerError, "failed to reload GRN")
 		return
 	}
@@ -154,7 +155,7 @@ func (h *GRNsHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 	paths, err := h.Repo.DeleteGRN(r.Context(), g.ID)
 	if err != nil {
-		h.Log.Error().Err(err).Msg("delete grn")
+		reqLog(r).Error().Err(err).Msg("delete grn")
 		writeError(w, http.StatusInternalServerError, "failed to delete GRN")
 		return
 	}
@@ -169,7 +170,7 @@ func (h *GRNsHandler) UploadDocument(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	doc, ok := saveUploadedDoc(w, r, h.Repo, h.Storage, h.Log, g.PurchaseRequestID, model.OwnerGRN, g.ID, allowedExtensions)
+	doc, ok := saveUploadedDoc(w, r, h.Repo, h.Storage, g.PurchaseRequestID, model.OwnerGRN, g.ID, allowedExtensions)
 	if !ok {
 		return
 	}
@@ -186,7 +187,7 @@ func (h *GRNsHandler) DownloadDocument(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid document id")
 		return
 	}
-	downloadOwnedDoc(w, r, h.Repo, h.Storage, h.Log, model.OwnerGRN, g.ID, docID)
+	downloadOwnedDoc(w, r, h.Repo, h.Storage, model.OwnerGRN, g.ID, docID)
 }
 
 func (h *GRNsHandler) DeleteDocument(w http.ResponseWriter, r *http.Request) {
@@ -219,7 +220,7 @@ func (h *GRNsHandler) load(w http.ResponseWriter, r *http.Request) (*repository.
 			writeError(w, http.StatusNotFound, "GRN not found")
 			return nil, false
 		}
-		h.Log.Error().Err(err).Msg("get grn")
+		reqLog(r).Error().Err(err).Msg("get grn")
 		writeError(w, http.StatusInternalServerError, "failed to load GRN")
 		return nil, false
 	}
