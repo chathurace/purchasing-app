@@ -72,7 +72,7 @@ func (h *QuotationsHandler) ListForPR(w http.ResponseWriter, r *http.Request) {
 	}
 	quotes, err := h.Repo.ListQuotations(r.Context(), &prID)
 	if err != nil {
-		h.Log.Error().Err(err).Msg("list quotations for pr")
+		reqLog(r).Error().Err(err).Msg("list quotations for pr")
 		writeError(w, http.StatusInternalServerError, "failed to list quotations")
 		return
 	}
@@ -110,7 +110,7 @@ func (h *QuotationsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	user := middleware.UserFromCtx(r.Context())
 	q, err := h.Repo.CreateQuotation(r.Context(), prID, in.toRepo(), user.ID)
 	if err != nil {
-		h.Log.Error().Err(err).Msg("create quotation")
+		reqLog(r).Error().Err(err).Msg("create quotation")
 		writeError(w, http.StatusInternalServerError, "failed to create quotation")
 		return
 	}
@@ -132,7 +132,7 @@ func (h *QuotationsHandler) List(w http.ResponseWriter, r *http.Request) {
 			middleware.HasRole(ctx, model.RoleLegal), middleware.HasRole(ctx, model.RoleSecurity))
 	}
 	if err != nil {
-		h.Log.Error().Err(err).Msg("list quotations")
+		reqLog(r).Error().Err(err).Msg("list quotations")
 		writeError(w, http.StatusInternalServerError, "failed to list quotations")
 		return
 	}
@@ -162,12 +162,13 @@ func (h *QuotationsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.Repo.UpdateQuotation(r.Context(), q.ID, in.toRepo()); err != nil {
-		h.Log.Error().Err(err).Msg("update quotation")
+		reqLog(r).Error().Err(err).Msg("update quotation")
 		writeError(w, http.StatusInternalServerError, "failed to update quotation")
 		return
 	}
 	updated, err := h.Repo.GetQuotation(r.Context(), q.ID)
 	if err != nil {
+		reqLog(r).Error().Err(err).Msg("reload quotation after mutation")
 		writeError(w, http.StatusInternalServerError, "failed to reload quotation")
 		return
 	}
@@ -185,12 +186,13 @@ func (h *QuotationsHandler) Select(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusConflict, "the procurement recommendation must be fully approved before selecting a quotation")
 			return
 		}
-		h.Log.Error().Err(err).Msg("select quotation")
+		reqLog(r).Error().Err(err).Msg("select quotation")
 		writeError(w, http.StatusInternalServerError, "failed to select quotation")
 		return
 	}
 	updated, err := h.Repo.GetQuotation(r.Context(), q.ID)
 	if err != nil {
+		reqLog(r).Error().Err(err).Msg("reload quotation after mutation")
 		writeError(w, http.StatusInternalServerError, "failed to reload quotation")
 		return
 	}
@@ -208,7 +210,7 @@ func (h *QuotationsHandler) Delete(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusConflict, "cannot delete a quotation that has a contract")
 			return
 		}
-		h.Log.Error().Err(err).Msg("delete quotation")
+		reqLog(r).Error().Err(err).Msg("delete quotation")
 		writeError(w, http.StatusInternalServerError, "failed to delete quotation")
 		return
 	}
@@ -225,7 +227,7 @@ func (h *QuotationsHandler) UploadDocument(w http.ResponseWriter, r *http.Reques
 	if !ok {
 		return
 	}
-	doc, ok := saveUploadedDoc(w, r, h.Repo, h.Storage, h.Log, q.PurchaseRequestID, model.OwnerQuotation, q.ID, allowedExtensions)
+	doc, ok := saveUploadedDoc(w, r, h.Repo, h.Storage, q.PurchaseRequestID, model.OwnerQuotation, q.ID, allowedExtensions)
 	if !ok {
 		return
 	}
@@ -242,7 +244,7 @@ func (h *QuotationsHandler) DownloadDocument(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusBadRequest, "invalid document id")
 		return
 	}
-	downloadOwnedDoc(w, r, h.Repo, h.Storage, h.Log, model.OwnerQuotation, q.ID, docID)
+	downloadOwnedDoc(w, r, h.Repo, h.Storage, model.OwnerQuotation, q.ID, docID)
 }
 
 func (h *QuotationsHandler) DeleteDocument(w http.ResponseWriter, r *http.Request) {
@@ -283,7 +285,7 @@ func (h *QuotationsHandler) loadViewable(w http.ResponseWriter, r *http.Request)
 		ok, err := h.Repo.IsApproverForPR(ctx, q.PurchaseRequestID, user.ID,
 			middleware.HasRole(ctx, model.RoleLegal), middleware.HasRole(ctx, model.RoleSecurity))
 		if err != nil {
-			h.Log.Error().Err(err).Msg("check quotation approver access")
+			reqLog(r).Error().Err(err).Msg("check quotation approver access")
 			writeError(w, http.StatusInternalServerError, "failed to load quotation")
 			return nil, false
 		}
@@ -308,7 +310,7 @@ func (h *QuotationsHandler) fetch(w http.ResponseWriter, r *http.Request) (*repo
 			writeError(w, http.StatusNotFound, "quotation not found")
 			return nil, false
 		}
-		h.Log.Error().Err(err).Msg("get quotation")
+		reqLog(r).Error().Err(err).Msg("get quotation")
 		writeError(w, http.StatusInternalServerError, "failed to load quotation")
 		return nil, false
 	}

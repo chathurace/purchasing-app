@@ -59,7 +59,7 @@ func (h *StorageHandler) Params(w http.ResponseWriter, r *http.Request) {
 	}
 	settings, err := h.Repo.GetStorageSettings(r.Context())
 	if err != nil {
-		h.Log.Error().Err(err).Msg("get storage settings")
+		reqLog(r).Error().Err(err).Msg("get storage settings")
 		writeError(w, http.StatusInternalServerError, "failed to read settings")
 		return
 	}
@@ -101,7 +101,7 @@ func (h *StorageHandler) Connect(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	refreshToken, err := h.Manager.ExchangeCode(ctx, in.Code, "postmessage")
 	if err != nil {
-		h.Log.Warn().Err(err).Msg("storage connect: exchange code")
+		reqLog(r).Warn().Err(err).Msg("storage connect: exchange code")
 		writeError(w, http.StatusBadRequest, "failed to connect account: "+err.Error())
 		return
 	}
@@ -109,13 +109,14 @@ func (h *StorageHandler) Connect(w http.ResponseWriter, r *http.Request) {
 
 	enc, err := h.Secrets.Encrypt(refreshToken)
 	if err != nil {
-		h.Log.Error().Err(err).Msg("encrypt refresh token")
+		reqLog(r).Error().Err(err).Msg("encrypt refresh token")
 		writeError(w, http.StatusInternalServerError, "failed to store credentials")
 		return
 	}
 
 	settings, err := h.Repo.GetStorageSettings(ctx)
 	if err != nil {
+		reqLog(r).Error().Err(err).Msg("read storage settings")
 		writeError(w, http.StatusInternalServerError, "failed to read settings")
 		return
 	}
@@ -124,7 +125,7 @@ func (h *StorageHandler) Connect(w http.ResponseWriter, r *http.Request) {
 	settings.GoogleAccountEmail = email
 	user := middleware.UserFromCtx(ctx)
 	if err := h.Repo.UpsertStorageSettings(ctx, *settings, user.ID); err != nil {
-		h.Log.Error().Err(err).Msg("save storage settings")
+		reqLog(r).Error().Err(err).Msg("save storage settings")
 		writeError(w, http.StatusInternalServerError, "failed to save settings")
 		return
 	}
@@ -132,7 +133,7 @@ func (h *StorageHandler) Connect(w http.ResponseWriter, r *http.Request) {
 	// If a folder was already chosen, swap the live store to the new account.
 	if settings.BaseFolderID != "" {
 		if err := h.Manager.ReconfigureGDriveOAuth(ctx, refreshToken, settings.BaseFolderID, email); err != nil {
-			h.Log.Warn().Err(err).Msg("reconfigure after connect")
+			reqLog(r).Warn().Err(err).Msg("reconfigure after connect")
 		}
 	}
 	writeJSON(w, http.StatusOK, h.statusResponse())
@@ -160,6 +161,7 @@ func (h *StorageHandler) SetFolder(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	settings, err := h.Repo.GetStorageSettings(ctx)
 	if err != nil {
+		reqLog(r).Error().Err(err).Msg("read storage settings")
 		writeError(w, http.StatusInternalServerError, "failed to read settings")
 		return
 	}
@@ -169,7 +171,7 @@ func (h *StorageHandler) SetFolder(w http.ResponseWriter, r *http.Request) {
 	}
 	refreshToken, err := h.Secrets.Decrypt(settings.RefreshTokenEnc)
 	if err != nil {
-		h.Log.Error().Err(err).Msg("decrypt refresh token")
+		reqLog(r).Error().Err(err).Msg("decrypt refresh token")
 		writeError(w, http.StatusInternalServerError, "stored credentials could not be read (was security.secret_key changed?)")
 		return
 	}
@@ -188,7 +190,7 @@ func (h *StorageHandler) SetFolder(w http.ResponseWriter, r *http.Request) {
 	}
 	user := middleware.UserFromCtx(ctx)
 	if err := h.Repo.UpsertStorageSettings(ctx, *settings, user.ID); err != nil {
-		h.Log.Error().Err(err).Msg("save storage settings")
+		reqLog(r).Error().Err(err).Msg("save storage settings")
 		writeError(w, http.StatusInternalServerError, "storage configured but failed to persist settings")
 		return
 	}

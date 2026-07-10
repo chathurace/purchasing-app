@@ -6,7 +6,18 @@ import (
 	"strconv"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/rs/zerolog"
 )
+
+// reqLog returns the request-scoped logger installed by
+// middleware.RequestLogger — it carries the request_id and (after auth) the
+// authenticated user, so every line a handler emits can be correlated with the
+// access-log line. Falls back to a disabled logger if the middleware did not
+// run (e.g. a unit test that invokes a handler without the router), so callers
+// never need a nil check.
+func reqLog(r *http.Request) *zerolog.Logger {
+	return zerolog.Ctx(r.Context())
+}
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")

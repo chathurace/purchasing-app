@@ -56,7 +56,7 @@ func (in vendorInput) toRepo() repository.VendorInput {
 func (h *VendorsHandler) Lookup(w http.ResponseWriter, r *http.Request) {
 	vendors, err := h.Repo.ListVendorsLookup(r.Context())
 	if err != nil {
-		h.Log.Error().Err(err).Msg("lookup vendors")
+		reqLog(r).Error().Err(err).Msg("lookup vendors")
 		writeError(w, http.StatusInternalServerError, "failed to list vendors")
 		return
 	}
@@ -70,7 +70,7 @@ func (h *VendorsHandler) List(w http.ResponseWriter, r *http.Request) {
 	}
 	vendors, err := h.Repo.ListVendors(r.Context())
 	if err != nil {
-		h.Log.Error().Err(err).Msg("list vendors")
+		reqLog(r).Error().Err(err).Msg("list vendors")
 		writeError(w, http.StatusInternalServerError, "failed to list vendors")
 		return
 	}
@@ -95,7 +95,7 @@ func (h *VendorsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	user := middleware.UserFromCtx(r.Context())
 	v, err := h.Repo.CreateVendor(r.Context(), repoIn, user.ID)
 	if err != nil {
-		h.Log.Error().Err(err).Msg("create vendor")
+		reqLog(r).Error().Err(err).Msg("create vendor")
 		writeError(w, http.StatusInternalServerError, "failed to create vendor")
 		return
 	}
@@ -145,12 +145,13 @@ func (h *VendorsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.Repo.UpdateVendor(r.Context(), id, repoIn); err != nil {
-		h.Log.Error().Err(err).Msg("update vendor")
+		reqLog(r).Error().Err(err).Msg("update vendor")
 		writeError(w, http.StatusInternalServerError, "failed to update vendor")
 		return
 	}
 	v, err := h.Repo.GetVendor(r.Context(), id)
 	if err != nil {
+		reqLog(r).Error().Err(err).Msg("reload vendor after mutation")
 		writeError(w, http.StatusInternalServerError, "failed to reload vendor")
 		return
 	}
@@ -171,7 +172,7 @@ func (h *VendorsHandler) Usage(w http.ResponseWriter, r *http.Request) {
 	}
 	usage, err := h.Repo.GetVendorUsage(r.Context(), id)
 	if err != nil {
-		h.Log.Error().Err(err).Msg("vendor usage")
+		reqLog(r).Error().Err(err).Msg("vendor usage")
 		writeError(w, http.StatusInternalServerError, "failed to load vendor usage")
 		return
 	}

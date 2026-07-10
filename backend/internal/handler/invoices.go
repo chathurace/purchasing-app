@@ -172,7 +172,7 @@ func (h *InvoicesHandler) Create(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusConflict, "an invoice can only be recorded against a signed contract")
 			return
 		}
-		h.Log.Error().Err(err).Msg("create invoice")
+		reqLog(r).Error().Err(err).Msg("create invoice")
 		writeError(w, http.StatusInternalServerError, "failed to create invoice")
 		return
 	}
@@ -192,7 +192,7 @@ func (h *InvoicesHandler) ListForContract(w http.ResponseWriter, r *http.Request
 	}
 	invoices, err := h.Repo.ListInvoices(r.Context(), &contractID)
 	if err != nil {
-		h.Log.Error().Err(err).Msg("list invoices for contract")
+		reqLog(r).Error().Err(err).Msg("list invoices for contract")
 		writeError(w, http.StatusInternalServerError, "failed to list invoices")
 		return
 	}
@@ -206,7 +206,7 @@ func (h *InvoicesHandler) List(w http.ResponseWriter, r *http.Request) {
 	}
 	invoices, err := h.Repo.ListInvoices(r.Context(), nil)
 	if err != nil {
-		h.Log.Error().Err(err).Msg("list invoices")
+		reqLog(r).Error().Err(err).Msg("list invoices")
 		writeError(w, http.StatusInternalServerError, "failed to list invoices")
 		return
 	}
@@ -243,12 +243,13 @@ func (h *InvoicesHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.Repo.UpdateInvoice(r.Context(), inv.ID, repoIn); err != nil {
-		h.Log.Error().Err(err).Msg("update invoice")
+		reqLog(r).Error().Err(err).Msg("update invoice")
 		writeError(w, http.StatusInternalServerError, "failed to update invoice")
 		return
 	}
 	updated, err := h.Repo.GetInvoice(r.Context(), inv.ID)
 	if err != nil {
+		reqLog(r).Error().Err(err).Msg("reload invoice after mutation")
 		writeError(w, http.StatusInternalServerError, "failed to reload invoice")
 		return
 	}
@@ -280,12 +281,13 @@ func (h *InvoicesHandler) SetStatus(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusConflict, "that status change is not allowed from the invoice's current state")
 			return
 		}
-		h.Log.Error().Err(err).Msg("set invoice status")
+		reqLog(r).Error().Err(err).Msg("set invoice status")
 		writeError(w, http.StatusInternalServerError, "failed to update invoice status")
 		return
 	}
 	updated, err := h.Repo.GetInvoice(r.Context(), inv.ID)
 	if err != nil {
+		reqLog(r).Error().Err(err).Msg("reload invoice after mutation")
 		writeError(w, http.StatusInternalServerError, "failed to reload invoice")
 		return
 	}
@@ -304,7 +306,7 @@ func (h *InvoicesHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 	paths, err := h.Repo.DeleteInvoice(r.Context(), inv.ID)
 	if err != nil {
-		h.Log.Error().Err(err).Msg("delete invoice")
+		reqLog(r).Error().Err(err).Msg("delete invoice")
 		writeError(w, http.StatusInternalServerError, "failed to delete invoice")
 		return
 	}
@@ -319,7 +321,7 @@ func (h *InvoicesHandler) UploadDocument(w http.ResponseWriter, r *http.Request)
 	if !ok {
 		return
 	}
-	doc, ok := saveUploadedDoc(w, r, h.Repo, h.Storage, h.Log, inv.PurchaseRequestID, model.OwnerInvoice, inv.ID, allowedExtensions)
+	doc, ok := saveUploadedDoc(w, r, h.Repo, h.Storage, inv.PurchaseRequestID, model.OwnerInvoice, inv.ID, allowedExtensions)
 	if !ok {
 		return
 	}
@@ -336,7 +338,7 @@ func (h *InvoicesHandler) DownloadDocument(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusBadRequest, "invalid document id")
 		return
 	}
-	downloadOwnedDoc(w, r, h.Repo, h.Storage, h.Log, model.OwnerInvoice, inv.ID, docID)
+	downloadOwnedDoc(w, r, h.Repo, h.Storage, model.OwnerInvoice, inv.ID, docID)
 }
 
 func (h *InvoicesHandler) DeleteDocument(w http.ResponseWriter, r *http.Request) {
@@ -369,7 +371,7 @@ func (h *InvoicesHandler) load(w http.ResponseWriter, r *http.Request) (*reposit
 			writeError(w, http.StatusNotFound, "invoice not found")
 			return nil, false
 		}
-		h.Log.Error().Err(err).Msg("get invoice")
+		reqLog(r).Error().Err(err).Msg("get invoice")
 		writeError(w, http.StatusInternalServerError, "failed to load invoice")
 		return nil, false
 	}

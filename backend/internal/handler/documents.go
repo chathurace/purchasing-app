@@ -9,7 +9,6 @@ import (
 	"github.com/cs/purchasing-app/internal/middleware"
 	"github.com/cs/purchasing-app/internal/repository"
 	"github.com/cs/purchasing-app/internal/storage"
-	"github.com/rs/zerolog"
 )
 
 // pdfOnly restricts an upload to PDF (used for signed contract documents).
@@ -21,7 +20,7 @@ var pdfOnly = map[string]bool{".pdf": true}
 // error response and returns ok=false. Mirrors PurchaseRequestsHandler.UploadDocument.
 func saveUploadedDoc(
 	w http.ResponseWriter, r *http.Request,
-	repo *repository.Repository, store storage.Store, log zerolog.Logger,
+	repo *repository.Repository, store storage.Store,
 	prID int64, ownerType string, ownerID int64, allowed map[string]bool,
 ) (*repository.Document, bool) {
 	user := middleware.UserFromCtx(r.Context())
@@ -50,14 +49,16 @@ func saveUploadedDoc(
 
 	storedPath, size, err := store.Save(prID, header.Filename, file)
 	if err != nil {
-		log.Error().Err(err).Msg("save document")
+		reqLog(r).Error().Err(err).Msg("save document")
 		writeError(w, http.StatusInternalServerError, "failed to store file")
 		return nil, false
 	}
 	doc, err := repo.AddOwnedDocument(r.Context(), prID, ownerType, ownerID, header.Filename, storedPath, contentType, size, user.ID, strings.TrimSpace(r.FormValue("notes")))
 	if err != nil {
-		_ = store.Delete(storedPath)
-		log.Error().Err(err).Msg("record document")
+		if delErr := store.Delete(storedPath); delErr != nil {
+			reqLog(r).Warn().Err(delErr).Str("path", storedPath).Msg("orphaned file: could not delete after failed record")
+		}
+		reqLog(r).Error().Err(err).Msg("record document")
 		writeError(w, http.StatusInternalServerError, "failed to record file")
 		return nil, false
 	}
@@ -67,7 +68,7 @@ func saveUploadedDoc(
 // downloadOwnedDoc streams an owned document with its original filename.
 func downloadOwnedDoc(
 	w http.ResponseWriter, r *http.Request,
-	repo *repository.Repository, store storage.Store, log zerolog.Logger,
+	repo *repository.Repository, store storage.Store,
 	ownerType string, ownerID, docID int64,
 ) {
 	doc, err := repo.GetOwnedDocument(r.Context(), ownerType, ownerID, docID)
@@ -77,7 +78,7 @@ func downloadOwnedDoc(
 	}
 	f, err := store.Open(doc.StoredPath)
 	if err != nil {
-		log.Error().Err(err).Str("path", doc.StoredPath).Msg("open document")
+		reqLog(r).Error().Err(err).Str("path", doc.StoredPath).Msg("open document")
 		writeError(w, http.StatusInternalServerError, "failed to open file")
 		return
 	}
@@ -87,7 +88,7 @@ func downloadOwnedDoc(
 	w.Header().Set("Content-Disposition", "attachment; filename=\""+sanitizeHeaderFilename(doc.Filename)+"\"")
 	w.WriteHeader(http.StatusOK)
 	if _, err := io.Copy(w, f); err != nil {
-		log.Warn().Err(err).Msg("stream document")
+		reqLog(r).Warn().Err(err).Msg("stream document")
 	}
 }
 
@@ -103,10 +104,13 @@ func deleteOwnedDoc(
 		return
 	}
 	if err := repo.DeleteOwnedDocument(r.Context(), ownerType, ownerID, docID); err != nil {
+		reqLog(r).Error().Err(err).Str("owner_type", ownerType).Int64("doc_id", docID).Msg("delete owned document")
 		writeError(w, http.StatusInternalServerError, "failed to delete document")
 		return
 	}
-	_ = store.Delete(doc.StoredPath)
+	if err := store.Delete(doc.StoredPath); err != nil {
+		reqLog(r).Warn().Err(err).Str("path", doc.StoredPath).Msg("orphaned file: could not delete after removing record")
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 

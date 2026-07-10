@@ -57,7 +57,7 @@ func (in costCenterInput) toRepo() repository.CostCenterInput {
 func (h *CostCentersHandler) Lookup(w http.ResponseWriter, r *http.Request) {
 	centers, err := h.Repo.ListActiveCostCenters(r.Context())
 	if err != nil {
-		h.Log.Error().Err(err).Msg("lookup cost centers")
+		reqLog(r).Error().Err(err).Msg("lookup cost centers")
 		writeError(w, http.StatusInternalServerError, "failed to list cost centers")
 		return
 	}
@@ -71,7 +71,7 @@ func (h *CostCentersHandler) List(w http.ResponseWriter, r *http.Request) {
 	}
 	centers, err := h.Repo.ListCostCenters(r.Context())
 	if err != nil {
-		h.Log.Error().Err(err).Msg("list cost centers")
+		reqLog(r).Error().Err(err).Msg("list cost centers")
 		writeError(w, http.StatusInternalServerError, "failed to list cost centers")
 		return
 	}
@@ -96,7 +96,7 @@ func (h *CostCentersHandler) Create(w http.ResponseWriter, r *http.Request) {
 	user := middleware.UserFromCtx(r.Context())
 	c, err := h.Repo.CreateCostCenter(r.Context(), repoIn, user.ID)
 	if err != nil {
-		h.Log.Error().Err(err).Msg("create cost center")
+		reqLog(r).Error().Err(err).Msg("create cost center")
 		writeError(w, http.StatusInternalServerError, "failed to create cost center")
 		return
 	}
@@ -146,12 +146,13 @@ func (h *CostCentersHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.Repo.UpdateCostCenter(r.Context(), id, repoIn); err != nil {
-		h.Log.Error().Err(err).Msg("update cost center")
+		reqLog(r).Error().Err(err).Msg("update cost center")
 		writeError(w, http.StatusInternalServerError, "failed to update cost center")
 		return
 	}
 	c, err := h.Repo.GetCostCenter(r.Context(), id)
 	if err != nil {
+		reqLog(r).Error().Err(err).Msg("reload cost center after mutation")
 		writeError(w, http.StatusInternalServerError, "failed to reload cost center")
 		return
 	}
@@ -172,7 +173,7 @@ func (h *CostCentersHandler) Usage(w http.ResponseWriter, r *http.Request) {
 	}
 	usage, err := h.Repo.GetCostCenterUsage(r.Context(), id)
 	if err != nil {
-		h.Log.Error().Err(err).Msg("cost center usage")
+		reqLog(r).Error().Err(err).Msg("cost center usage")
 		writeError(w, http.StatusInternalServerError, "failed to load cost center usage")
 		return
 	}
@@ -194,7 +195,7 @@ func (h *CostCentersHandler) Invoices(w http.ResponseWriter, r *http.Request) {
 	}
 	summary, err := h.Repo.GetCostCenterInvoiceSummary(r.Context(), id)
 	if err != nil {
-		h.Log.Error().Err(err).Msg("cost center invoices")
+		reqLog(r).Error().Err(err).Msg("cost center invoices")
 		writeError(w, http.StatusInternalServerError, "failed to load cost center invoices")
 		return
 	}

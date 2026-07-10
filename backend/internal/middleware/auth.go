@@ -106,8 +106,13 @@ func NewAuth(ctx context.Context, cfg AuthConfig, repo *repository.Repository, l
 
 func (a *AuthMiddleware) Authenticate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Request-scoped logger installed by middleware.RequestLogger — carries
+		// the request_id, and (once we resolve the caller below) the user.
+		reqLog := zerolog.Ctx(r.Context())
+
 		rawToken := extractBearerToken(r)
 		if rawToken == "" {
+			reqLog.Warn().Msg("auth rejected: missing authorization header")
 			http.Error(w, "missing authorization header", http.StatusUnauthorized)
 			return
 		}
@@ -119,7 +124,7 @@ func (a *AuthMiddleware) Authenticate(next http.Handler) http.Handler {
 			// the message is the only reliably-visible channel. Claims are
 			// untrusted; logging only.
 			c := unverifiedTokenClaims(rawToken)
-			a.log.Warn().Msg(fmt.Sprintf(
+			reqLog.Warn().Msg(fmt.Sprintf(
 				"token verification failed: %v | token iss=%v aud=%v exp=%v",
 				err, c["iss"], c["aud"], c["exp"]))
 			http.Error(w, "invalid token", http.StatusUnauthorized)
@@ -134,6 +139,7 @@ func (a *AuthMiddleware) Authenticate(next http.Handler) http.Handler {
 			Username          string `json:"username"`
 		}
 		if err := idToken.Claims(&claims); err != nil {
+			reqLog.Warn().Err(err).Msg("auth rejected: invalid token claims")
 			http.Error(w, "invalid token claims", http.StatusUnauthorized)
 			return
 		}
@@ -150,7 +156,7 @@ func (a *AuthMiddleware) Authenticate(next http.Handler) http.Handler {
 			}
 		}
 
-		a.log.Debug().
+		reqLog.Debug().
 			Str("sub", claims.Sub).
 			Str("email", email).
 			Str("preferred_username", claims.PreferredUsername).
@@ -161,21 +167,27 @@ func (a *AuthMiddleware) Authenticate(next http.Handler) http.Handler {
 		// a brand-new self-provisioned user (see repo.ProvisionUserOnLogin).
 		user, err := a.repo.ProvisionUserOnLogin(r.Context(), claims.Sub, email, name)
 		if err != nil {
-			a.log.Error().Err(err).Msg("provision user")
+			reqLog.Error().Err(err).Msg("provision user")
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
 
+		// Enrich the request-scoped logger in place: every downstream line and
+		// the access-log line now carry the resolved caller.
+		reqLog.UpdateContext(func(c zerolog.Context) zerolog.Context {
+			return c.Int64("user_id", user.ID).Str("user", user.Email)
+		})
+
 		// Deactivated users keep their data and stay linked, but cannot enter.
 		if !user.IsActive {
-			a.log.Warn().Str("email", user.Email).Msg("login refused: account deactivated")
+			reqLog.Warn().Msg("login refused: account deactivated")
 			http.Error(w, "account deactivated", http.StatusForbidden)
 			return
 		}
 
 		// Auto-provision: first-time users (no roles yet) default to staff.
 		if err := a.repo.GrantDefaultRoleIfNone(r.Context(), user.ID, model.RoleStaff); err != nil {
-			a.log.Warn().Err(err).Msg("grant default staff role")
+			reqLog.Warn().Err(err).Msg("grant default staff role")
 		}
 
 		// Bootstrap admin: idempotently ensure the configured identity is an admin.
@@ -186,14 +198,14 @@ func (a *AuthMiddleware) Authenticate(next http.Handler) http.Handler {
 				claims.Username == a.bootstrapAdminEmail ||
 				claims.Sub == a.bootstrapAdminEmail {
 				if err := a.repo.EnsureUserHasRole(r.Context(), user.ID, model.RoleAdmin); err != nil {
-					a.log.Warn().Err(err).Msg("ensure bootstrap admin role")
+					reqLog.Warn().Err(err).Msg("ensure bootstrap admin role")
 				}
 			}
 		}
 
 		roles, err := a.repo.GetUserRoles(r.Context(), user.ID)
 		if err != nil {
-			a.log.Error().Err(err).Msg("get user roles")
+			reqLog.Error().Err(err).Msg("get user roles")
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}

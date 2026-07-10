@@ -37,7 +37,7 @@ type configLookupResponse struct {
 func (h *ConfigOptionsHandler) Lookup(w http.ResponseWriter, r *http.Request) {
 	lists, err := h.Repo.ConfigOptionsLookup(r.Context())
 	if err != nil {
-		h.Log.Error().Err(err).Msg("config options lookup")
+		reqLog(r).Error().Err(err).Msg("config options lookup")
 		writeError(w, http.StatusInternalServerError, "failed to load options")
 		return
 	}
@@ -52,7 +52,7 @@ func (h *ConfigOptionsHandler) List(w http.ResponseWriter, r *http.Request) {
 	}
 	opts, err := h.Repo.ListConfigOptions(r.Context())
 	if err != nil {
-		h.Log.Error().Err(err).Msg("list config options")
+		reqLog(r).Error().Err(err).Msg("list config options")
 		writeError(w, http.StatusInternalServerError, "failed to list options")
 		return
 	}
@@ -87,7 +87,7 @@ func (h *ConfigOptionsHandler) Create(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusConflict, "this value already exists in the list")
 			return
 		}
-		h.Log.Error().Err(err).Msg("create config option")
+		reqLog(r).Error().Err(err).Msg("create config option")
 		writeError(w, http.StatusInternalServerError, "failed to create option")
 		return
 	}
@@ -122,7 +122,7 @@ func (h *ConfigOptionsHandler) Update(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusConflict, "this value already exists in the list")
 			return
 		}
-		h.Log.Error().Err(err).Msg("update config option")
+		reqLog(r).Error().Err(err).Msg("update config option")
 		writeError(w, http.StatusInternalServerError, "failed to update option")
 		return
 	}
@@ -132,6 +132,7 @@ func (h *ConfigOptionsHandler) Update(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusNotFound, "option not found")
 			return
 		}
+		reqLog(r).Error().Err(err).Msg("reload option after mutation")
 		writeError(w, http.StatusInternalServerError, "failed to reload option")
 		return
 	}
@@ -149,7 +150,7 @@ func (h *ConfigOptionsHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.Repo.DeleteConfigOption(r.Context(), id); err != nil {
-		h.Log.Error().Err(err).Msg("delete config option")
+		reqLog(r).Error().Err(err).Msg("delete config option")
 		writeError(w, http.StatusInternalServerError, "failed to delete option")
 		return
 	}
