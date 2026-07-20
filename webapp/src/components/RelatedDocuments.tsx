@@ -1,4 +1,4 @@
-import { useFinanceAccess } from "../hooks/useFinanceAccess";
+import { useProcurementAccess } from "../hooks/useProcurementAccess";
 import { useRelatedDocuments } from "../hooks/usePurchaseRequests";
 import { RecordRow } from "./RecordCard";
 import { relatedGroups } from "../lib/caseGraph";
@@ -7,12 +7,12 @@ import type { CaseCurrent } from "../lib/caseGraph";
 // RelatedDocuments shows the records in the same case that are NOT the current
 // record's direct parent or direct children — its indirect ancestors, deeper
 // descendants and siblings. (Direct neighbours live in the main content.)
-// Finance-access only — renders nothing otherwise.
+// Procurement-access only — renders nothing otherwise.
 export function RelatedDocuments({ prId, current }: { prId: number; current: CaseCurrent }) {
-  const finance = useFinanceAccess();
-  const { data, isLoading, error } = useRelatedDocuments(prId, finance);
+  const procurement = useProcurementAccess();
+  const { data, isLoading, error } = useRelatedDocuments(prId, procurement);
 
-  if (!finance) return null;
+  if (!procurement) return null;
 
   const groups = data ? relatedGroups(data, current) : [];
 

@@ -52,7 +52,7 @@ export function ApprovalsListPage() {
       <div className="mb-6">
         <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Approvals</h1>
         <p className="mt-1 text-sm text-slate-500">
-          Purchase requests awaiting your decision as a budget, legal, or security approver.
+          Purchase requests awaiting your decision as a team lead, or a budget, legal, or security approver.
         </p>
       </div>
 

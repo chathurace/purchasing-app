@@ -15,12 +15,15 @@ import (
 	"github.com/rs/zerolog"
 )
 
-// Mailer sends a plain-text email to a single recipient. Implementations must be
-// safe for concurrent use.
+// Mailer sends a plain-text email to a recipient (with optional Cc). Implementations
+// must be safe for concurrent use.
 type Mailer interface {
 	// Send delivers a message. It blocks until the send completes (or fails), so
 	// callers that don't want to wait should invoke it in a goroutine.
 	Send(ctx context.Context, to, subject, body string) error
+	// SendCC is Send with additional Cc recipients (empty/nil cc == Send). The
+	// message is delivered to the primary recipient and every cc address.
+	SendCC(ctx context.Context, to string, cc []string, subject, body string) error
 }
 
 // Config is the email section of the app config.
@@ -50,8 +53,12 @@ type LogMailer struct {
 	log zerolog.Logger
 }
 
-func (m *LogMailer) Send(_ context.Context, to, subject, body string) error {
-	m.log.Info().Str("to", to).Str("subject", subject).Msg("email (not sent — mailer disabled)")
+func (m *LogMailer) Send(ctx context.Context, to, subject, body string) error {
+	return m.SendCC(ctx, to, nil, subject, body)
+}
+
+func (m *LogMailer) SendCC(_ context.Context, to string, cc []string, subject, body string) error {
+	m.log.Info().Str("to", to).Strs("cc", cc).Str("subject", subject).Msg("email (not sent — mailer disabled)")
 	return nil
 }
 
@@ -62,12 +69,18 @@ type SMTPMailer struct {
 }
 
 func (m *SMTPMailer) Send(ctx context.Context, to, subject, body string) error {
+	return m.SendCC(ctx, to, nil, subject, body)
+}
+
+func (m *SMTPMailer) SendCC(ctx context.Context, to string, cc []string, subject, body string) error {
 	addr := fmt.Sprintf("%s:%d", m.cfg.SMTPHost, m.cfg.SMTPPort)
 	from := m.cfg.FromAddress
 	if from == "" {
 		from = m.cfg.Username
 	}
-	msg := buildMessage(from, to, subject, body)
+	cc = cleanRecipients(to, cc)
+	msg := buildMessage(from, to, cc, subject, body)
+	recipients := append([]string{to}, cc...)
 
 	var auth smtp.Auth
 	if m.cfg.Username != "" {
@@ -77,7 +90,7 @@ func (m *SMTPMailer) Send(ctx context.Context, to, subject, body string) error {
 	// net/smtp has no context support; bound the attempt with a goroutine so a
 	// hung server can't pin the caller indefinitely.
 	done := make(chan error, 1)
-	go func() { done <- smtp.SendMail(addr, auth, from, []string{to}, msg) }()
+	go func() { done <- smtp.SendMail(addr, auth, from, recipients, msg) }()
 	select {
 	case err := <-done:
 		return err
@@ -88,10 +101,30 @@ func (m *SMTPMailer) Send(ctx context.Context, to, subject, body string) error {
 	}
 }
 
-func buildMessage(from, to, subject, body string) []byte {
+// cleanRecipients trims/deduplicates the cc list and drops blanks and any address
+// equal to the primary recipient (case-insensitive), so nobody is listed twice.
+func cleanRecipients(to string, cc []string) []string {
+	seen := map[string]bool{strings.ToLower(strings.TrimSpace(to)): true}
+	out := []string{}
+	for _, c := range cc {
+		c = strings.TrimSpace(c)
+		key := strings.ToLower(c)
+		if c == "" || seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, c)
+	}
+	return out
+}
+
+func buildMessage(from, to string, cc []string, subject, body string) []byte {
 	var b strings.Builder
 	fmt.Fprintf(&b, "From: %s\r\n", from)
 	fmt.Fprintf(&b, "To: %s\r\n", to)
+	if len(cc) > 0 {
+		fmt.Fprintf(&b, "Cc: %s\r\n", strings.Join(cc, ", "))
+	}
 	fmt.Fprintf(&b, "Subject: %s\r\n", subject)
 	b.WriteString("MIME-Version: 1.0\r\n")
 	b.WriteString("Content-Type: text/plain; charset=\"utf-8\"\r\n")

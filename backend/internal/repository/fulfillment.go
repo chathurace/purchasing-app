@@ -302,33 +302,33 @@ type InvoiceItem struct {
 	Position    int     `json:"position"`
 }
 
-// CostAllocation splits an invoice's cost to a cost center. Value is a
+// CostAllocation splits an invoice's cost to a budget unit. Value is a
 // percentage (0-100) or an absolute amount, per the invoice's AllocationMode.
 // Amount is the resolved amount in the invoice currency, computed on read.
 type CostAllocation struct {
 	ID           int64              `json:"id"`
-	CostCenterID int64              `json:"cost_center_id"`
+	BudgetUnitID int64              `json:"budget_unit_id"`
 	Value        float64            `json:"value"`
 	Position     int                `json:"position"`
 	Amount       float64            `json:"amount"`
-	CostCenter   *CostCenterSummary `json:"cost_center,omitempty"`
+	BudgetUnit   *BudgetUnitSummary `json:"budget_unit,omitempty"`
 }
 
 type Invoice struct {
-	ID                int64         `json:"id"`
-	ContractID        int64         `json:"contract_id"`
-	PurchaseRequestID int64         `json:"purchase_request_id"`
-	VendorID          int64         `json:"vendor_id"`
-	VendorInvoiceNo   string        `json:"vendor_invoice_no"`
-	InvoiceDate       string        `json:"invoice_date"` // YYYY-MM-DD
-	DueDate           *string       `json:"due_date"`     // YYYY-MM-DD or null
-	TotalAmount       float64       `json:"total_amount"` // effective total: entered_total if set, else line-items sum
-	EnteredTotal      *float64      `json:"entered_total"` // directly-entered total, or null to derive from items
-	Currency          string        `json:"currency"`
-	Status            string        `json:"status"`
-	Note              string        `json:"note"`
-	PaidDate          *string       `json:"paid_date"` // YYYY-MM-DD or null
-	ApprovedAt        *time.Time    `json:"approved_at"`
+	ID                int64            `json:"id"`
+	ContractID        int64            `json:"contract_id"`
+	PurchaseRequestID int64            `json:"purchase_request_id"`
+	VendorID          int64            `json:"vendor_id"`
+	VendorInvoiceNo   string           `json:"vendor_invoice_no"`
+	InvoiceDate       string           `json:"invoice_date"`  // YYYY-MM-DD
+	DueDate           *string          `json:"due_date"`      // YYYY-MM-DD or null
+	TotalAmount       float64          `json:"total_amount"`  // effective total: entered_total if set, else line-items sum
+	EnteredTotal      *float64         `json:"entered_total"` // directly-entered total, or null to derive from items
+	Currency          string           `json:"currency"`
+	Status            string           `json:"status"`
+	Note              string           `json:"note"`
+	PaidDate          *string          `json:"paid_date"` // YYYY-MM-DD or null
+	ApprovedAt        *time.Time       `json:"approved_at"`
 	CreatedAt         time.Time        `json:"created_at"`
 	UpdatedAt         time.Time        `json:"updated_at"`
 	AllocationMode    string           `json:"allocation_mode"` // percentage | amount
@@ -470,8 +470,8 @@ func replaceInvoiceAllocations(ctx context.Context, tx pgx.Tx, invoiceID int64, 
 	}
 	for i, a := range allocs {
 		if _, err := tx.Exec(ctx, `
-			INSERT INTO invoice_cost_allocations (invoice_id, cost_center_id, value, position)
-			VALUES ($1, $2, $3, $4)`, invoiceID, a.CostCenterID, a.Value, i); err != nil {
+			INSERT INTO invoice_cost_allocations (invoice_id, budget_unit_id, value, position)
+			VALUES ($1, $2, $3, $4)`, invoiceID, a.BudgetUnitID, a.Value, i); err != nil {
 			return err
 		}
 	}
@@ -480,9 +480,9 @@ func replaceInvoiceAllocations(ctx context.Context, tx pgx.Tx, invoiceID int64, 
 
 func (r *Repository) listInvoiceAllocations(ctx context.Context, invoiceID int64) ([]CostAllocation, error) {
 	rows, err := r.pool.Query(ctx, `
-		SELECT a.id, a.cost_center_id, a.value, a.position, cc.code, cc.name
+		SELECT a.id, a.budget_unit_id, a.value, a.position, bu.code, bu.name
 		FROM invoice_cost_allocations a
-		JOIN cost_centers cc ON cc.id = a.cost_center_id
+		JOIN budget_units bu ON bu.id = a.budget_unit_id
 		WHERE a.invoice_id = $1 ORDER BY a.position, a.id`, invoiceID)
 	if err != nil {
 		return nil, err
@@ -492,10 +492,10 @@ func (r *Repository) listInvoiceAllocations(ctx context.Context, invoiceID int64
 	for rows.Next() {
 		var a CostAllocation
 		var code, name string
-		if err := rows.Scan(&a.ID, &a.CostCenterID, &a.Value, &a.Position, &code, &name); err != nil {
+		if err := rows.Scan(&a.ID, &a.BudgetUnitID, &a.Value, &a.Position, &code, &name); err != nil {
 			return nil, err
 		}
-		a.CostCenter = &CostCenterSummary{ID: a.CostCenterID, Code: code, Name: name}
+		a.BudgetUnit = &BudgetUnitSummary{ID: a.BudgetUnitID, Code: code, Name: name}
 		out = append(out, a)
 	}
 	return out, rows.Err()

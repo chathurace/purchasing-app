@@ -81,6 +81,34 @@ export const setRecApproval = (prId: number, type: RecApprovalType, approved: bo
     body: { approved },
   });
 
+// Sets (or clears, with assigneeId null) the assignee of a legal/security card.
+// When notify is true and an assignee is set, the assignee is emailed a link to
+// the PR (CC the team email). Returns the refreshed purchase request.
+export const setRecAssignee = (
+  prId: number,
+  type: RecApprovalType,
+  assigneeId: number | null,
+  notify: boolean,
+) =>
+  apiFetch<PurchaseRequest>(
+    `/api/v1/purchase-requests/${prId}/recommendation/approvals/${type}/assignee`,
+    { method: "PUT", body: { assignee_id: assigneeId, notify } },
+  );
+
+// Re-sends the assignment notification to a card's current assignee.
+export const remindRecAssignee = (prId: number, type: RecApprovalType) =>
+  apiFetch<void>(
+    `/api/v1/purchase-requests/${prId}/recommendation/approvals/${type}/assignee/remind`,
+    { method: "POST" },
+  );
+
+// Notifies every qualified budget approver of the recommendation's budget card.
+export const remindBudgetApprovers = (prId: number) =>
+  apiFetch<void>(
+    `/api/v1/purchase-requests/${prId}/recommendation/approvals/budget/remind`,
+    { method: "POST" },
+  );
+
 export const addRecComment = (prId: number, approvalType: RecApprovalType, comment: string) =>
   apiFetch<RecComment>(`/api/v1/purchase-requests/${prId}/recommendation/comments`, {
     method: "POST",

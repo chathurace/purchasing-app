@@ -37,7 +37,7 @@ Enforced twice: the RFQ handler returns `409` with a friendly message, and
   rejected approval. A PR must always keep ≥1 approver (`RemoveApprover` guard).
 - **Approver** (any active user except the requester): records their own
   decision on their own row. `approve` needs no comment; `reject` requires one.
-- **View access:** `callerCanView` allows the owner, finance/admin, **and** named
+- **View access:** `callerCanView` allows the owner, procurement/admin, **and** named
   approvers — so an approver who is only `staff` can open the PR.
 
 ## API
@@ -51,7 +51,7 @@ Enforced twice: the RFQ handler returns `409` with a friendly message, and
 | `POST /purchase-requests/{id}/approvers/{approverID}/request`  | owner/editable |
 | `POST /purchase-requests/{id}/approval` `{decision, comment}`  | the approver   |
 
-List reads (`GET /purchase-requests`) now also return, for non-finance users,
+List reads (`GET /purchase-requests`) now also return, for non-procurement users,
 PRs they own **or** approve, plus `approvals_total`, `approvals_approved`, and
 the caller's `my_approval_status`.
 

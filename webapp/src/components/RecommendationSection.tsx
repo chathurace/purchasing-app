@@ -1,8 +1,10 @@
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useFinanceAccess } from "../hooks/useFinanceAccess";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useProcurementAccess } from "../hooks/useProcurementAccess";
+import { useBudgetUnitApprovers } from "../hooks/useBudgetUnits";
 import { useQuotationsForPR } from "../hooks/useQuotations";
+import { useConfigLookup, optionsFor } from "../hooks/useConfigOptions";
 import { ApiError } from "../api/client";
 import {
   addRecComment,
@@ -14,14 +16,21 @@ import {
   deleteRecRFIDocument,
   downloadRecCommentDocument,
   downloadRecRFIDocument,
+  remindBudgetApprovers,
+  remindRecAssignee,
   setRecApproval,
+  setRecAssignee,
   setRecommendationRFI,
   updateRecommendation,
   uploadRecCommentDocument,
   uploadRecRFIDocument,
 } from "../api/recommendations";
+import { listTeams } from "../api/teams";
+import { setBudgetApprover } from "../api/purchaseRequests";
 import { uploadContractDocument } from "../api/contracts";
 import { ContractContent } from "./ContractContent";
+import { CurrencyInput } from "./CurrencyInput";
+import { ConfirmDialog } from "./ConfirmDialog";
 import { EntityStatusBadge } from "./EntityStatusBadge";
 import { conRef, REC_APPROVAL_LABELS, REC_APPROVAL_TYPES } from "../types/api";
 import type {
@@ -30,6 +39,7 @@ import type {
   RecApproval,
   RecApprovalType,
   Recommendation,
+  UserSummary,
 } from "../types/api";
 
 const inputCls = "w-full rounded border px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none";
@@ -40,14 +50,17 @@ interface QuotedVendor {
   registered: boolean;
 }
 
-// RecommendationSection renders the PR's procurement recommendation: finance adds
+// RecommendationSection renders the PR's procurement recommendation: procurement adds
 // or edits it (once at least one quotation exists), and the named actors
 // (legal/security/budget owner) toggle approval and comment on their card.
 export function RecommendationSection({ pr }: { pr: PurchaseRequest }) {
-  const finance = useFinanceAccess();
-  // Quoted vendors feed the create/edit form (finance only); a non-finance actor
-  // acting on a card never needs them, so skip the finance-gated fetch for them.
-  const { data: quotations } = useQuotationsForPR(pr.id, finance);
+  // Authoring the recommendation requires procurement access AND being on the PR
+  // (assignee/collaborator/admin) — the same gate the backend enforces. Approver
+  // card actions (comment/approve/assign) are driven by per-card flags, not this.
+  const procurement = useProcurementAccess() && !!pr.my_can_work;
+  // Quoted vendors feed the create/edit form (procurement only); a non-procurement actor
+  // acting on a card never needs them, so skip the procurement-gated fetch for them.
+  const { data: quotations } = useQuotationsForPR(pr.id, procurement);
   const rec = pr.recommendation ?? null;
 
   const quotedVendors: QuotedVendor[] = useMemo(() => {
@@ -62,16 +75,16 @@ export function RecommendationSection({ pr }: { pr: PurchaseRequest }) {
     return Array.from(seen, ([id, { name, registered }]) => ({ id, name, registered }));
   }, [quotations]);
 
-  // Nothing to show for a non-finance viewer until a recommendation exists.
-  if (!rec && !finance) return null;
-  // Finance can only add a recommendation once a quotation is in.
+  // Nothing to show for a non-procurement viewer until a recommendation exists.
+  if (!rec && !procurement) return null;
+  // Procurement can only add a recommendation once a quotation is in.
   if (!rec && quotedVendors.length === 0) return null;
 
   return (
     <div className="app-card mt-6 p-6">
       <h2 className="mb-3 font-semibold text-slate-900">Procurement recommendation</h2>
       {rec ? (
-        <RecommendationView pr={pr} rec={rec} finance={finance} quotedVendors={quotedVendors} />
+        <RecommendationView pr={pr} rec={rec} procurement={procurement} quotedVendors={quotedVendors} />
       ) : (
         <RecommendationForm pr={pr} quotedVendors={quotedVendors} />
       )}
@@ -96,16 +109,28 @@ function RecommendationForm({
   const editing = !!existing;
   const [vendorId, setVendorId] = useState(existing?.vendor_id ?? 0);
   const [description, setDescription] = useState(existing?.description ?? "");
+  const [estimatedValue, setEstimatedValue] = useState<number>(existing?.estimated_value ?? 0);
+  const [currency, setCurrency] = useState(existing?.currency ?? "");
+  const [engagementType, setEngagementType] = useState(existing?.engagement_type ?? "");
   const [types, setTypes] = useState<RecApprovalType[]>(
     existing ? existing.approvals.map((a) => a.approval_type) : ["budget"],
   );
   const [error, setError] = useState<string | null>(null);
+  const { data: config } = useConfigLookup();
+  const lists = config?.lists;
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ["purchase-requests", pr.id] });
 
   const mutation = useMutation({
     mutationFn: () => {
-      const input = { vendor_id: vendorId, description: description.trim(), required_types: types };
+      const input = {
+        vendor_id: vendorId,
+        description: description.trim(),
+        estimated_value: estimatedValue,
+        currency,
+        engagement_type: engagementType,
+        required_types: types,
+      };
       return editing ? updateRecommendation(pr.id, input) : createRecommendation(pr.id, input);
     },
     onSuccess: () => {
@@ -148,6 +173,45 @@ function RecommendationForm({
           placeholder="Why this vendor (optional)"
         />
       </div>
+      <div className="grid gap-3 sm:grid-cols-3">
+        <div>
+          <label className="mb-1 block text-sm font-medium text-gray-700">Estimated value</label>
+          <input
+            type="number"
+            min={0}
+            step="0.01"
+            className={inputCls}
+            value={estimatedValue || ""}
+            onChange={(e) => setEstimatedValue(Number(e.target.value))}
+            placeholder="0.00"
+          />
+        </div>
+        <div>
+          <label className="mb-1 block text-sm font-medium text-gray-700">Currency</label>
+          <CurrencyInput
+            className={inputCls}
+            value={currency}
+            onChange={setCurrency}
+            maxLength={3}
+            options={optionsFor(lists, "currency", currency)}
+          />
+        </div>
+        <div>
+          <label className="mb-1 block text-sm font-medium text-gray-700">Engagement type</label>
+          <select
+            className={inputCls}
+            value={engagementType}
+            onChange={(e) => setEngagementType(e.target.value)}
+          >
+            <option value="">Select…</option>
+            {optionsFor(lists, "engagement_type", engagementType).map((o) => (
+              <option key={o} value={o}>
+                {o}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
       <div>
         <span className="mb-1 block text-sm font-medium text-gray-700">Approvals required</span>
         <div className="flex flex-wrap gap-4">
@@ -186,12 +250,12 @@ function RecommendationForm({
 function RecommendationView({
   pr,
   rec,
-  finance,
+  procurement,
   quotedVendors,
 }: {
   pr: PurchaseRequest;
   rec: Recommendation;
-  finance: boolean;
+  procurement: boolean;
   quotedVendors: QuotedVendor[];
 }) {
   const qc = useQueryClient();
@@ -230,6 +294,22 @@ function RecommendationView({
           {rec.description && (
             <p className="whitespace-pre-wrap text-slate-600">{rec.description}</p>
           )}
+          {(rec.estimated_value > 0 || rec.currency || rec.engagement_type) && (
+            <div className="flex flex-wrap gap-x-6 gap-y-0.5 pt-0.5 text-slate-600">
+              {(rec.estimated_value > 0 || rec.currency) && (
+                <span>
+                  <span className="font-medium text-slate-500">Estimated value: </span>
+                  {rec.currency} {rec.estimated_value.toLocaleString()}
+                </span>
+              )}
+              {rec.engagement_type && (
+                <span>
+                  <span className="font-medium text-slate-500">Engagement: </span>
+                  {rec.engagement_type}
+                </span>
+              )}
+            </div>
+          )}
           <p className="pt-0.5">
             <span
               className={`badge ${
@@ -242,7 +322,7 @@ function RecommendationView({
             </span>
           </p>
         </dl>
-        {finance && (
+        {procurement && (
           <div className="flex shrink-0 gap-3 text-sm">
             <button className="font-medium text-indigo-600 hover:text-indigo-700" onClick={() => setEditing(true)}>
               Edit
@@ -270,14 +350,19 @@ function RecommendationView({
               key={a.approval_type}
               prId={pr.id}
               approval={a}
-              canAct={rec.my_actionable_types.includes(a.approval_type)}
+              budgetUnitId={pr.budget_unit_id}
+              estimatedValue={rec.estimated_value}
+              currency={rec.currency}
+              prApproverName={pr.budget_approver_name}
+              prApproverEmail={pr.budget_approver_email}
+              procurement={procurement}
             />
           ))}
         </div>
       </div>
 
-      <RFICard pr={pr} rec={rec} finance={finance} />
-      <ContractCard pr={pr} rec={rec} finance={finance} />
+      <RFICard pr={pr} rec={rec} procurement={procurement} />
+      <ContractCard pr={pr} rec={rec} procurement={procurement} />
     </div>
   );
 }
@@ -404,11 +489,11 @@ function DocChip({ filename, onClick }: { filename: string; onClick: () => void 
 function RFICard({
   pr,
   rec,
-  finance,
+  procurement,
 }: {
   pr: PurchaseRequest;
   rec: Recommendation;
-  finance: boolean;
+  procurement: boolean;
 }) {
   const qc = useQueryClient();
   const present = rec.rfi_description.trim() !== "" || (rec.rfi_documents?.length ?? 0) > 0;
@@ -457,11 +542,11 @@ function RFICard({
     onError: (e) => setError(e instanceof ApiError ? e.message : "Failed to add attachment"),
   });
 
-  // Nothing to show for a non-finance viewer when there's no RFI.
-  if (!present && !finance) return null;
+  // Nothing to show for a non-procurement viewer when there's no RFI.
+  if (!present && !procurement) return null;
 
-  // Finance editing (or first-time add) form.
-  if (finance && (editing || !present)) {
+  // Procurement editing (or first-time add) form.
+  if (procurement && (editing || !present)) {
     return (
       <SubCard tone="sky">
         <div className="flex items-center gap-3 px-4 py-3">
@@ -536,7 +621,7 @@ function RFICard({
           <p className="text-sm font-semibold text-slate-900">RFI — request for information</p>
           <p className="text-xs text-slate-500">Raised with the vendor</p>
         </div>
-        {finance && (
+        {procurement && (
           <div className="ml-auto flex shrink-0 gap-3 text-sm">
             <button className="font-medium text-indigo-600 hover:text-indigo-700" onClick={() => setEditing(true)}>
               Edit
@@ -560,7 +645,7 @@ function RFICard({
             {rec.rfi_documents.map((d) => (
               <span key={d.id} className="inline-flex items-center">
                 <DocChip filename={d.filename} onClick={() => downloadRecRFIDocument(pr.id, d)} />
-                {finance && (
+                {procurement && (
                   <button
                     type="button"
                     title="Remove attachment"
@@ -575,7 +660,7 @@ function RFICard({
             ))}
           </div>
         )}
-        {finance && (
+        {procurement && (
           <label className="mt-2 inline-block cursor-pointer text-sm font-medium text-indigo-600 hover:text-indigo-700">
             + Add attachment
             <input
@@ -601,11 +686,11 @@ function RFICard({
 function ContractCard({
   pr,
   rec,
-  finance,
+  procurement,
 }: {
   pr: PurchaseRequest;
   rec: Recommendation;
-  finance: boolean;
+  procurement: boolean;
 }) {
   const qc = useQueryClient();
   const contract = rec.contract ?? null;
@@ -643,7 +728,7 @@ function ContractCard({
 
   if (contract) {
     // The whole contract can be removed only while it has no signed PDF (draft).
-    const canRemove = finance && contract.status === "draft";
+    const canRemove = procurement && contract.status === "draft";
     return (
       <SubCard tone="violet">
         <div className="flex items-center gap-3 px-4 py-3">
@@ -674,13 +759,13 @@ function ContractCard({
         </div>
         <SubCardBody>
           {error && <p className="mb-2 text-sm text-red-600">{error}</p>}
-          <ContractContent contract={contract} canEdit={finance} invalidate={invalidate} />
+          <ContractContent contract={contract} canEdit={procurement} invalidate={invalidate} />
         </SubCardBody>
       </SubCard>
     );
   }
 
-  if (!finance) return null;
+  if (!procurement) return null;
 
   return (
     <SubCard tone="violet">
@@ -736,11 +821,21 @@ function reviewerLabel(name?: string | null, email?: string | null, id?: number)
 function ApprovalCard({
   prId,
   approval,
-  canAct,
+  budgetUnitId,
+  estimatedValue,
+  currency,
+  prApproverName,
+  prApproverEmail,
+  procurement,
 }: {
   prId: number;
   approval: RecApproval;
-  canAct: boolean;
+  budgetUnitId: number | null;
+  estimatedValue: number;
+  currency: string;
+  prApproverName?: string;
+  prApproverEmail?: string;
+  procurement: boolean;
 }) {
   const qc = useQueryClient();
   const t = approval.approval_type;
@@ -772,6 +867,104 @@ function ApprovalCard({
     onError: (e) => setError(e instanceof ApiError ? e.message : "Failed to add comment"),
   });
 
+  // Assignee — legal/security cards only (the budget card has no assignee).
+  const assignable = t !== "budget";
+  const { data: teams } = useQuery({
+    queryKey: ["teams"],
+    queryFn: listTeams,
+    enabled: assignable && approval.can_assign,
+  });
+  const members: UserSummary[] = teams?.find((tm) => tm.key === t)?.members ?? [];
+  // A staged assignment awaiting the notify decision in the confirm dialog.
+  const [pending, setPending] = useState<UserSummary | null>(null);
+  const [notify, setNotify] = useState(true);
+  const [reminded, setReminded] = useState(false);
+
+  const assignMutation = useMutation({
+    mutationFn: ({ id, doNotify }: { id: number | null; doNotify: boolean }) =>
+      setRecAssignee(prId, t, id, doNotify),
+    onSuccess: () => {
+      invalidate();
+      setPending(null);
+      setError(null);
+    },
+    onError: (e) => setError(e instanceof ApiError ? e.message : "Failed to update assignee"),
+  });
+
+  const remindMutation = useMutation({
+    mutationFn: () => remindRecAssignee(prId, t),
+    onSuccess: () => {
+      setReminded(true);
+      setError(null);
+    },
+    onError: (e) => setError(e instanceof ApiError ? e.message : "Failed to send reminder"),
+  });
+
+  // Budget card — the designated approver(s) come from the budget unit and the
+  // recommendation's estimated value (any of them may approve). Procurement can
+  // (re-)notify them all, and reconcile the PR's named approver against them.
+  const isBudget = t === "budget";
+  const {
+    data: budgetApprovers,
+    refetch: refetchApprovers,
+    isFetching: approversFetching,
+  } = useBudgetUnitApprovers(
+    isBudget ? budgetUnitId : null,
+    estimatedValue > 0 ? estimatedValue : null,
+    currency,
+  );
+  const designated = budgetApprovers ?? [];
+  const [notified, setNotified] = useState(false);
+  const notifyBudgetMutation = useMutation({
+    mutationFn: () => remindBudgetApprovers(prId),
+    onSuccess: () => {
+      setNotified(true);
+      setError(null);
+    },
+    onError: (e) => setError(e instanceof ApiError ? e.message : "Failed to notify approvers"),
+  });
+
+  // The PR's named budget approver, editable from this card (procurement) and
+  // reconcilable against the designated approver(s).
+  const [editingApprover, setEditingApprover] = useState(false);
+  const [approverName, setApproverName] = useState(prApproverName ?? "");
+  const [approverEmail, setApproverEmail] = useState(prApproverEmail ?? "");
+  const approverKey = (emails: string) =>
+    emails.split(",").map((s) => s.trim().toLowerCase()).filter(Boolean).sort().join(",");
+  const approverMismatch =
+    isBudget &&
+    designated.length > 0 &&
+    approverKey(designated.map((u) => u.email).join(",")) !== approverKey(prApproverEmail ?? "");
+  const saveApprover = useMutation({
+    mutationFn: (v: { name: string; email: string }) => setBudgetApprover(prId, v.name, v.email),
+    onSuccess: () => {
+      invalidate();
+      setEditingApprover(false);
+      setError(null);
+    },
+    onError: (e) => setError(e instanceof ApiError ? e.message : "Failed to update approver"),
+  });
+  const useDesignatedApprover = () =>
+    saveApprover.mutate({
+      name: designated.map((u) => u.name || u.email).join(", "),
+      email: designated.map((u) => u.email).join(", "),
+    });
+
+  const onPickAssignee = (value: string) => {
+    const currentId = approval.assignee_id ?? null;
+    if (value === "") {
+      // Unassign — no notification to send.
+      if (currentId !== null) assignMutation.mutate({ id: null, doNotify: false });
+      return;
+    }
+    const id = Number(value);
+    if (id === currentId) return;
+    const member = members.find((m) => m.id === id);
+    if (!member) return;
+    setNotify(true);
+    setPending(member); // opens the notify confirm dialog
+  };
+
   const tone: Tone = approval.approved ? "emerald" : "amber";
   return (
     <SubCard tone={tone}>
@@ -798,7 +991,7 @@ function ApprovalCard({
             <span className={`h-1.5 w-1.5 rounded-full ${approval.approved ? "bg-emerald-500" : "bg-amber-500"}`} />
             {approval.approved ? "Approved" : "Pending"}
           </span>
-          {canAct && (
+          {approval.can_approve && (
             <button
               type="button"
               role="switch"
@@ -820,8 +1013,201 @@ function ApprovalCard({
         </div>
       </div>
 
+      {/* Budget card — the PR's named approver + the designated approver(s) */}
+      {isBudget && (
+        <div className="space-y-2 border-t border-slate-100 bg-white px-4 py-2.5 text-sm">
+          {/* Named approver (from the PR), editable by procurement */}
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">Approver</span>
+            {editingApprover ? (
+              <div className="flex flex-1 flex-wrap items-center gap-2">
+                <input
+                  className="min-w-0 flex-1 rounded border px-2 py-1 text-sm focus:border-indigo-500 focus:outline-none"
+                  value={approverName}
+                  onChange={(e) => setApproverName(e.target.value)}
+                  placeholder="Name"
+                />
+                <input
+                  className="min-w-0 flex-1 rounded border px-2 py-1 text-sm focus:border-indigo-500 focus:outline-none"
+                  value={approverEmail}
+                  onChange={(e) => setApproverEmail(e.target.value)}
+                  placeholder="email@wso2.com"
+                />
+                <button
+                  type="button"
+                  onClick={() => saveApprover.mutate({ name: approverName.trim(), email: approverEmail.trim() })}
+                  disabled={saveApprover.isPending}
+                  className="rounded bg-indigo-600 px-2 py-1 text-xs font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+                >
+                  Save
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEditingApprover(false);
+                    setApproverName(prApproverName ?? "");
+                    setApproverEmail(prApproverEmail ?? "");
+                  }}
+                  className="rounded border px-2 py-1 text-xs text-slate-600 hover:bg-slate-50"
+                >
+                  Cancel
+                </button>
+              </div>
+            ) : (
+              <>
+                <span className="text-slate-700">
+                  {prApproverName || prApproverEmail
+                    ? `${prApproverName || ""}${prApproverEmail ? ` · ${prApproverEmail}` : ""}`
+                    : "—"}
+                </span>
+                {procurement && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setApproverName(prApproverName ?? "");
+                      setApproverEmail(prApproverEmail ?? "");
+                      setEditingApprover(true);
+                    }}
+                    title="Edit the budget approver"
+                    className="text-slate-400 hover:text-slate-600"
+                  >
+                    <span aria-hidden>✎</span>
+                  </button>
+                )}
+              </>
+            )}
+          </div>
+
+          {/* Mismatch highlight + use-designated action */}
+          {approverMismatch && !editingApprover && (
+            <div className="flex flex-wrap items-center gap-2 rounded border border-amber-300 bg-amber-50 px-2 py-1.5 text-xs text-amber-800">
+              <span>
+                Differs from the designated approver{designated.length > 1 ? "s" : ""}:{" "}
+                <span className="font-medium">{designated.map((u) => u.name || u.email).join(", ")}</span>
+              </span>
+              {procurement && (
+                <button
+                  type="button"
+                  onClick={useDesignatedApprover}
+                  disabled={saveApprover.isPending}
+                  className="ml-auto inline-flex items-center gap-1 rounded border border-amber-300 bg-white px-2 py-0.5 font-medium text-amber-800 hover:bg-amber-100 disabled:opacity-50"
+                >
+                  <span aria-hidden>↻</span> Use designated approver
+                </button>
+              )}
+            </div>
+          )}
+
+          {/* Designated approver(s), derived from the recommendation's estimated value */}
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">Designated</span>
+            <button
+              type="button"
+              onClick={() => refetchApprovers()}
+              disabled={approversFetching}
+              title="Re-check the designated approver(s) from the recommendation's estimated value"
+              className={`text-slate-400 hover:text-slate-600 disabled:opacity-40 ${approversFetching ? "animate-spin" : ""}`}
+            >
+              <span aria-hidden>↻</span>
+            </button>
+            <span className="text-slate-700">
+              {designated.length === 0
+                ? "None configured for this value"
+                : designated.map((u) => u.name || u.email).join(", ")}
+            </span>
+            {procurement && designated.length > 0 && !approval.approved && (
+              <button
+                type="button"
+                onClick={() => notifyBudgetMutation.mutate()}
+                disabled={notifyBudgetMutation.isPending}
+                className="ml-auto rounded border px-2 py-1 text-xs text-slate-600 hover:bg-slate-50 disabled:opacity-50"
+              >
+                {notified ? "Notified ✓" : "Notify approvers"}
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Assignee (legal/security) */}
+      {assignable && (approval.assignee || approval.can_assign) && (
+        <div className="flex flex-wrap items-center gap-2 border-t border-slate-100 bg-white px-4 py-2.5 text-sm">
+          <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">Assignee</span>
+          {approval.can_assign ? (
+            <select
+              className="rounded border px-2 py-1 text-sm focus:border-indigo-500 focus:outline-none"
+              value={approval.assignee_id ?? ""}
+              disabled={assignMutation.isPending}
+              onChange={(e) => onPickAssignee(e.target.value)}
+            >
+              <option value="">Unassigned</option>
+              {members.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.email || m.name || `#${m.id}`}
+                </option>
+              ))}
+              {/* Keep a stale assignee (no longer a team member) visible/selected. */}
+              {approval.assignee && !members.some((m) => m.id === approval.assignee_id) && (
+                <option value={approval.assignee_id ?? ""}>
+                  {approval.assignee.email || approval.assignee.name}
+                </option>
+              )}
+            </select>
+          ) : (
+            <span className="text-gray-700">
+              {approval.assignee
+                ? reviewerLabel(approval.assignee.name, approval.assignee.email)
+                : "Unassigned"}
+            </span>
+          )}
+          {approval.assignee && approval.can_assign && (
+            <button
+              type="button"
+              disabled={remindMutation.isPending || assignMutation.isPending}
+              onClick={() => {
+                setReminded(false);
+                remindMutation.mutate();
+              }}
+              className="rounded border px-2 py-1 text-xs text-indigo-600 hover:bg-indigo-50 disabled:opacity-50"
+            >
+              {remindMutation.isPending ? "Sending…" : reminded ? "Reminder sent ✓" : "Send reminder"}
+            </button>
+          )}
+          {error && <span className="text-xs text-red-600">{error}</span>}
+        </div>
+      )}
+
+      {pending && (
+        <ConfirmDialog
+          title="Notify assignee?"
+          confirmLabel="Assign"
+          busy={assignMutation.isPending}
+          message={
+            <div className="space-y-3">
+              <p>
+                Assign the {REC_APPROVAL_LABELS[t]} approval to{" "}
+                <span className="font-medium text-gray-800">
+                  {reviewerLabel(pending.name, pending.email)}
+                </span>
+                ?
+              </p>
+              <label className="flex items-center gap-2 text-sm text-gray-700">
+                <input
+                  type="checkbox"
+                  checked={notify}
+                  onChange={(e) => setNotify(e.target.checked)}
+                />
+                Email them a link to this request (CC the team email)
+              </label>
+            </div>
+          }
+          onConfirm={() => assignMutation.mutate({ id: pending.id, doNotify: notify })}
+          onCancel={() => setPending(null)}
+        />
+      )}
+
       {/* Comments */}
-      {(approval.comments.length > 0 || canAct) && (
+      {(approval.comments.length > 0 || approval.can_comment) && (
         <SubCardBody>
           {approval.comments.length > 0 && (
             <ul className="space-y-2">
@@ -856,7 +1242,7 @@ function ApprovalCard({
             </ul>
           )}
 
-          {canAct &&
+          {approval.can_comment &&
             (open ? (
               <div className="mt-3 space-y-2">
                 <textarea

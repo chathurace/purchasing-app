@@ -46,8 +46,8 @@ func (h *ConfigOptionsHandler) Lookup(w http.ResponseWriter, r *http.Request) {
 
 // List returns every option (active and inactive) for the Settings page.
 func (h *ConfigOptionsHandler) List(w http.ResponseWriter, r *http.Request) {
-	if !middleware.HasCostCenterAdmin(r.Context()) {
-		writeError(w, http.StatusForbidden, "admin or finance_admin access required")
+	if !middleware.HasBudgetUnitAdmin(r.Context()) {
+		writeError(w, http.StatusForbidden, "admin or procurement_admin access required")
 		return
 	}
 	opts, err := h.Repo.ListConfigOptions(r.Context())
@@ -60,8 +60,8 @@ func (h *ConfigOptionsHandler) List(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *ConfigOptionsHandler) Create(w http.ResponseWriter, r *http.Request) {
-	if !middleware.HasCostCenterAdmin(r.Context()) {
-		writeError(w, http.StatusForbidden, "admin or finance_admin access required")
+	if !middleware.HasBudgetUnitAdmin(r.Context()) {
+		writeError(w, http.StatusForbidden, "admin or procurement_admin access required")
 		return
 	}
 	var in configOptionInput
@@ -91,12 +91,13 @@ func (h *ConfigOptionsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to create option")
 		return
 	}
+	recordAuditEvent(r, h.Repo, model.AuditCreateConfigOption, key, model.EntityConfigOption, &o.ID, value)
 	writeJSON(w, http.StatusCreated, o)
 }
 
 func (h *ConfigOptionsHandler) Update(w http.ResponseWriter, r *http.Request) {
-	if !middleware.HasCostCenterAdmin(r.Context()) {
-		writeError(w, http.StatusForbidden, "admin or finance_admin access required")
+	if !middleware.HasBudgetUnitAdmin(r.Context()) {
+		writeError(w, http.StatusForbidden, "admin or procurement_admin access required")
 		return
 	}
 	id, err := parseID(r, "id")
@@ -126,6 +127,7 @@ func (h *ConfigOptionsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to update option")
 		return
 	}
+	recordAuditEvent(r, h.Repo, model.AuditUpdateConfigOption, "", model.EntityConfigOption, &id, value)
 	o, err := h.Repo.GetConfigOption(r.Context(), id)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -140,8 +142,8 @@ func (h *ConfigOptionsHandler) Update(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *ConfigOptionsHandler) Delete(w http.ResponseWriter, r *http.Request) {
-	if !middleware.HasCostCenterAdmin(r.Context()) {
-		writeError(w, http.StatusForbidden, "admin or finance_admin access required")
+	if !middleware.HasBudgetUnitAdmin(r.Context()) {
+		writeError(w, http.StatusForbidden, "admin or procurement_admin access required")
 		return
 	}
 	id, err := parseID(r, "id")
@@ -154,5 +156,6 @@ func (h *ConfigOptionsHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to delete option")
 		return
 	}
+	recordAuditEvent(r, h.Repo, model.AuditDeleteConfigOption, "", model.EntityConfigOption, &id, "")
 	w.WriteHeader(http.StatusNoContent)
 }

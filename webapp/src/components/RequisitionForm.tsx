@@ -1,17 +1,37 @@
 import { useState } from "react";
 import { useConfigLookup, optionsFor } from "../hooks/useConfigOptions";
-import { useCostCenterLookup } from "../hooks/useCostCenters";
+import { useBudgetUnitLookup, useBudgetUnitApprovers } from "../hooks/useBudgetUnits";
 import { useVendorLookup } from "../hooks/useVendors";
 import { SupplierNameCombobox } from "./SupplierNameCombobox";
+import { CurrencyInput } from "./CurrencyInput";
 import type {
-  CostCenterSummary,
+  BudgetUnitSummary,
   PRCategory,
   PRDetails,
   PurchaseRequestInput,
+  UserSummary,
   VendorLookup,
   YesNo,
   YesNoUnknown,
 } from "../types/api";
+
+// approverEmailKey normalizes an approver-email string (a comma-separated list)
+// into a stable, order-independent key for comparing entered vs derived.
+const approverEmailKey = (emails: string) =>
+  emails
+    .split(",")
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean)
+    .sort()
+    .join(",");
+
+// approverLabel renders a derived approver set as "Name (email), …".
+const approverLabel = (approvers: UserSummary[]) =>
+  approvers.map((u) => (u.name ? `${u.name} (${u.email})` : u.email)).join(", ");
+
+// isEmail is a lightweight sanity check for email inputs (non-empty local part,
+// an @, and a dotted domain) — the server is the source of truth.
+const isEmail = (s: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.trim());
 
 const inputCls = "w-full rounded border px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none";
 const labelCls = "mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-500";
@@ -45,7 +65,21 @@ export function RequisitionForm({
 
   const { data: config } = useConfigLookup();
   const lists = config?.lists;
-  const { data: costCenters } = useCostCenterLookup();
+  const { data: budgetUnits } = useBudgetUnitLookup();
+
+  // Budget approver(s) designated by the chosen budget unit + estimated value —
+  // shown as a reference next to the (editable) approver field, and flagged in
+  // the Review step when the entered approver differs.
+  const { data: budgetApprovers } = useBudgetUnitApprovers(
+    value.budget_unit_id,
+    value.estimated_value > 0 ? value.estimated_value : null,
+    value.currency,
+  );
+  const designatedApprovers = budgetApprovers ?? [];
+  const approverMismatch =
+    designatedApprovers.length > 0 &&
+    approverEmailKey(designatedApprovers.map((u) => u.email).join(",")) !==
+      approverEmailKey(value.budget_approver_email ?? "");
 
   const d: PRDetails = value.details ?? {};
   const setTop = (patch: Partial<PurchaseRequestInput>) => onChange({ ...value, ...patch });
@@ -65,9 +99,11 @@ export function RequisitionForm({
         [!d.date, "Date"],
         [!d.requester_name?.trim(), "Your full name"],
         [!d.requester_email?.trim(), "WSO2 email"],
-        [!value.cost_center_id, "Cost center"],
+        [!value.budget_unit_id, "Budget unit"],
         [!value.entity, "WSO2 entity"],
         [!d.business_justification?.trim(), "Business justification"],
+        [!value.team_lead_email?.trim(), "Team lead email"],
+        [!!value.team_lead_email?.trim() && !isEmail(value.team_lead_email), "a valid team lead email"],
       );
     } else if (n === 2) {
       if (!value.category) need.push([true, "Purchase type"]);
@@ -89,12 +125,10 @@ export function RequisitionForm({
       }
     } else if (n === 3) {
       // Proposed supplier & commercial details are optional sections; only the
-      // budget approval and budget-coding fields are required.
+      // budget-coding fields are required. The budget approver defaults to the
+      // one designated by the budget unit + estimated value.
       need.push(
-        [!value.budget_approver_name?.trim(), "Budget approver name"],
-        [!value.budget_approver_email?.trim(), "Budget approver email"],
         [!d.budget_category, "Budget category"],
-        [!d.budget_cost_center, "Cost center"],
         [!d.budget_product, "Product"],
         [!d.budget_region, "Region"],
       );
@@ -125,6 +159,8 @@ export function RequisitionForm({
       setVErr("Please confirm the declaration before submitting.");
       return;
     }
+    // Any budget-approver mismatch is surfaced (non-blocking) in the Review step;
+    // clicking Save just submits — no extra prompt.
     setVErr(null);
     onSubmit();
   };
@@ -134,16 +170,19 @@ export function RequisitionForm({
       <Stepper step={step} onStep={goTo} />
 
       <div className="p-6">
-        {step === 1 && <StepRequester value={value} d={d} setTop={setTop} setD={setD} lists={lists} costCenters={costCenters} />}
+        {step === 1 && <StepRequester value={value} d={d} setTop={setTop} setD={setD} lists={lists} budgetUnits={budgetUnits} />}
         {step === 2 && <StepPurchase value={value} d={d} setTop={setTop} setD={setD} lists={lists} />}
-        {step === 3 && <StepVendor value={value} d={d} setTop={setTop} setD={setD} lists={lists} costCenters={costCenters} />}
+        {step === 3 && <StepVendor value={value} d={d} setTop={setTop} setD={setD} lists={lists} designatedApprovers={designatedApprovers} />}
         {step === 4 && (
           <StepReview
             value={value}
             d={d}
+            budgetUnits={budgetUnits}
             requireDeclaration={requireDeclaration}
             declared={declared}
             setDeclared={setDeclared}
+            approverMismatch={approverMismatch}
+            designatedLabel={approverLabel(designatedApprovers)}
           />
         )}
 
@@ -321,26 +360,25 @@ interface StepProps {
   setTop: (patch: Partial<PurchaseRequestInput>) => void;
   setD: (patch: Partial<PRDetails>) => void;
   lists?: Record<string, string[]>;
-  costCenters?: CostCenterSummary[];
+  budgetUnits?: BudgetUnitSummary[];
+  designatedApprovers?: UserSummary[];
 }
 
-// CostCenterSelect binds the requisition's cost_center_id (and a display name in
-// cost_center) to a managed cost center. If the PR already references a cost
-// center that is no longer in the active lookup, it is still shown so editing an
-// existing PR never silently drops the selection.
-function CostCenterSelect({
+// BudgetUnitSelect binds the requisition's budget_unit_id to a managed budget
+// unit. If the PR already references a unit that is no longer in the active
+// lookup, it is still shown so editing an existing PR never silently drops the
+// selection.
+function BudgetUnitSelect({
   value,
-  currentLabel,
-  costCenters,
+  budgetUnits,
   onChange,
 }: {
   value: number | null;
-  currentLabel?: string;
-  costCenters?: CostCenterSummary[];
-  onChange: (cc: CostCenterSummary | null, label: string) => void;
+  budgetUnits?: BudgetUnitSummary[];
+  onChange: (bu: BudgetUnitSummary | null) => void;
 }) {
-  const options = costCenters ?? [];
-  const label = (c: CostCenterSummary) => (c.code ? `${c.code} — ${c.name}` : c.name);
+  const options = budgetUnits ?? [];
+  const label = (c: BudgetUnitSummary) => (c.code ? `${c.code} — ${c.name}` : c.name);
   const missingCurrent = value != null && !options.some((c) => c.id === value);
   return (
     <select
@@ -348,14 +386,11 @@ function CostCenterSelect({
       value={value ?? ""}
       onChange={(e) => {
         const id = e.target.value ? Number(e.target.value) : null;
-        const cc = options.find((c) => c.id === id) ?? null;
-        onChange(cc, cc ? label(cc) : "");
+        onChange(options.find((c) => c.id === id) ?? null);
       }}
     >
-      <option value="">Select cost center</option>
-      {missingCurrent && (
-        <option value={value}>{currentLabel?.trim() ? currentLabel : `Cost center #${value}`}</option>
-      )}
+      <option value="">Select budget unit</option>
+      {missingCurrent && <option value={value}>{`Budget unit #${value}`}</option>}
       {options.map((c) => (
         <option key={c.id} value={c.id}>
           {label(c)}
@@ -365,9 +400,66 @@ function CostCenterSelect({
   );
 }
 
+// BudgetApproverReference renders the designated budget approver(s) for the
+// chosen budget unit + estimated value as a reference next to the editable
+// approver field, with an "update" icon that copies them into the field.
+// Informational only — the actual approver is recomputed at the recommendation stage.
+function BudgetApproverReference({
+  budgetUnitId,
+  estimatedValue,
+  designatedApprovers,
+  enteredEmails,
+  onUseDesignated,
+}: {
+  budgetUnitId: number | null;
+  estimatedValue: number;
+  designatedApprovers: UserSummary[];
+  enteredEmails: string;
+  onUseDesignated: () => void;
+}) {
+  if (budgetUnitId == null) {
+    return <p className="text-sm text-gray-400">Select a budget unit in step 1 to see the designated approver.</p>;
+  }
+  const label = approverLabel(designatedApprovers);
+  const mismatch =
+    designatedApprovers.length > 0 &&
+    approverEmailKey(designatedApprovers.map((u) => u.email).join(",")) !== approverEmailKey(enteredEmails);
+  return (
+    <div className="rounded border border-indigo-100 bg-indigo-50 px-3 py-2 text-sm">
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-xs font-semibold uppercase tracking-wide text-indigo-700">
+          Designated approver{designatedApprovers.length > 1 ? "s" : ""} (reference)
+        </span>
+        <button
+          type="button"
+          onClick={onUseDesignated}
+          disabled={designatedApprovers.length === 0}
+          title="Use the designated approver(s) in the field above"
+          className="inline-flex items-center gap-1 rounded border border-indigo-200 bg-white px-2 py-0.5 text-xs font-medium text-indigo-700 hover:bg-indigo-50 disabled:opacity-40"
+        >
+          <span aria-hidden>↻</span> Use designated
+        </button>
+      </div>
+      <div className="mt-0.5 text-gray-800">
+        {label || "No approver configured for this value — will use the budget unit's default approver."}
+      </div>
+      {estimatedValue <= 0 && (
+        <div className="mt-1 text-xs text-gray-500">
+          No estimated value entered — this resolves to the budget unit's default approver.
+        </div>
+      )}
+      {mismatch && (
+        <div className="mt-1 text-xs font-medium text-amber-700">
+          The approver entered above differs from the designated approver(s).
+        </div>
+      )}
+    </div>
+  );
+}
+
 // --- step 1 ---
 
-function StepRequester({ value, d, setTop, setD, lists, costCenters }: StepProps) {
+function StepRequester({ value, d, setTop, setD, lists, budgetUnits }: StepProps) {
   return (
     <div className="space-y-4">
       <SectionTitle title="Requester details" desc="Tell us who you are and why this purchase is needed." />
@@ -383,27 +475,11 @@ function StepRequester({ value, d, setTop, setD, lists, costCenters }: StepProps
         </Field>
       </div>
       <div className="grid gap-4 sm:grid-cols-2">
-        <Field label="Cost center" required hint="Determines who owns the budget approval — the approver is filled in from its owner.">
-          <CostCenterSelect
-            value={value.cost_center_id}
-            currentLabel={value.cost_center}
-            costCenters={costCenters}
-            onChange={(cc, name) =>
-              // Single update so the top-level and details patches don't race.
-              setTop({
-                cost_center_id: cc?.id ?? null,
-                cost_center: name,
-                // Autofill the budget approver from the cost-center owner; the
-                // requester can still override it in step 3.
-                budget_approver_name: cc?.owner_name ?? "",
-                budget_approver_email: cc?.owner_email ?? "",
-                // Default the budget-coding cost center to the same pick, but
-                // never overwrite one the requester already set there.
-                details: d.budget_cost_center_id
-                  ? d
-                  : { ...d, budget_cost_center: name, budget_cost_center_id: cc?.id ?? null },
-              })
-            }
+        <Field label="Budget unit" required hint="Determines the budget approver, based on the estimated value you enter in step 3.">
+          <BudgetUnitSelect
+            value={value.budget_unit_id}
+            budgetUnits={budgetUnits}
+            onChange={(bu) => setTop({ budget_unit_id: bu?.id ?? null })}
           />
         </Field>
         <Field label="WSO2 entity" required>
@@ -412,6 +488,15 @@ function StepRequester({ value, d, setTop, setD, lists, costCenters }: StepProps
       </div>
       <Field label="Business justification" required>
         <textarea className={`${inputCls} min-h-[90px]`} value={d.business_justification ?? ""} onChange={(e) => setD({ business_justification: e.target.value })} placeholder="Why is this purchase needed? What problem does it solve?" />
+      </Field>
+      <Field label="Team lead (for approval)" required hint="Your team lead must approve this request before procurement can start working on it.">
+        <input
+          type="email"
+          className={inputCls}
+          value={value.team_lead_email ?? ""}
+          onChange={(e) => setTop({ team_lead_email: e.target.value })}
+          placeholder="teamlead@wso2.com"
+        />
       </Field>
     </div>
   );
@@ -521,8 +606,15 @@ function StepPurchase({ value, d, setTop, setD, lists }: StepProps) {
 
 // --- step 3 ---
 
-function StepVendor({ value, d, setTop, setD, lists, costCenters }: StepProps) {
+function StepVendor({ value, d, setTop, setD, lists, designatedApprovers = [] }: StepProps) {
   const { data: vendorOptions } = useVendorLookup();
+
+  // Copy the designated approver(s) into the editable budget-approver field.
+  const useDesignatedApprover = () =>
+    setTop({
+      budget_approver_name: designatedApprovers.map((u) => u.name || u.email).join(", "),
+      budget_approver_email: designatedApprovers.map((u) => u.email).join(", "),
+    });
 
   // The supplier name is an editable combobox over the vendor master. Picking
   // (or typing the exact name of) a known vendor auto-fills the other supplier
@@ -588,7 +680,7 @@ function StepVendor({ value, d, setTop, setD, lists, costCenters }: StepProps) {
             <input type="number" min={0} step="0.01" className={inputCls} value={value.estimated_value || ""} onChange={(e) => setTop({ estimated_value: Number(e.target.value) })} placeholder="0.00" />
           </Field>
           <Field label="Currency">
-            <Select value={value.currency} onChange={(currency) => setTop({ currency })} options={optionsFor(lists, "currency", value.currency)} placeholder="Select" />
+            <CurrencyInput className={inputCls} value={value.currency} onChange={(currency) => setTop({ currency })} maxLength={3} options={optionsFor(lists, "currency", value.currency)} />
           </Field>
           <Field label="Engagement type">
             <Select value={d.engagement_type} onChange={(v) => setD({ engagement_type: v })} options={optionsFor(lists, "engagement_type", d.engagement_type)} placeholder="Select" />
@@ -601,28 +693,35 @@ function StepVendor({ value, d, setTop, setD, lists, costCenters }: StepProps) {
 
       <div className={subCls}>Budget approval</div>
       <div className="grid gap-4 sm:grid-cols-2">
-        <Field label="Budget approver's name" required hint="Filled in from the cost-centre owner — edit if someone else approves.">
-          <input className={inputCls} value={value.budget_approver_name ?? ""} onChange={(e) => setTop({ budget_approver_name: e.target.value })} placeholder="Name of the budget owner" />
+        <Field label="Budget approver's name">
+          <input
+            className={inputCls}
+            value={value.budget_approver_name ?? ""}
+            onChange={(e) => setTop({ budget_approver_name: e.target.value })}
+            placeholder="Name of the budget approver"
+          />
         </Field>
-        <Field label="Budget approver's email" required>
-          <input type="email" className={inputCls} value={value.budget_approver_email ?? ""} onChange={(e) => setTop({ budget_approver_email: e.target.value })} placeholder="approver@wso2.com" />
+        <Field label="Budget approver's email">
+          <input
+            className={inputCls}
+            value={value.budget_approver_email ?? ""}
+            onChange={(e) => setTop({ budget_approver_email: e.target.value })}
+            placeholder="approver@wso2.com"
+          />
         </Field>
       </div>
+      <BudgetApproverReference
+        budgetUnitId={value.budget_unit_id}
+        estimatedValue={value.estimated_value}
+        designatedApprovers={designatedApprovers}
+        enteredEmails={value.budget_approver_email ?? ""}
+        onUseDesignated={useDesignatedApprover}
+      />
 
       <div className={subCls}>Budget coding</div>
       <div className="grid gap-4 sm:grid-cols-2">
         <Field label="Budget category" required>
           <Select value={d.budget_category} onChange={(v) => setD({ budget_category: v })} options={optionsFor(lists, "budget_category", d.budget_category)} placeholder="Select category" />
-        </Field>
-        <Field label="Cost center" required>
-          <CostCenterSelect
-            value={d.budget_cost_center_id ?? null}
-            currentLabel={d.budget_cost_center}
-            costCenters={costCenters}
-            onChange={(_, name) =>
-              setD({ budget_cost_center: name, budget_cost_center_id: _?.id ?? null })
-            }
-          />
         </Field>
         <Field label="Product" required>
           <Select value={d.budget_product} onChange={(v) => setD({ budget_product: v })} options={optionsFor(lists, "product", d.budget_product)} placeholder="Select product" />
@@ -646,29 +745,41 @@ function StepVendor({ value, d, setTop, setD, lists, costCenters }: StepProps) {
 function StepReview({
   value,
   d,
+  budgetUnits,
   requireDeclaration,
   declared,
   setDeclared,
+  approverMismatch,
+  designatedLabel,
 }: {
   value: PurchaseRequestInput;
   d: PRDetails;
+  budgetUnits?: BudgetUnitSummary[];
   requireDeclaration: boolean;
   declared: boolean;
   setDeclared: (b: boolean) => void;
+  approverMismatch: boolean;
+  designatedLabel: string;
 }) {
+  const bu = (budgetUnits ?? []).find((c) => c.id === value.budget_unit_id);
+  const buLabel = bu ? (bu.code ? `${bu.code} — ${bu.name}` : bu.name) : "—";
   const rows: [string, string][] = [
     ["Requester", d.requester_name || "—"],
     ["Date", d.date || "—"],
-    ["Cost center", value.cost_center || "—"],
+    ["Budget unit", buLabel],
     ["Entity", value.entity || "—"],
     ["Type", value.category === "IT" ? "IT solution" : value.category === "NON-IT" ? "Non-IT solution" : "—"],
     ["Solution", value.category === "IT" ? d.it_product || "—" : d.nit_category || "—"],
     ["Supplier", d.supplier_name || "—"],
     ["Vendor status", d.supplier_existing === "yes" ? "Registered vendor" : d.supplier_existing === "no" ? "New vendor (RFI)" : "—"],
     ["Estimated value", value.estimated_value ? `${value.currency} ${value.estimated_value.toLocaleString()}` : "—"],
-    ["Budget approver", value.budget_approver_name || "—"],
+    [
+      "Budget approver",
+      value.budget_approver_name || value.budget_approver_email
+        ? `${value.budget_approver_name || ""}${value.budget_approver_email ? ` · ${value.budget_approver_email}` : ""}`
+        : "—",
+    ],
     ["Budget category", d.budget_category || "—"],
-    ["Cost center (coding)", d.budget_cost_center || "—"],
     ["Product", d.budget_product || "—"],
     ["Region", d.budget_region || "—"],
   ];
@@ -692,6 +803,13 @@ function StepReview({
           </span>
         </label>
       )}
+      {approverMismatch && (
+        <div className="rounded border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+          <span className="font-semibold">Heads up:</span> the budget approver you entered doesn't match
+          the designated approver{designatedLabel ? ` (${designatedLabel})` : ""}. You can still submit —
+          the Procurement Team can reconcile it later.
+        </div>
+      )}
     </div>
   );
 }
@@ -710,12 +828,10 @@ export function emptyRequisition(name = "", email = ""): PurchaseRequestInput {
   const today = new Date().toISOString().slice(0, 10);
   return {
     title: "",
-    cost_center: "",
-    cost_center_id: null,
+    budget_unit_id: null,
     comments: "",
     items: [],
     links: [],
-    approver_ids: [],
     team: "",
     entity: "",
     category: "",
@@ -723,6 +839,7 @@ export function emptyRequisition(name = "", email = ""): PurchaseRequestInput {
     currency: "USD",
     budget_approver_name: "",
     budget_approver_email: "",
+    team_lead_email: "",
     details: { date: today, requester_name: name, requester_email: email },
   };
 }

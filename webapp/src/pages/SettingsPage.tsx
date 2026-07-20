@@ -9,16 +9,17 @@ import {
   type ConfigOption,
 } from "../api/config";
 import { useConfigLookup, useConfigOptionsAdmin } from "../hooks/useConfigOptions";
-import { useCanManageCostCenters } from "../hooks/useCanManageCostCenters";
+import { useCanManageBudgetUnits } from "../hooks/useCanManageBudgetUnits";
 import { useIsAdmin } from "../hooks/useIsAdmin";
 import { StorageSettings } from "../components/StorageSettings";
+import { TeamsSection } from "../components/TeamsSection";
 
-// SettingsPage lets admin / finance_admin manage the values that populate the
-// requisition-form dropdowns. Access mirrors the Cost centers page
-// (middleware.HasCostCenterAdmin enforces the same rule server-side).
+// SettingsPage lets admin / procurement_admin manage the values that populate the
+// requisition-form dropdowns. Access mirrors the Budget units page
+// (middleware.HasBudgetUnitAdmin enforces the same rule server-side).
 export function SettingsPage() {
   const isAdmin = useIsAdmin();
-  const canManage = useCanManageCostCenters();
+  const canManage = useCanManageBudgetUnits();
   const { data: config } = useConfigLookup(canManage);
   const { data: options, isLoading, error } = useConfigOptionsAdmin();
   const qc = useQueryClient();
@@ -64,7 +65,7 @@ export function SettingsPage() {
   if (!canManage) {
     return (
       <div className="rounded border border-dashed bg-white p-8 text-center text-gray-500">
-        You need the admin or finance_admin role to manage settings.
+        You need the admin or procurement_admin role to manage settings.
       </div>
     );
   }
@@ -84,6 +85,15 @@ export function SettingsPage() {
           <StorageSettings />
         </div>
       )}
+
+      <div className="mb-8">
+        <TeamsSection />
+      </div>
+      <h2 className="mb-1 text-lg font-semibold text-gray-900">Dropdown values</h2>
+      <p className="mb-4 text-sm text-gray-500">
+        Values that appear in the new-request form dropdowns.
+      </p>
+
 
       {actionError && (
         <div className="mb-4 rounded border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-700">

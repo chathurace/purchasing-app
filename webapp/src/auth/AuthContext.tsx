@@ -43,7 +43,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const login = () => {
     setLoginError(null);
-    userManager.signinRedirect().catch((err) => {
+    // Force the IdP to re-prompt for credentials rather than silently
+    // reusing an existing IdP session. Because logout is local-only (we do
+    // not round-trip the IdP's end-session endpoint — see below), without
+    // this a previously signed-in user would be re-authenticated
+    // automatically instead of being able to sign in as someone else.
+    userManager.signinRedirect({ prompt: "login" }).catch((err) => {
       // signinRedirect first fetches the IdP's OIDC metadata. In dev this is a
       // self-signed https endpoint (WSO2 on :9443); if the browser hasn't
       // trusted that cert the fetch fails and the click would otherwise appear

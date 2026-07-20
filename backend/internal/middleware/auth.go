@@ -51,10 +51,10 @@ type AuthMiddleware struct {
 
 // AuthConfig carries the OIDC settings (sourced from config.yaml).
 type AuthConfig struct {
-	Issuer             string
-	DiscoveryURL       string
-	ClientID           string
-	InsecureSkipVerify bool
+	Issuer              string
+	DiscoveryURL        string
+	ClientID            string
+	InsecureSkipVerify  bool
 	BootstrapAdminEmail string
 }
 
@@ -253,26 +253,34 @@ func HasRole(ctx context.Context, role string) bool {
 	return false
 }
 
-// HasFinanceAccess reports whether the caller may perform procurement actions
-// (quotations, contracts, approvals, PR rejection). Any finance,
-// finance_admin or admin user qualifies.
-func HasFinanceAccess(ctx context.Context) bool {
-	return HasRole(ctx, model.RoleFinance) ||
-		HasRole(ctx, model.RoleFinanceAdmin) ||
+// HasProcurementAccess reports whether the caller may perform procurement actions
+// (quotations, contracts, approvals, PR rejection). Any procurement,
+// procurement_admin or admin user qualifies.
+func HasProcurementAccess(ctx context.Context) bool {
+	return HasRole(ctx, model.RoleProcurement) ||
+		HasRole(ctx, model.RoleProcurementAdmin) ||
 		HasRole(ctx, model.RoleAdmin)
 }
 
 // HasVendorAdmin reports whether the caller may manage the vendor master from
-// the dedicated vendor management page (edit, deactivate). Only finance_admin
-// and admin qualify; plain finance users keep read + inline-create access.
+// the dedicated vendor management page (edit, deactivate). Only procurement_admin
+// and admin qualify; plain procurement users keep read + inline-create access.
 func HasVendorAdmin(ctx context.Context) bool {
-	return HasRole(ctx, model.RoleFinanceAdmin) || HasRole(ctx, model.RoleAdmin)
+	return HasRole(ctx, model.RoleProcurementAdmin) || HasRole(ctx, model.RoleAdmin)
 }
 
-// HasCostCenterAdmin reports whether the caller may manage the cost-center
-// master from the dedicated cost centers page (create, edit, deactivate). Only
-// finance_admin and admin qualify; the active-cost-center lookup used to
-// populate a purchase request's dropdown is open to any authenticated user.
-func HasCostCenterAdmin(ctx context.Context) bool {
-	return HasRole(ctx, model.RoleFinanceAdmin) || HasRole(ctx, model.RoleAdmin)
+// HasTeamAdmin reports whether the caller may manage teams — add/remove members
+// (which grants/revokes the team's member role) and edit the team email. Only
+// procurement_admin and admin qualify. Reading teams is open to any authenticated user.
+func HasTeamAdmin(ctx context.Context) bool {
+	return HasRole(ctx, model.RoleProcurementAdmin) || HasRole(ctx, model.RoleAdmin)
+}
+
+// HasBudgetUnitAdmin reports whether the caller may manage master data —
+// budget units (create, edit, deactivate) and the requisition-form config
+// options — from their dedicated admin pages. Only procurement_admin and admin
+// qualify; the active-budget-unit lookup used to populate a purchase request's
+// dropdown is open to any authenticated user.
+func HasBudgetUnitAdmin(ctx context.Context) bool {
+	return HasRole(ctx, model.RoleProcurementAdmin) || HasRole(ctx, model.RoleAdmin)
 }

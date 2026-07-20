@@ -28,7 +28,7 @@ type invoiceItemInput struct {
 }
 
 type invoiceAllocInput struct {
-	CostCenterID int64   `json:"cost_center_id"`
+	BudgetUnitID int64   `json:"budget_unit_id"`
 	Value        float64 `json:"value"`
 }
 
@@ -55,7 +55,7 @@ func (in invoiceInput) toRepo() repository.InvoiceInput {
 	}
 	allocs := make([]repository.CostAllocation, 0, len(in.CostAllocations))
 	for _, a := range in.CostAllocations {
-		allocs = append(allocs, repository.CostAllocation{CostCenterID: a.CostCenterID, Value: a.Value})
+		allocs = append(allocs, repository.CostAllocation{BudgetUnitID: a.BudgetUnitID, Value: a.Value})
 	}
 	mode := strings.ToLower(strings.TrimSpace(in.AllocationMode))
 	if mode == "" {
@@ -74,8 +74,8 @@ func (in invoiceInput) toRepo() repository.InvoiceInput {
 	}
 }
 
-// validateAllocations enforces the cost-center allocation rules: a valid mode,
-// at least one allocation, no duplicate or invalid cost centers, and a total
+// validateAllocations enforces the budget-unit allocation rules: a valid mode,
+// at least one allocation, no duplicate or invalid budget units, and a total
 // that adds up (100% in percentage mode, or the invoice total in amount mode).
 // Returns a user-facing message and false when invalid.
 func validateAllocations(in repository.InvoiceInput, total float64) (string, bool) {
@@ -83,18 +83,18 @@ func validateAllocations(in repository.InvoiceInput, total float64) (string, boo
 		return "allocation mode must be 'percentage' or 'amount'", false
 	}
 	if len(in.CostAllocations) == 0 {
-		return "at least one cost-center allocation is required", false
+		return "at least one budget-unit allocation is required", false
 	}
 	seen := map[int64]bool{}
 	var sum float64
 	for _, a := range in.CostAllocations {
-		if a.CostCenterID <= 0 {
-			return "each allocation must reference a cost center", false
+		if a.BudgetUnitID <= 0 {
+			return "each allocation must reference a budget unit", false
 		}
-		if seen[a.CostCenterID] {
-			return "each cost center can appear only once in the allocation", false
+		if seen[a.BudgetUnitID] {
+			return "each budget unit can appear only once in the allocation", false
 		}
-		seen[a.CostCenterID] = true
+		seen[a.BudgetUnitID] = true
 		if a.Value < 0 {
 			return "allocation values cannot be negative", false
 		}
@@ -142,8 +142,8 @@ func validateInvoice(in repository.InvoiceInput) (string, bool) {
 
 // Create records a vendor invoice against a signed contract.
 func (h *InvoicesHandler) Create(w http.ResponseWriter, r *http.Request) {
-	if !middleware.HasFinanceAccess(r.Context()) {
-		writeError(w, http.StatusForbidden, "finance access required")
+	if !middleware.HasProcurementAccess(r.Context()) {
+		writeError(w, http.StatusForbidden, "procurement access required")
 		return
 	}
 	contractID, err := parseID(r, "id")
@@ -176,13 +176,14 @@ func (h *InvoicesHandler) Create(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to create invoice")
 		return
 	}
+	recordProcessEvent(r, h.Repo, inv.PurchaseRequestID, model.ProcessCreateInvoice, "")
 	writeJSON(w, http.StatusCreated, inv)
 }
 
 // ListForContract returns the invoices of one contract.
 func (h *InvoicesHandler) ListForContract(w http.ResponseWriter, r *http.Request) {
-	if !middleware.HasFinanceAccess(r.Context()) {
-		writeError(w, http.StatusForbidden, "finance access required")
+	if !middleware.HasProcurementAccess(r.Context()) {
+		writeError(w, http.StatusForbidden, "procurement access required")
 		return
 	}
 	contractID, err := parseID(r, "id")
@@ -200,8 +201,8 @@ func (h *InvoicesHandler) ListForContract(w http.ResponseWriter, r *http.Request
 }
 
 func (h *InvoicesHandler) List(w http.ResponseWriter, r *http.Request) {
-	if !middleware.HasFinanceAccess(r.Context()) {
-		writeError(w, http.StatusForbidden, "finance access required")
+	if !middleware.HasProcurementAccess(r.Context()) {
+		writeError(w, http.StatusForbidden, "procurement access required")
 		return
 	}
 	invoices, err := h.Repo.ListInvoices(r.Context(), nil)
@@ -247,6 +248,7 @@ func (h *InvoicesHandler) Update(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to update invoice")
 		return
 	}
+	recordProcessEvent(r, h.Repo, inv.PurchaseRequestID, model.ProcessUpdateInvoice, "")
 	updated, err := h.Repo.GetInvoice(r.Context(), inv.ID)
 	if err != nil {
 		reqLog(r).Error().Err(err).Msg("reload invoice after mutation")
@@ -285,6 +287,7 @@ func (h *InvoicesHandler) SetStatus(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to update invoice status")
 		return
 	}
+	recordProcessEvent(r, h.Repo, inv.PurchaseRequestID, model.ProcessInvoiceStatus, in.Status) // qualifier: received|approved|paid
 	updated, err := h.Repo.GetInvoice(r.Context(), inv.ID)
 	if err != nil {
 		reqLog(r).Error().Err(err).Msg("reload invoice after mutation")
@@ -313,6 +316,7 @@ func (h *InvoicesHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	for _, p := range paths {
 		_ = h.Storage.Delete(p)
 	}
+	recordProcessEvent(r, h.Repo, inv.PurchaseRequestID, model.ProcessDeleteInvoice, "")
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -354,10 +358,10 @@ func (h *InvoicesHandler) DeleteDocument(w http.ResponseWriter, r *http.Request)
 	deleteOwnedDoc(w, r, h.Repo, h.Storage, model.OwnerInvoice, inv.ID, docID)
 }
 
-// load fetches the invoice for finance-level actions, enforcing finance access.
+// load fetches the invoice for procurement-level actions, enforcing procurement access.
 func (h *InvoicesHandler) load(w http.ResponseWriter, r *http.Request) (*repository.Invoice, bool) {
-	if !middleware.HasFinanceAccess(r.Context()) {
-		writeError(w, http.StatusForbidden, "finance access required")
+	if !middleware.HasProcurementAccess(r.Context()) {
+		writeError(w, http.StatusForbidden, "procurement access required")
 		return nil, false
 	}
 	id, err := parseID(r, "id")

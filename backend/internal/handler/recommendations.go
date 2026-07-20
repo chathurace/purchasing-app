@@ -15,9 +15,37 @@ import (
 // PR view/permission helpers.
 
 type recommendationInput struct {
-	VendorID      int64    `json:"vendor_id"`
-	Description   string   `json:"description"`
-	RequiredTypes []string `json:"required_types"`
+	VendorID       int64    `json:"vendor_id"`
+	Description    string   `json:"description"`
+	EstimatedValue float64  `json:"estimated_value"`
+	Currency       string   `json:"currency"`
+	EngagementType string   `json:"engagement_type"`
+	RequiredTypes  []string `json:"required_types"`
+}
+
+// toRepoInput validates and builds the repository input from the decoded request.
+// It requires a vendor and ≥1 approval type; commercial fields are optional. It
+// returns the input, a user-facing error message (empty on success), and whether
+// it succeeded.
+func (in recommendationInput) toRepoInput() (repository.RecommendationInput, string) {
+	types, ok := normalizeRequiredTypes(in.RequiredTypes)
+	if !ok {
+		return repository.RecommendationInput{}, "select at least one approval (budget, legal or security)"
+	}
+	if in.VendorID == 0 {
+		return repository.RecommendationInput{}, "a vendor is required"
+	}
+	if in.EstimatedValue < 0 {
+		return repository.RecommendationInput{}, "estimated value cannot be negative"
+	}
+	return repository.RecommendationInput{
+		VendorID:       in.VendorID,
+		Description:    strings.TrimSpace(in.Description),
+		EstimatedValue: in.EstimatedValue,
+		Currency:       strings.TrimSpace(in.Currency),
+		EngagementType: strings.TrimSpace(in.EngagementType),
+		RequiredTypes:  types,
+	}, ""
 }
 
 // normalizeRequiredTypes validates and dedupes the requested approval types,
@@ -37,6 +65,16 @@ func normalizeRequiredTypes(in []string) ([]string, bool) {
 		}
 	}
 	return out, len(out) > 0
+}
+
+// reqHasBudget reports whether the budget card is among the required approvals.
+func reqHasBudget(types []string) bool {
+	for _, t := range types {
+		if t == model.RecApprovalBudget {
+			return true
+		}
+	}
+	return false
 }
 
 // loadViewablePR loads the PR by {id} and enforces view access.
@@ -70,12 +108,20 @@ func (h *PurchaseRequestsHandler) vendorHasQuotation(r *http.Request, prID, vend
 
 // CreateRecommendation adds the (single) procurement recommendation to a PR.
 func (h *PurchaseRequestsHandler) CreateRecommendation(w http.ResponseWriter, r *http.Request) {
-	if !middleware.HasFinanceAccess(r.Context()) {
-		writeError(w, http.StatusForbidden, "finance access required")
+	if !middleware.HasProcurementAccess(r.Context()) {
+		writeError(w, http.StatusForbidden, "procurement access required")
 		return
 	}
 	pr, ok := h.load(w, r)
 	if !ok {
+		return
+	}
+	if !model.IsTeamLeadApproved(pr.TeamLeadStatus) {
+		writeError(w, http.StatusConflict, "purchase request is awaiting team lead approval")
+		return
+	}
+	if code, msg, ok := assignmentWorkGate(r, pr); !ok {
+		writeError(w, code, msg)
 		return
 	}
 	if pr.Recommendation != nil {
@@ -87,16 +133,12 @@ func (h *PurchaseRequestsHandler) CreateRecommendation(w http.ResponseWriter, r 
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	types, ok := normalizeRequiredTypes(in.RequiredTypes)
-	if !ok {
-		writeError(w, http.StatusBadRequest, "select at least one approval (budget, legal or security)")
+	repoIn, errMsg := in.toRepoInput()
+	if errMsg != "" {
+		writeError(w, http.StatusBadRequest, errMsg)
 		return
 	}
-	if in.VendorID == 0 {
-		writeError(w, http.StatusBadRequest, "a vendor is required")
-		return
-	}
-	hasQuote, err := h.vendorHasQuotation(r, pr.ID, in.VendorID)
+	hasQuote, err := h.vendorHasQuotation(r, pr.ID, repoIn.VendorID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to validate vendor")
 		return
@@ -106,19 +148,25 @@ func (h *PurchaseRequestsHandler) CreateRecommendation(w http.ResponseWriter, r 
 		return
 	}
 	user := middleware.UserFromCtx(r.Context())
-	if _, err := h.Repo.CreateRecommendation(r.Context(), pr.ID, in.VendorID, strings.TrimSpace(in.Description), types, user.ID); err != nil {
+	if _, err := h.Repo.CreateRecommendation(r.Context(), pr.ID, repoIn, user.ID); err != nil {
 		reqLog(r).Error().Err(err).Msg("create recommendation")
 		writeError(w, http.StatusInternalServerError, "failed to create recommendation")
 		return
 	}
+	recordProcessEvent(r, h.Repo, pr.ID, model.ProcessCreateRecommendation, "")
+	ensureCollaborator(r, h.Repo, pr.ID)
+	if reqHasBudget(repoIn.RequiredTypes) {
+		h.notifyBudgetApprovers(r, pr)
+	}
+	h.notifyRecommendationCreated(r, pr)
 	h.reloadPR(w, r, pr.ID)
 }
 
 // UpdateRecommendation replaces the recommendation's vendor / description /
 // required approvals, resetting every card to pending.
 func (h *PurchaseRequestsHandler) UpdateRecommendation(w http.ResponseWriter, r *http.Request) {
-	if !middleware.HasFinanceAccess(r.Context()) {
-		writeError(w, http.StatusForbidden, "finance access required")
+	if !middleware.HasProcurementAccess(r.Context()) {
+		writeError(w, http.StatusForbidden, "procurement access required")
 		return
 	}
 	pr, ok := h.load(w, r)
@@ -134,16 +182,12 @@ func (h *PurchaseRequestsHandler) UpdateRecommendation(w http.ResponseWriter, r 
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	types, ok := normalizeRequiredTypes(in.RequiredTypes)
-	if !ok {
-		writeError(w, http.StatusBadRequest, "select at least one approval (budget, legal or security)")
+	repoIn, errMsg := in.toRepoInput()
+	if errMsg != "" {
+		writeError(w, http.StatusBadRequest, errMsg)
 		return
 	}
-	if in.VendorID == 0 {
-		writeError(w, http.StatusBadRequest, "a vendor is required")
-		return
-	}
-	hasQuote, err := h.vendorHasQuotation(r, pr.ID, in.VendorID)
+	hasQuote, err := h.vendorHasQuotation(r, pr.ID, repoIn.VendorID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to validate vendor")
 		return
@@ -152,7 +196,7 @@ func (h *PurchaseRequestsHandler) UpdateRecommendation(w http.ResponseWriter, r 
 		writeError(w, http.StatusBadRequest, "the vendor must have a quotation on this request")
 		return
 	}
-	paths, err := h.Repo.UpdateRecommendation(r.Context(), pr.ID, in.VendorID, strings.TrimSpace(in.Description), types)
+	paths, err := h.Repo.UpdateRecommendation(r.Context(), pr.ID, repoIn)
 	if err != nil {
 		reqLog(r).Error().Err(err).Msg("update recommendation")
 		writeError(w, http.StatusInternalServerError, "failed to update recommendation")
@@ -161,13 +205,20 @@ func (h *PurchaseRequestsHandler) UpdateRecommendation(w http.ResponseWriter, r 
 	for _, p := range paths {
 		_ = h.Storage.Delete(p)
 	}
+	recordProcessEvent(r, h.Repo, pr.ID, model.ProcessUpdateRecommendation, "")
+	ensureCollaborator(r, h.Repo, pr.ID)
+	// The estimated value may have changed the resolved budget approver(s), and
+	// editing resets every card to pending, so re-notify them.
+	if reqHasBudget(repoIn.RequiredTypes) {
+		h.notifyBudgetApprovers(r, pr)
+	}
 	h.reloadPR(w, r, pr.ID)
 }
 
 // DeleteRecommendation removes a PR's recommendation.
 func (h *PurchaseRequestsHandler) DeleteRecommendation(w http.ResponseWriter, r *http.Request) {
-	if !middleware.HasFinanceAccess(r.Context()) {
-		writeError(w, http.StatusForbidden, "finance access required")
+	if !middleware.HasProcurementAccess(r.Context()) {
+		writeError(w, http.StatusForbidden, "procurement access required")
 		return
 	}
 	pr, ok := h.load(w, r)
@@ -187,16 +238,18 @@ func (h *PurchaseRequestsHandler) DeleteRecommendation(w http.ResponseWriter, r 
 	for _, p := range paths {
 		_ = h.Storage.Delete(p)
 	}
+	recordProcessEvent(r, h.Repo, pr.ID, model.ProcessDeleteRecommendation, "")
+	ensureCollaborator(r, h.Repo, pr.ID)
 	w.WriteHeader(http.StatusNoContent)
 }
 
 // CreateRecommendationContract drafts the contract attached to a PR's
 // recommendation (the optional contract card). The given description becomes the
 // contract terms; the PDF is uploaded separately against the returned contract
-// (POST /contracts/{id}/documents). Finance only; one contract per recommendation.
+// (POST /contracts/{id}/documents). Procurement only; one contract per recommendation.
 func (h *PurchaseRequestsHandler) CreateRecommendationContract(w http.ResponseWriter, r *http.Request) {
-	if !middleware.HasFinanceAccess(r.Context()) {
-		writeError(w, http.StatusForbidden, "finance access required")
+	if !middleware.HasProcurementAccess(r.Context()) {
+		writeError(w, http.StatusForbidden, "procurement access required")
 		return
 	}
 	pr, ok := h.load(w, r)
@@ -229,14 +282,17 @@ func (h *PurchaseRequestsHandler) CreateRecommendationContract(w http.ResponseWr
 		writeError(w, http.StatusInternalServerError, "failed to create contract")
 		return
 	}
+	recordProcessEvent(r, h.Repo, pr.ID, model.ProcessAddDraftContract, model.QualifierFromRecommendation)
+	ensureCollaborator(r, h.Repo, pr.ID)
+	h.notifyContractAdded(r, pr)
 	writeJSON(w, http.StatusCreated, c)
 }
 
 // DeleteRecommendationContract removes the contract attached to a PR's
-// recommendation (only while it is still a draft) and unlinks it. Finance only.
+// recommendation (only while it is still a draft) and unlinks it. Procurement only.
 func (h *PurchaseRequestsHandler) DeleteRecommendationContract(w http.ResponseWriter, r *http.Request) {
-	if !middleware.HasFinanceAccess(r.Context()) {
-		writeError(w, http.StatusForbidden, "finance access required")
+	if !middleware.HasProcurementAccess(r.Context()) {
+		writeError(w, http.StatusForbidden, "procurement access required")
 		return
 	}
 	pr, ok := h.load(w, r)
@@ -260,14 +316,16 @@ func (h *PurchaseRequestsHandler) DeleteRecommendationContract(w http.ResponseWr
 	for _, p := range paths {
 		_ = h.Storage.Delete(p)
 	}
+	recordProcessEvent(r, h.Repo, pr.ID, model.ProcessDeleteContract, "")
+	ensureCollaborator(r, h.Repo, pr.ID)
 	h.reloadPR(w, r, pr.ID)
 }
 
 // SetRecommendationRFI sets the RFI description on a PR's recommendation (the
-// optional RFI card). Finance only. The PDF attachments are managed separately.
+// optional RFI card). Procurement only. The PDF attachments are managed separately.
 func (h *PurchaseRequestsHandler) SetRecommendationRFI(w http.ResponseWriter, r *http.Request) {
-	if !middleware.HasFinanceAccess(r.Context()) {
-		writeError(w, http.StatusForbidden, "finance access required")
+	if !middleware.HasProcurementAccess(r.Context()) {
+		writeError(w, http.StatusForbidden, "procurement access required")
 		return
 	}
 	pr, ok := h.load(w, r)
@@ -290,14 +348,16 @@ func (h *PurchaseRequestsHandler) SetRecommendationRFI(w http.ResponseWriter, r 
 		writeError(w, http.StatusInternalServerError, "failed to update RFI")
 		return
 	}
+	recordProcessEvent(r, h.Repo, pr.ID, model.ProcessRaiseRFI, "")
+	ensureCollaborator(r, h.Repo, pr.ID)
 	h.reloadPR(w, r, pr.ID)
 }
 
 // DeleteRecommendationRFI clears a PR's RFI: blanks the description and removes
-// all RFI attachments. Finance only.
+// all RFI attachments. Procurement only.
 func (h *PurchaseRequestsHandler) DeleteRecommendationRFI(w http.ResponseWriter, r *http.Request) {
-	if !middleware.HasFinanceAccess(r.Context()) {
-		writeError(w, http.StatusForbidden, "finance access required")
+	if !middleware.HasProcurementAccess(r.Context()) {
+		writeError(w, http.StatusForbidden, "procurement access required")
 		return
 	}
 	pr, ok := h.load(w, r)
@@ -317,13 +377,15 @@ func (h *PurchaseRequestsHandler) DeleteRecommendationRFI(w http.ResponseWriter,
 	for _, p := range paths {
 		_ = h.Storage.Delete(p)
 	}
+	recordProcessEvent(r, h.Repo, pr.ID, model.ProcessClearRFI, "")
+	ensureCollaborator(r, h.Repo, pr.ID)
 	h.reloadPR(w, r, pr.ID)
 }
 
-// UploadRecRFIDocument attaches a PDF to a PR's RFI. Finance only.
+// UploadRecRFIDocument attaches a PDF to a PR's RFI. Procurement only.
 func (h *PurchaseRequestsHandler) UploadRecRFIDocument(w http.ResponseWriter, r *http.Request) {
-	if !middleware.HasFinanceAccess(r.Context()) {
-		writeError(w, http.StatusForbidden, "finance access required")
+	if !middleware.HasProcurementAccess(r.Context()) {
+		writeError(w, http.StatusForbidden, "procurement access required")
 		return
 	}
 	pr, ok := h.load(w, r)
@@ -359,10 +421,10 @@ func (h *PurchaseRequestsHandler) DownloadRecRFIDocument(w http.ResponseWriter, 
 	downloadOwnedDoc(w, r, h.Repo, h.Storage, model.OwnerRecommendationRFI, pr.Recommendation.ID, docID)
 }
 
-// DeleteRecRFIDocument removes an RFI attachment. Finance only.
+// DeleteRecRFIDocument removes an RFI attachment. Procurement only.
 func (h *PurchaseRequestsHandler) DeleteRecRFIDocument(w http.ResponseWriter, r *http.Request) {
-	if !middleware.HasFinanceAccess(r.Context()) {
-		writeError(w, http.StatusForbidden, "finance access required")
+	if !middleware.HasProcurementAccess(r.Context()) {
+		writeError(w, http.StatusForbidden, "procurement access required")
 		return
 	}
 	pr, ok := h.load(w, r)
@@ -397,13 +459,18 @@ func (h *PurchaseRequestsHandler) SetRecApproval(w http.ResponseWriter, r *http.
 		writeError(w, http.StatusBadRequest, "approval type must be budget, legal or security")
 		return
 	}
-	can, err := h.canActOnRecType(r, pr, approvalType)
+	card := findApproval(pr.Recommendation, approvalType)
+	if card == nil {
+		writeError(w, http.StatusBadRequest, "the "+approvalType+" approval is not required on this recommendation")
+		return
+	}
+	can, err := h.canApproveRecType(r, pr, card)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to check permission")
 		return
 	}
 	if !can {
-		writeError(w, http.StatusForbidden, "you cannot act on the "+approvalType+" approval")
+		writeError(w, http.StatusForbidden, "only the assigned reviewer can approve the "+approvalType+" card")
 		return
 	}
 	var in struct {
@@ -423,6 +490,16 @@ func (h *PurchaseRequestsHandler) SetRecApproval(w http.ResponseWriter, r *http.
 		reqLog(r).Error().Err(err).Msg("set recommendation approval")
 		writeError(w, http.StatusInternalServerError, "failed to update approval")
 		return
+	}
+	if action, ok := model.RecApprovalAction(approvalType); ok {
+		qualifier := model.QualifierRevert
+		if in.Approved {
+			qualifier = model.QualifierApprove
+		}
+		recordProcessEvent(r, h.Repo, pr.ID, action, qualifier)
+	}
+	if in.Approved {
+		h.notifyRecApproval(r, pr, approvalType)
 	}
 	h.reloadPR(w, r, pr.ID)
 }
@@ -466,7 +543,155 @@ func (h *PurchaseRequestsHandler) AddRecComment(w http.ResponseWriter, r *http.R
 		writeError(w, http.StatusInternalServerError, "failed to add comment")
 		return
 	}
+	h.notifyRecComment(r, pr, in.ApprovalType, strings.TrimSpace(in.Comment))
 	writeJSON(w, http.StatusCreated, comment)
+}
+
+// findApproval returns the approval card of the given type on a recommendation,
+// or nil when that card is not required.
+func findApproval(rec *repository.Recommendation, approvalType string) *repository.RecApproval {
+	if rec == nil {
+		return nil
+	}
+	for i := range rec.Approvals {
+		if rec.Approvals[i].ApprovalType == approvalType {
+			return &rec.Approvals[i]
+		}
+	}
+	return nil
+}
+
+// SetRecAssignee sets (or clears) the assignee of a legal/security approval card.
+// Any member of the card's team, or any procurement user, may assign it; the assignee
+// must be a member of that team. When notify is true and an assignee is set, the
+// assignee is emailed (CC the team email). The budget card has no assignee.
+func (h *PurchaseRequestsHandler) SetRecAssignee(w http.ResponseWriter, r *http.Request) {
+	pr, ok := h.loadViewablePR(w, r)
+	if !ok {
+		return
+	}
+	if pr.Recommendation == nil {
+		writeError(w, http.StatusNotFound, "no recommendation on this request")
+		return
+	}
+	approvalType := urlParam(r, "type")
+	role, ok := roleForAssignableType(approvalType)
+	if !ok {
+		writeError(w, http.StatusBadRequest, "only the legal and security cards have an assignee")
+		return
+	}
+	if !h.canAssignRecType(r.Context(), approvalType) {
+		writeError(w, http.StatusForbidden, "you cannot assign the "+approvalType+" card")
+		return
+	}
+	if findApproval(pr.Recommendation, approvalType) == nil {
+		writeError(w, http.StatusBadRequest, "the "+approvalType+" approval is not required on this recommendation")
+		return
+	}
+	var in struct {
+		AssigneeID *int64 `json:"assignee_id"`
+		Notify     bool   `json:"notify"`
+	}
+	if err := decodeJSON(r, &in); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	// A named assignee must be an active member of the card's team.
+	if in.AssigneeID != nil {
+		member, err := h.Repo.UserHasRole(r.Context(), *in.AssigneeID, role)
+		if err != nil {
+			reqLog(r).Error().Err(err).Msg("check assignee membership")
+			writeError(w, http.StatusInternalServerError, "failed to set assignee")
+			return
+		}
+		if !member {
+			writeError(w, http.StatusBadRequest, "the assignee must be a member of the "+approvalType+" team")
+			return
+		}
+	}
+	if err := h.Repo.SetRecAssignee(r.Context(), pr.ID, approvalType, in.AssigneeID); err != nil {
+		reqLog(r).Error().Err(err).Msg("set recommendation assignee")
+		writeError(w, http.StatusInternalServerError, "failed to set assignee")
+		return
+	}
+	qualifier := model.QualifierUnassign
+	if in.AssigneeID != nil {
+		qualifier = model.QualifierAssign
+	}
+	if action, ok := model.RecAssignAction(approvalType); ok {
+		recordProcessEvent(r, h.Repo, pr.ID, action, qualifier)
+	}
+	if in.Notify && in.AssigneeID != nil {
+		h.notifyAssignee(r, pr, approvalType, role)
+	}
+	h.reloadPR(w, r, pr.ID)
+}
+
+// RemindRecAssignee re-sends the assignment notification to a card's current
+// assignee (CC the team email). Same actor rule as setting the assignee.
+func (h *PurchaseRequestsHandler) RemindRecAssignee(w http.ResponseWriter, r *http.Request) {
+	pr, ok := h.loadViewablePR(w, r)
+	if !ok {
+		return
+	}
+	if pr.Recommendation == nil {
+		writeError(w, http.StatusNotFound, "no recommendation on this request")
+		return
+	}
+	approvalType := urlParam(r, "type")
+	role, ok := roleForAssignableType(approvalType)
+	if !ok {
+		writeError(w, http.StatusBadRequest, "only the legal and security cards have an assignee")
+		return
+	}
+	if !h.canAssignRecType(r.Context(), approvalType) {
+		writeError(w, http.StatusForbidden, "you cannot remind the "+approvalType+" assignee")
+		return
+	}
+	card := findApproval(pr.Recommendation, approvalType)
+	if card == nil || card.Assignee == nil {
+		writeError(w, http.StatusBadRequest, "this card has no assignee to remind")
+		return
+	}
+	h.notifyAssignee(r, pr, approvalType, role)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// RemindBudgetApprovers re-sends the budget approval notification to every
+// qualified budget approver of the PR's recommendation. Procurement may trigger it
+// (mirroring the assignee reminder for legal/security). The budget card must be
+// required.
+func (h *PurchaseRequestsHandler) RemindBudgetApprovers(w http.ResponseWriter, r *http.Request) {
+	if !middleware.HasProcurementAccess(r.Context()) {
+		writeError(w, http.StatusForbidden, "procurement access required")
+		return
+	}
+	pr, ok := h.loadViewablePR(w, r)
+	if !ok {
+		return
+	}
+	if pr.Recommendation == nil {
+		writeError(w, http.StatusNotFound, "no recommendation on this request")
+		return
+	}
+	if findApproval(pr.Recommendation, model.RecApprovalBudget) == nil {
+		writeError(w, http.StatusBadRequest, "the budget approval is not required on this recommendation")
+		return
+	}
+	h.notifyBudgetApprovers(r, pr)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// roleForAssignableType maps an assignable card type (legal/security) to the role
+// that designates its team. Reports false for the budget card (no assignee).
+func roleForAssignableType(approvalType string) (string, bool) {
+	switch approvalType {
+	case model.RecApprovalLegal:
+		return model.RoleLegal, true
+	case model.RecApprovalSecurity:
+		return model.RoleSecurity, true
+	}
+	return "", false
 }
 
 // --- comment documents ---

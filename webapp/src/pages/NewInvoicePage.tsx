@@ -35,14 +35,14 @@ export function NewInvoicePage() {
   const [prefilled, setPrefilled] = useState(false);
 
   // Once the contract loads, default the currency to the contract's and, when
-  // its purchase request has a cost center, pre-fill a single 100% allocation.
+  // its purchase request has a budget unit, pre-fill a single 100% allocation.
   useEffect(() => {
     if (c && !prefilled) {
       setValue((v) => ({
         ...v,
         currency: c.currency,
-        cost_allocations: c.cost_center
-          ? [{ cost_center_id: c.cost_center.id, value: 100 }]
+        cost_allocations: c.budget_unit
+          ? [{ budget_unit_id: c.budget_unit.id, value: 100 }]
           : v.cost_allocations,
       }));
       setPrefilled(true);
@@ -142,7 +142,7 @@ export function NewInvoicePage() {
           <button
             onClick={() => mutation.mutate()}
             disabled={mutation.isPending || !allocOk}
-            title={allocOk ? undefined : "Assign cost centers that add up before saving"}
+            title={allocOk ? undefined : "Assign budget units that add up before saving"}
             className="rounded bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
           >
             {mutation.isPending ? "Saving…" : "Create invoice"}

@@ -1,6 +1,6 @@
 import { Fragment } from "react";
 import { Link } from "react-router-dom";
-import { useFinanceAccess } from "../hooks/useFinanceAccess";
+import { useProcurementAccess } from "../hooks/useProcurementAccess";
 import { useRelatedDocuments } from "../hooks/usePurchaseRequests";
 import { buildSteps } from "../lib/caseGraph";
 import type { CaseCurrent, StepView } from "../lib/caseGraph";
@@ -8,11 +8,11 @@ import type { CaseCurrent, StepView } from "../lib/caseGraph";
 // ChainStepper shows where the current record sits in the procurement chain
 // (Request ▸ Quotation ▸ Contract): ancestors link to the specific record on
 // this record's path, the current stage is highlighted, and downstream stages
-// show how many records hang off it. Finance-access only (it reads /related).
+// show how many records hang off it. Procurement-access only (it reads /related).
 export function ChainStepper({ prId, current }: { prId: number; current: CaseCurrent }) {
-  const finance = useFinanceAccess();
-  const { data } = useRelatedDocuments(prId, finance);
-  if (!finance || !data) return null;
+  const procurement = useProcurementAccess();
+  const { data } = useRelatedDocuments(prId, procurement);
+  if (!procurement || !data) return null;
 
   const steps = buildSteps(data, current);
   return (

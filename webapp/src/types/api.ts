@@ -1,4 +1,4 @@
-export type Role = "staff" | "finance" | "finance_admin" | "admin" | "legal" | "security";
+export type Role = "staff" | "procurement" | "procurement_admin" | "admin" | "legal" | "security";
 
 export type PRStatus =
   | "submitted"
@@ -34,12 +34,12 @@ export interface Me {
 
 // Roles an admin may grant/revoke. `staff` is a permanent baseline (auto-granted
 // on first login, never removable) and so is excluded — mirrors model.AssignableRoles.
-export const ASSIGNABLE_ROLES: Role[] = ["finance", "finance_admin", "admin", "legal", "security"];
+export const ASSIGNABLE_ROLES: Role[] = ["procurement", "procurement_admin", "admin", "legal", "security"];
 
 export const ROLE_LABELS: Record<Role, string> = {
   staff: "Staff",
-  finance: "Finance",
-  finance_admin: "Finance admin",
+  procurement: "Procurement",
+  procurement_admin: "Procurement admin",
   admin: "Admin",
   legal: "Legal",
   security: "Security",
@@ -60,6 +60,23 @@ export interface UserSummary {
   id: number;
   email: string;
   name: string;
+}
+
+// A team (Legal / Security / Procurement). Membership is the member_role: a user is a
+// member iff they hold that role, so adding/removing a member grants/revokes it.
+// admin_members are the users holding the team's admin-role variant (only the
+// Procurement team has one — procurement_admin); they count as members for display
+// but are managed from the Users page, not the team card.
+export interface Team {
+  id: number;
+  key: string;
+  name: string;
+  member_role: Role;
+  team_email: string;
+  members: UserSummary[];
+  admin_members: UserSummary[];
+  created_at: string;
+  updated_at: string;
 }
 
 export interface Item {
@@ -135,7 +152,16 @@ export interface RecApproval {
   approved_by?: number | null;
   approver?: UserSummary | null;
   approved_at?: string | null;
+  // The team member responsible for this card (legal/security only). Only the
+  // assignee may approve; the budget card has none.
+  assignee_id?: number | null;
+  assignee?: UserSummary | null;
   comments: RecComment[];
+  // Per-caller capability flags (server-computed): whether the current user may
+  // comment on, approve, or (re)assign this card.
+  can_comment: boolean;
+  can_approve: boolean;
+  can_assign: boolean;
 }
 
 export interface Recommendation {
@@ -144,6 +170,10 @@ export interface Recommendation {
   vendor_id: number;
   vendor?: Vendor | null;
   description: string;
+  // Commercial details, mirroring the PR's commercial section.
+  estimated_value: number;
+  currency: string;
+  engagement_type: string;
   created_at: string;
   updated_at: string;
   approvals: RecApproval[];
@@ -162,6 +192,9 @@ export interface Recommendation {
 export interface RecommendationInput {
   vendor_id: number;
   description: string;
+  estimated_value: number;
+  currency: string;
+  engagement_type: string;
   required_types: RecApprovalType[];
 }
 
@@ -210,8 +243,6 @@ export interface PRDetails {
   within_budget?: YesNoUnknown;
   // Budget coding
   budget_category?: string;
-  budget_cost_center?: string;
-  budget_cost_center_id?: number | null;
   budget_product?: string;
   budget_region?: string;
   engagement_code?: string;
@@ -275,8 +306,7 @@ export interface PurchaseRequest {
   reference?: string | null;
   title: string;
   requester_id: number;
-  cost_center: string;
-  cost_center_id: number | null;
+  budget_unit_id: number | null;
   comments: string;
   status: PRStatus;
   rejection_reason: string;
@@ -298,6 +328,31 @@ export interface PurchaseRequest {
   my_approval_state?: ApprovalStatus | null;
   // The procurement recommendation (detail reads only), or null when none.
   recommendation?: Recommendation | null;
+  // Team lead approval: the requester names a team lead by email who must approve
+  // the PR before procurement can see or act on it. Until then the PR is hidden from
+  // everyone but the requester, the team lead, and admins.
+  team_lead_email: string;
+  team_lead_status: ApprovalStatus;
+  team_lead_notes: string;
+  team_lead_decided_at: string | null;
+  team_lead_decided_by: number | null;
+  // Per-caller flag (detail reads only): true when the caller may record the
+  // team lead decision (they are the team lead or an admin).
+  my_team_lead_actionable?: boolean;
+  // PR assignment: after team-lead approval, a procurement user must be assigned
+  // before procurement work can start. assignee + collaborators are the procurement
+  // users who may act on the PR. assignee is included on list reads (for the badge);
+  // collaborators only on detail reads.
+  assignee_id?: number | null;
+  assignee?: UserSummary | null;
+  assigned_at?: string | null;
+  collaborators?: UserSummary[];
+  // Per-caller flags (detail reads only): my_can_assign = may change the assignee;
+  // my_can_manage_collaborators = may add/remove collaborators; my_can_work = may
+  // perform procurement work on this PR (assigned, and assignee/collaborator/admin).
+  my_can_assign?: boolean;
+  my_can_manage_collaborators?: boolean;
+  my_can_work?: boolean;
   // Requisition fields — core columns (list + detail); budget_approver_*/details
   // are detail-only.
   team: string;
@@ -368,43 +423,64 @@ export interface VendorUsage {
   invoices: number;
 }
 
-export interface CostCenter {
+// A budget unit's approval bracket: an inclusive value range (max null =
+// unbounded) with one or more approvers. Any approver of the resolved bracket
+// may approve the budget card.
+export interface BudgetUnitBracket {
+  id: number;
+  position: number;
+  currency: string;
+  min_value: number;
+  max_value: number | null;
+  approvers: UserSummary[];
+}
+
+export interface BudgetUnit {
   id: number;
   code: string;
   name: string;
   description: string;
-  primary_owner_id: number | null;
   budget: number;
   currency: string;
   is_active: boolean;
+  // The catch-all approver used when a PR matches no bracket.
+  default_approver_id: number | null;
+  default_approver?: UserSummary | null;
   created_at: string;
   updated_at: string;
-  primary_owner?: UserSummary | null;
-  secondary_owners: UserSummary[];
+  brackets: BudgetUnitBracket[];
 }
 
-export interface CostCenterInput {
+// Bracket shape for create/update: currency + min/max + the approver ids.
+// Brackets are ordered by their position in the array (first match wins).
+export interface BudgetUnitBracketInput {
+  currency: string;
+  min_value: number;
+  max_value: number | null;
+  approver_ids: number[];
+}
+
+export interface BudgetUnitInput {
   code: string;
   name: string;
   description: string;
-  primary_owner_id: number | null;
   budget: number;
   currency: string;
   is_active: boolean;
-  secondary_owner_ids: number[];
+  default_approver_id: number | null;
+  brackets: BudgetUnitBracketInput[];
 }
 
-// CostCenterSummary is the lightweight shape returned by the lookup endpoint,
-// used to populate the cost-center dropdown on a purchase request.
-export interface CostCenterSummary {
+// BudgetUnitSummary is the lightweight shape returned by the lookup endpoint,
+// used to populate the budget-unit dropdown on a purchase request.
+export interface BudgetUnitSummary {
   id: number;
   code: string;
   name: string;
-  owner_name: string;
-  owner_email: string;
+  currency: string;
 }
 
-export interface CostCenterUsage {
+export interface BudgetUnitUsage {
   purchase_requests: number;
 }
 
@@ -415,19 +491,19 @@ export interface CurrencyTotal {
   amount: number;
 }
 
-// CostCenterInvoiceCategory summarises one invoice status bucket: how many
-// invoices allocate to the cost center and the allocated totals per currency.
-export interface CostCenterInvoiceCategory {
+// BudgetUnitInvoiceCategory summarises one invoice status bucket: how many
+// invoices allocate to the budget unit and the allocated totals per currency.
+export interface BudgetUnitInvoiceCategory {
   count: number;
   totals: CurrencyTotal[];
 }
 
-// CostCenterInvoiceSummary buckets a cost center's allocated invoices by status
-// (pending = received), each with the cost center's allocated share.
-export interface CostCenterInvoiceSummary {
-  pending: CostCenterInvoiceCategory;
-  approved: CostCenterInvoiceCategory;
-  paid: CostCenterInvoiceCategory;
+// BudgetUnitInvoiceSummary buckets a budget unit's allocated invoices by status
+// (pending = received), each with the budget unit's allocated share.
+export interface BudgetUnitInvoiceSummary {
+  pending: BudgetUnitInvoiceCategory;
+  approved: BudgetUnitInvoiceCategory;
+  paid: BudgetUnitInvoiceCategory;
 }
 
 export interface QuotationItem {
@@ -451,7 +527,11 @@ export interface Quotation {
   updated_at: string;
   items: QuotationItem[];
   vendor?: Vendor | null;
+  // documents holds the other supporting documents; the single primary quotation
+  // PDF is exposed separately as quotation_document.
   documents?: Document[];
+  quotation_document_id?: number | null;
+  quotation_document?: Document | null;
 }
 
 export interface QuotationInput {
@@ -482,8 +562,8 @@ export interface Contract {
   signed_document?: Document | null;
   // Sum of this contract's invoice totals in its own currency (detail reads only).
   invoiced_total?: number;
-  // The owning PR's cost center, if any — used to default an invoice's allocation.
-  cost_center?: CostCenterSummary | null;
+  // The owning PR's budget unit, if any — used to default an invoice's allocation.
+  budget_unit?: BudgetUnitSummary | null;
 }
 
 export interface ContractInput {
@@ -532,26 +612,26 @@ export interface InvoiceItem {
   position?: number;
 }
 
-// AllocationMode controls how an invoice is split across cost centers: either
+// AllocationMode controls how an invoice is split across budget units: either
 // entirely by percentage (values sum to 100) or by absolute amount (values sum
 // to the invoice total).
 export type AllocationMode = "percentage" | "amount";
 
-// CostAllocation is an invoice's cost split to one cost center. value is a
+// CostAllocation is an invoice's cost split to one budget unit. value is a
 // percentage or an amount per the invoice's allocation_mode; amount is the
 // resolved amount in the invoice currency (server-computed, read-only).
 export interface CostAllocation {
   id?: number;
-  cost_center_id: number;
+  budget_unit_id: number;
   value: number;
   position?: number;
+  budget_unit?: BudgetUnitSummary | null;
   amount?: number;
-  cost_center?: CostCenterSummary | null;
 }
 
 // CostAllocationInput is the writable shape sent on create/update.
 export interface CostAllocationInput {
-  cost_center_id: number;
+  budget_unit_id: number;
   value: number;
 }
 
@@ -615,14 +695,10 @@ export interface RelatedDocuments {
 
 export interface PurchaseRequestInput {
   title: string;
-  cost_center: string;
-  cost_center_id: number | null;
+  budget_unit_id: number | null;
   comments: string;
   items: { description: string; quantity: number }[];
   links: { url: string; label: string }[];
-  // Optional approvers. No longer required at creation — procurement sign-off is
-  // handled by the recommendation.
-  approver_ids: number[];
   // Requisition form fields.
   team: string;
   entity: string;
@@ -632,6 +708,8 @@ export interface PurchaseRequestInput {
   budget_approver_name: string;
   budget_approver_email: string;
   details: PRDetails;
+  // Team lead who must approve the PR before procurement can act on it. Required.
+  team_lead_email: string;
 }
 
 // EDITABLE_STATUSES mirrors the backend model.EditableStatuses.
@@ -657,21 +735,21 @@ export function vendorRef(id: number): string {
   return "VEN-" + String(id).padStart(6, "0");
 }
 
-export function costCenterRef(id: number): string {
-  return "CC-" + String(id).padStart(6, "0");
+export function budgetUnitRef(id: number): string {
+  return "BU-" + String(id).padStart(6, "0");
 }
 
-// A fresh, active cost-center draft. Shared by the management list (inline add)
-// and detail (edit) pages.
-export const emptyCostCenter: CostCenterInput = {
+// A fresh, active budget-unit draft. Shared by the management list (inline add)
+// and detail (edit) pages. Starts with one unbounded, no-approver bracket.
+export const emptyBudgetUnit: BudgetUnitInput = {
   code: "",
   name: "",
   description: "",
-  primary_owner_id: null,
   budget: 0,
   currency: "",
   is_active: true,
-  secondary_owner_ids: [],
+  default_approver_id: null,
+  brackets: [],
 };
 
 export function grnRef(id: number): string {
@@ -709,16 +787,16 @@ export function allocationsSum(allocs: { value: number }[]): number {
 }
 
 // allocationsValid mirrors the server rule: at least one allocation, each with a
-// distinct cost center, summing to 100 (percentage mode) or the invoice total
+// distinct budget unit, summing to 100 (percentage mode) or the invoice total
 // (amount mode), within a small rounding tolerance.
 export function allocationsValid(
   mode: AllocationMode,
-  allocs: { cost_center_id: number; value: number }[],
+  allocs: { budget_unit_id: number; value: number }[],
   total: number,
 ): boolean {
   if (allocs.length === 0) return false;
-  if (allocs.some((a) => !a.cost_center_id)) return false;
-  const ids = allocs.map((a) => a.cost_center_id);
+  if (allocs.some((a) => !a.budget_unit_id)) return false;
+  const ids = allocs.map((a) => a.budget_unit_id);
   if (new Set(ids).size !== ids.length) return false;
   const target = mode === "percentage" ? 100 : total;
   return Math.abs(allocationsSum(allocs) - target) <= 0.01;

@@ -1,14 +1,16 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { usePurchaseRequest } from "../hooks/usePurchaseRequests";
+import { useBudgetUnitLookup, useBudgetUnitApprovers } from "../hooks/useBudgetUnits";
 import { useMe } from "../hooks/useMe";
-import { useFinanceAccess } from "../hooks/useFinanceAccess";
-import { useQuotationsForPR } from "../hooks/useQuotations";
+import { useProcurementAccess } from "../hooks/useProcurementAccess";
+import { useQuotationsForPR, useQuotation } from "../hooks/useQuotations";
 import { StatusBadge } from "../components/StatusBadge";
 import { EntityStatusBadge } from "../components/EntityStatusBadge";
 import { RequisitionForm, requisitionTitle } from "../components/RequisitionForm";
-import { ApprovalList } from "../components/ApprovalList";
+import { TeamLeadApprovalCard } from "../components/TeamLeadApprovalCard";
+import { AssignmentCard } from "../components/AssignmentCard";
 import { RelatedDocuments } from "../components/RelatedDocuments";
 import { ChainStepper } from "../components/ChainStepper";
 import { VendorSelect } from "../components/VendorSelect";
@@ -16,14 +18,15 @@ import { RecommendationSection } from "../components/RecommendationSection";
 import {
   deleteDocument,
   downloadDocument,
-  recordApprovalDecision,
   rejectPurchaseRequest,
-  removeApprover,
-  requestApprovalAgain,
   updatePurchaseRequest,
   uploadDocument,
 } from "../api/purchaseRequests";
-import { createQuotation, uploadQuotationDocument } from "../api/quotations";
+import {
+  createQuotation,
+  downloadQuotationDocument,
+  uploadQuotationPDF,
+} from "../api/quotations";
 import { ApiError } from "../api/client";
 import { EDITABLE_STATUSES, formatMoney, prReference, quoRef } from "../types/api";
 import type {
@@ -31,17 +34,16 @@ import type {
   Me,
   PurchaseRequest,
   PurchaseRequestInput,
+  Quotation,
 } from "../types/api";
 
 function toInput(pr: PurchaseRequest): PurchaseRequestInput {
   return {
     title: pr.title,
-    cost_center: pr.cost_center,
-    cost_center_id: pr.cost_center_id,
+    budget_unit_id: pr.budget_unit_id,
     comments: pr.comments,
     items: [],
     links: [],
-    approver_ids: [],
     team: pr.team,
     entity: pr.entity,
     category: pr.category,
@@ -49,6 +51,7 @@ function toInput(pr: PurchaseRequest): PurchaseRequestInput {
     currency: pr.currency,
     budget_approver_name: pr.budget_approver_name ?? "",
     budget_approver_email: pr.budget_approver_email ?? "",
+    team_lead_email: pr.team_lead_email ?? "",
     details: pr.details ?? {},
   };
 }
@@ -59,7 +62,7 @@ export function PurchaseRequestDetailPage() {
   const qc = useQueryClient();
   const { data: pr, isLoading, error } = usePurchaseRequest(prId);
   const { data: me } = useMe();
-  const finance = useFinanceAccess();
+  const procurement = useProcurementAccess();
 
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<PurchaseRequestInput | null>(null);
@@ -71,9 +74,16 @@ export function PurchaseRequestDetailPage() {
     return me.id === pr.requester_id && EDITABLE_STATUSES.includes(pr.status);
   }, [pr, me]);
 
-  useEffect(() => {
-    if (pr && editing) setDraft(toInput(pr));
-  }, [editing, pr]);
+  // Enter edit mode with a fresh draft seeded from the current PR. Seeding lives
+  // in the Edit click (below) rather than an effect keyed on `pr`: re-deriving
+  // the draft whenever the PR query re-references (a background refetch, a
+  // sibling card's invalidation) would silently discard the user's in-progress
+  // edits — e.g. estimated value / currency, which also trigger an approver
+  // re-fetch on each keystroke.
+  const startEditing = () => {
+    if (pr) setDraft(toInput(pr));
+    setEditing(true);
+  };
 
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ["purchase-requests", prId] });
@@ -149,7 +159,7 @@ export function PurchaseRequestDetailPage() {
               Cancel editing
             </button>
           ) : (
-            <button onClick={() => setEditing(true)} className="btn-secondary">
+            <button onClick={startEditing} className="btn-secondary">
               Edit details
             </button>
           ))}
@@ -212,9 +222,11 @@ export function PurchaseRequestDetailPage() {
         )}
       </div>
 
-      <ApprovalsSection pr={pr} me={me} />
+      <TeamLeadApprovalCard pr={pr} me={me} />
 
-      {finance && <FinanceSection pr={pr} />}
+      <AssignmentCard pr={pr} me={me} />
+
+      {procurement && pr.my_can_work && <ProcurementSection pr={pr} />}
 
       <RecommendationSection pr={pr} />
 
@@ -223,73 +235,118 @@ export function PurchaseRequestDetailPage() {
   );
 }
 
-// ApprovalsSection shows the per-approver decisions and the controls each role
-// gets: the requester (while editable) removes approvers and re-requests rejected
-// ones; a named approver records their own decision. (Approvers are chosen at
-// creation; they are no longer added from here.)
-function ApprovalsSection({ pr, me }: { pr: PurchaseRequest; me: Me | undefined }) {
-  const qc = useQueryClient();
-  const [error, setError] = useState<string | null>(null);
-
-  const approvals = pr.approvals ?? [];
-  const canManage = !!me && me.id === pr.requester_id && EDITABLE_STATUSES.includes(pr.status);
-
-  const invalidate = () => {
-    qc.invalidateQueries({ queryKey: ["purchase-requests", pr.id] });
-    qc.invalidateQueries({ queryKey: ["purchase-requests"] });
-  };
-  const onError = (e: unknown) =>
-    setError(e instanceof ApiError ? e.message : "Approval action failed");
-
-  const removeMutation = useMutation({
-    mutationFn: (approverId: number) => removeApprover(pr.id, approverId),
-    onSuccess: () => {
-      invalidate();
-      setError(null);
-    },
-    onError,
-  });
-  const requestAgainMutation = useMutation({
-    mutationFn: (approverId: number) => requestApprovalAgain(pr.id, approverId),
-    onSuccess: () => {
-      invalidate();
-      setError(null);
-    },
-    onError,
-  });
-  const decideMutation = useMutation({
-    mutationFn: ({ decision, comment }: { decision: "approve" | "reject"; comment: string }) =>
-      recordApprovalDecision(pr.id, decision, comment),
-    onSuccess: () => {
-      invalidate();
-      setError(null);
-    },
-    onError,
-  });
-
-  const busy =
-    removeMutation.isPending || requestAgainMutation.isPending || decideMutation.isPending;
-
+// QuotationRow renders a single quotation on the PR page as an expandable row.
+// Collapsed it shows the reference, vendor, notes/total and status; expanded it
+// loads the full quotation and shows basic info plus a link to download the
+// quotation PDF (and any other documents).
+function QuotationRow({ q }: { q: Quotation }) {
+  const [open, setOpen] = useState(false);
   return (
-    <div>
-      <ApprovalList
-        approvals={approvals}
-        meId={me?.id}
-        canManage={canManage}
-        busy={busy}
-        onRemove={(approverId) => removeMutation.mutate(approverId)}
-        onRequestAgain={(approverId) => requestAgainMutation.mutate(approverId)}
-        onDecide={(decision, comment) => decideMutation.mutate({ decision, comment })}
-      />
-      {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
+    <li className="py-2 text-sm">
+      <div className="flex items-start justify-between gap-3">
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          className="flex min-w-0 items-start gap-2 text-left"
+          aria-expanded={open}
+        >
+          <span className="mt-0.5 select-none text-gray-400">{open ? "▾" : "▸"}</span>
+          <span className="min-w-0">
+            <span className="font-medium text-indigo-600">
+              {quoRef(q.id)} — {q.vendor?.name ?? `Vendor #${q.vendor_id}`}
+            </span>
+            {q.notes && <span className="mt-0.5 block truncate text-gray-500">{q.notes}</span>}
+            {q.total_amount > 0 && (
+              <span className="mt-0.5 block text-gray-400">{formatMoney(q.total_amount, q.currency)}</span>
+            )}
+          </span>
+        </button>
+        <EntityStatusBadge status={q.status} />
+      </div>
+      {open && <QuotationExpanded quotationId={q.id} />}
+    </li>
+  );
+}
+
+// QuotationExpanded lazily loads the full quotation (the PR-page list only
+// carries summaries) to show its basic info, the primary quotation PDF and any
+// other attached documents.
+function QuotationExpanded({ quotationId }: { quotationId: number }) {
+  const { data: q, isLoading } = useQuotation(quotationId);
+  if (isLoading || !q) {
+    return <p className="ml-6 mt-2 text-xs text-gray-400">Loading…</p>;
+  }
+  const others = q.documents ?? [];
+  return (
+    <div className="ml-6 mt-2 space-y-3 rounded-md border bg-gray-50 p-3 text-xs">
+      <dl className="grid grid-cols-2 gap-x-4 gap-y-1">
+        <div>
+          <dt className="font-medium text-gray-500">Total</dt>
+          <dd className="text-gray-900">{formatMoney(q.total_amount, q.currency)}</dd>
+        </div>
+        <div>
+          <dt className="font-medium text-gray-500">Valid until</dt>
+          <dd className="text-gray-900">{q.valid_until ?? "—"}</dd>
+        </div>
+      </dl>
+
+      {q.notes && <p className="whitespace-pre-wrap text-gray-600">{q.notes}</p>}
+
+      {q.items.length > 0 && (
+        <ul className="list-disc pl-4 text-gray-600">
+          {q.items.map((it) => (
+            <li key={it.id}>
+              {it.description} — qty {it.quantity} × {formatMoney(it.unit_price, q.currency)}
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <div>
+        <p className="font-medium text-gray-500">Quotation PDF</p>
+        {q.quotation_document ? (
+          <button
+            type="button"
+            onClick={() => downloadQuotationDocument(q.id, q.quotation_document!)}
+            className="text-indigo-600 hover:underline"
+          >
+            📄 {q.quotation_document.filename}
+          </button>
+        ) : (
+          <p className="text-gray-400">None attached.</p>
+        )}
+      </div>
+
+      {others.length > 0 && (
+        <div>
+          <p className="font-medium text-gray-500">Other documents</p>
+          <ul className="space-y-0.5">
+            {others.map((doc) => (
+              <li key={doc.id}>
+                <button
+                  type="button"
+                  onClick={() => downloadQuotationDocument(q.id, doc)}
+                  className="text-indigo-600 hover:underline"
+                >
+                  📎 {doc.filename}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      <Link to={`/quotations/${q.id}`} className="inline-block text-indigo-600 hover:underline">
+        Open quotation →
+      </Link>
     </div>
   );
 }
 
-// FinanceSection adds the procurement actions visible to finance users:
+// ProcurementSection adds the procurement actions visible to procurement users:
 // associating quotations with the request (vendor + optional description + a
 // PDF), and rejecting the request with a comment.
-function FinanceSection({ pr }: { pr: PurchaseRequest }) {
+function ProcurementSection({ pr }: { pr: PurchaseRequest }) {
   const qc = useQueryClient();
   const { data: quotations } = useQuotationsForPR(pr.id);
   const [vendorId, setVendorId] = useState(0);
@@ -323,7 +380,7 @@ function FinanceSection({ pr }: { pr: PurchaseRequest }) {
         notes: description.trim(),
         items: [],
       });
-      if (file) await uploadQuotationDocument(q.id, file);
+      if (file) await uploadQuotationPDF(q.id, file);
       return q;
     },
     onSuccess: () => {
@@ -414,18 +471,7 @@ function FinanceSection({ pr }: { pr: PurchaseRequest }) {
       {quotations && quotations.length > 0 ? (
         <ul className="divide-y">
           {quotations.map((q) => (
-            <li key={q.id} className="flex items-start justify-between gap-3 py-2 text-sm">
-              <div className="min-w-0">
-                <Link to={`/quotations/${q.id}`} className="font-medium text-indigo-600">
-                  {quoRef(q.id)} — {q.vendor?.name ?? `Vendor #${q.vendor_id}`}
-                </Link>
-                {q.notes && <p className="mt-0.5 truncate text-gray-500">{q.notes}</p>}
-                {q.total_amount > 0 && (
-                  <p className="mt-0.5 text-gray-400">{formatMoney(q.total_amount, q.currency)}</p>
-                )}
-              </div>
-              <EntityStatusBadge status={q.status} />
-            </li>
+            <QuotationRow key={q.id} q={q} />
           ))}
         </ul>
       ) : (
@@ -482,6 +528,21 @@ function yesNo(v?: string): string {
 
 function ReadOnlyView({ pr }: { pr: PurchaseRequest }) {
   const d = pr.details ?? {};
+  const { data: budgetUnits } = useBudgetUnitLookup();
+  const bu = (budgetUnits ?? []).find((c) => c.id === pr.budget_unit_id);
+  const buLabel = bu
+    ? bu.code
+      ? `${bu.code} — ${bu.name}`
+      : bu.name
+    : pr.budget_unit_id
+      ? `#${pr.budget_unit_id}`
+      : "";
+  const { data: budgetApprovers } = useBudgetUnitApprovers(
+    pr.budget_unit_id,
+    pr.estimated_value > 0 ? pr.estimated_value : null,
+    pr.currency,
+  );
+  const approverText = (budgetApprovers ?? []).map((u) => u.name || u.email).join(", ");
   return (
     <div className="space-y-3 text-sm">
       <Section title="Requester" defaultOpen>
@@ -489,7 +550,7 @@ function ReadOnlyView({ pr }: { pr: PurchaseRequest }) {
         <Row label="Requester" value={d.requester_name || pr.requester?.email || `#${pr.requester_id}`} />
         <Row label="Email" value={d.requester_email || pr.requester?.email} />
         <Row label="Date" value={d.date} />
-        <Row label="Cost center" value={pr.cost_center} />
+        <Row label="Budget unit" value={buLabel} />
         <Row label="WSO2 entity" value={pr.entity} />
         <Row label="Business justification" value={d.business_justification} pre />
       </Section>
@@ -537,13 +598,17 @@ function ReadOnlyView({ pr }: { pr: PurchaseRequest }) {
         <Row
           label="Budget approver"
           value={
-            pr.budget_approver_name
-              ? `${pr.budget_approver_name}${pr.budget_approver_email ? ` · ${pr.budget_approver_email}` : ""}`
+            pr.budget_approver_name || pr.budget_approver_email
+              ? `${pr.budget_approver_name || ""}${pr.budget_approver_email ? ` · ${pr.budget_approver_email}` : ""}`
               : ""
           }
         />
+        <Row
+          label="Designated approver"
+          value={approverText}
+          hint="Designated by the budget unit + estimated value; reconfirmed at the recommendation stage."
+        />
         <Row label="Budget category" value={d.budget_category} />
-        <Row label="Cost center (coding)" value={d.budget_cost_center} />
         <Row label="Product" value={d.budget_product} />
         <Row label="Region" value={d.budget_region} />
         <Row label="Engagement code" value={d.engagement_code} />
@@ -571,12 +636,15 @@ function Section({ title, defaultOpen, children }: { title: string; defaultOpen?
 }
 
 // Row renders one label/value pair, or nothing when the value is empty.
-function Row({ label, value, pre }: { label: string; value?: string; pre?: boolean }) {
+function Row({ label, value, pre, hint }: { label: string; value?: string; pre?: boolean; hint?: string }) {
   if (!value) return null;
   return (
     <div className="sm:flex sm:gap-4">
       <dt className="w-52 shrink-0 text-gray-500">{label}</dt>
-      <dd className={`text-gray-900 ${pre ? "whitespace-pre-wrap" : ""}`}>{value}</dd>
+      <dd className={`text-gray-900 ${pre ? "whitespace-pre-wrap" : ""}`}>
+        {value}
+        {hint && <span className="mt-0.5 block text-xs italic text-gray-400">{hint}</span>}
+      </dd>
     </div>
   );
 }

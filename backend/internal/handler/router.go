@@ -31,20 +31,21 @@ type Deps struct {
 
 func NewRouter(d Deps) http.Handler {
 	r := chi.NewRouter()
-	r.Use(chimiddleware.RequestID)          // stamp a request_id first...
-	r.Use(middleware.RequestLogger(d.Log))  // ...so the access log and every request-scoped line carry it
-	r.Use(chimiddleware.Recoverer)          // inside RequestLogger: a recovered panic still gets a 500 access line
+	r.Use(chimiddleware.RequestID)         // stamp a request_id first...
+	r.Use(middleware.RequestLogger(d.Log)) // ...so the access log and every request-scoped line carry it
+	r.Use(chimiddleware.Recoverer)         // inside RequestLogger: a recovered panic still gets a 500 access line
 	r.Use(middleware.CORS(d.AllowedOrigins))
 
 	users := &UsersHandler{Repo: d.Repo, Log: d.Log}
 	prs := &PurchaseRequestsHandler{Repo: d.Repo, Storage: d.Storage, Mailer: d.Mailer, AppBaseURL: d.AppBaseURL, Log: d.Log}
 	vendors := &VendorsHandler{Repo: d.Repo, Log: d.Log}
-	costCenters := &CostCentersHandler{Repo: d.Repo, Log: d.Log}
-	quotes := &QuotationsHandler{Repo: d.Repo, Storage: d.Storage, Log: d.Log}
+	budgetUnits := &BudgetUnitsHandler{Repo: d.Repo, Log: d.Log}
+	quotes := &QuotationsHandler{Repo: d.Repo, Storage: d.Storage, Mailer: d.Mailer, AppBaseURL: d.AppBaseURL, Log: d.Log}
 	contracts := &ContractsHandler{Repo: d.Repo, Storage: d.Storage, Log: d.Log}
 	grns := &GRNsHandler{Repo: d.Repo, Storage: d.Storage, Log: d.Log}
 	invoices := &InvoicesHandler{Repo: d.Repo, Storage: d.Storage, Log: d.Log}
 	configOptions := &ConfigOptionsHandler{Repo: d.Repo, Log: d.Log}
+	teams := &TeamsHandler{Repo: d.Repo, Log: d.Log}
 	storageH := &StorageHandler{
 		Repo:     d.Repo,
 		Manager:  d.StorageManager,
@@ -68,6 +69,7 @@ func NewRouter(d Deps) http.Handler {
 			// User management (admin only — enforced in the handlers)
 			r.Get("/users", users.List)
 			r.Post("/users", users.Create)
+			r.Put("/users/{id}", users.Update)
 			r.Post("/users/{id}/roles", users.AddRole)
 			r.Delete("/users/{id}/roles/{role}", users.RemoveRole)
 			r.Put("/users/{id}/active", users.SetActive)
@@ -92,7 +94,24 @@ func NewRouter(d Deps) http.Handler {
 			r.Post("/purchase-requests/{id}/approvers/{approverID}/request", prs.RequestApprovalAgain)
 			r.Post("/purchase-requests/{id}/approval", prs.RecordApprovalDecision)
 
-			// Procurement recommendation (one per PR): finance creates/edits it;
+			// PR assignment: after team-lead approval, a procurement user must be
+			// assigned before procurement work can start. Procurement self-assigns;
+			// procurement_admin assigns/reassigns anyone. Assignee/admin manage collaborators.
+			r.Put("/purchase-requests/{id}/assignee", prs.SetAssignee)
+			r.Post("/purchase-requests/{id}/collaborators", prs.AddCollaborator)
+			r.Delete("/purchase-requests/{id}/collaborators/{userID}", prs.RemoveCollaborator)
+
+			// Team lead approval: the requester's named team lead (or admin) approves
+			// or rejects the PR — the gate that lets procurement see and act on it.
+			r.Post("/purchase-requests/{id}/team-lead-approval", prs.TeamLeadDecision)
+			r.Put("/purchase-requests/{id}/team-lead-email", prs.UpdateTeamLeadEmail)
+			r.Post("/purchase-requests/{id}/team-lead-reminder", prs.RemindTeamLead)
+
+			// Procurement reconciles the PR's named budget approver against the
+			// designated one from the recommendation's budget card.
+			r.Put("/purchase-requests/{id}/budget-approver", prs.SetBudgetApprover)
+
+			// Procurement recommendation (one per PR): procurement creates/edits it;
 			// the named actors (legal/security role, budget-owner) toggle approval
 			// and comment on their card.
 			r.Post("/purchase-requests/{id}/recommendation", prs.CreateRecommendation)
@@ -106,12 +125,15 @@ func NewRouter(d Deps) http.Handler {
 			r.Get("/purchase-requests/{id}/recommendation/rfi/documents/{docID}/download", prs.DownloadRecRFIDocument)
 			r.Delete("/purchase-requests/{id}/recommendation/rfi/documents/{docID}", prs.DeleteRecRFIDocument)
 			r.Post("/purchase-requests/{id}/recommendation/approvals/{type}", prs.SetRecApproval)
+			r.Put("/purchase-requests/{id}/recommendation/approvals/{type}/assignee", prs.SetRecAssignee)
+			r.Post("/purchase-requests/{id}/recommendation/approvals/{type}/assignee/remind", prs.RemindRecAssignee)
+			r.Post("/purchase-requests/{id}/recommendation/approvals/budget/remind", prs.RemindBudgetApprovers)
 			r.Post("/purchase-requests/{id}/recommendation/comments", prs.AddRecComment)
 			r.Post("/purchase-requests/{id}/recommendation/comments/{commentID}/documents", prs.UploadRecCommentDocument)
 			r.Get("/purchase-requests/{id}/recommendation/comments/{commentID}/documents/{docID}/download", prs.DownloadRecCommentDocument)
 			r.Delete("/purchase-requests/{id}/recommendation/comments/{commentID}/documents/{docID}", prs.DeleteRecCommentDocument)
 
-			// Vendors (management is finance; the lookup is open to any
+			// Vendors (management is procurement; the lookup is open to any
 			// authenticated user for the PR "proposed supplier" dropdown).
 			// Register /lookup before /{id} so it is not captured as an id.
 			r.Get("/vendors/lookup", vendors.Lookup)
@@ -121,26 +143,35 @@ func NewRouter(d Deps) http.Handler {
 			r.Put("/vendors/{id}", vendors.Update)
 			r.Get("/vendors/{id}/usage", vendors.Usage)
 
-			// Cost centers (management is admin/finance_admin; the lookup is
-			// open to any authenticated user for the PR dropdown). Register
-			// /lookup before /{id} so it is not captured as an id.
-			r.Get("/cost-centers/lookup", costCenters.Lookup)
-			r.Get("/cost-centers", costCenters.List)
-			r.Post("/cost-centers", costCenters.Create)
-			r.Get("/cost-centers/{id}", costCenters.Get)
-			r.Put("/cost-centers/{id}", costCenters.Update)
-			r.Get("/cost-centers/{id}/usage", costCenters.Usage)
-			r.Get("/cost-centers/{id}/invoices", costCenters.Invoices)
+			// Budget units (management is admin/procurement_admin; the lookup and
+			// approver preview are open to any authenticated user for the PR
+			// form). Register /lookup before /{id} so it is not captured as an id.
+			r.Get("/budget-units/lookup", budgetUnits.Lookup)
+			r.Get("/budget-units", budgetUnits.List)
+			r.Post("/budget-units", budgetUnits.Create)
+			r.Get("/budget-units/{id}", budgetUnits.Get)
+			r.Put("/budget-units/{id}", budgetUnits.Update)
+			r.Get("/budget-units/{id}/usage", budgetUnits.Usage)
+			r.Get("/budget-units/{id}/invoices", budgetUnits.Invoices)
+			r.Get("/budget-units/{id}/approvers", budgetUnits.Approvers)
 
 			// Configurable dropdown lists. The lookup is open to any authenticated
 			// user (populates the requisition-form dropdowns); managing the lists
-			// is admin/finance_admin (enforced in the handlers). Register the
+			// is admin/procurement_admin (enforced in the handlers). Register the
 			// fixed paths before /{id} so they are not captured as an id.
 			r.Get("/config/options/lookup", configOptions.Lookup)
 			r.Get("/config/options", configOptions.List)
 			r.Post("/config/options", configOptions.Create)
 			r.Put("/config/options/{id}", configOptions.Update)
 			r.Delete("/config/options/{id}", configOptions.Delete)
+
+			// Teams (Legal/Security/Procurement): reading is open to any authenticated
+			// user (the approval-card assignee dropdown needs membership); managing
+			// members and the team email is procurement_admin/admin (enforced in handlers).
+			r.Get("/teams", teams.List)
+			r.Put("/teams/{key}/email", teams.UpdateEmail)
+			r.Post("/teams/{key}/members", teams.AddMember)
+			r.Delete("/teams/{key}/members/{userID}", teams.RemoveMember)
 
 			// File storage configuration (admin only — enforced in the handlers).
 			r.Get("/storage/status", storageH.Status)
@@ -154,7 +185,8 @@ func NewRouter(d Deps) http.Handler {
 			r.Put("/quotations/{id}", quotes.Update)
 			r.Post("/quotations/{id}/select", quotes.Select)
 			r.Delete("/quotations/{id}", quotes.Delete)
-			r.Post("/quotations/{id}/contracts", contracts.CreateFromQuotation)
+			r.Post("/quotations/{id}/quotation-document", quotes.UploadQuotationPDF)
+			r.Delete("/quotations/{id}/quotation-document", quotes.DeleteQuotationPDF)
 			r.Post("/quotations/{id}/documents", quotes.UploadDocument)
 			r.Get("/quotations/{id}/documents/{docID}/download", quotes.DownloadDocument)
 			r.Delete("/quotations/{id}/documents/{docID}", quotes.DeleteDocument)

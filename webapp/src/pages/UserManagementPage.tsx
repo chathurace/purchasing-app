@@ -3,7 +3,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useUsers } from "../hooks/useUsers";
 import { useIsAdmin } from "../hooks/useIsAdmin";
 import { useMe } from "../hooks/useMe";
-import { addUserRole, createUser, removeUserRole, setUserActive } from "../api/users";
+import { addUserRole, createUser, removeUserRole, setUserActive, updateUser } from "../api/users";
 import { ApiError } from "../api/client";
 import { ASSIGNABLE_ROLES, ROLE_LABELS, type AdminUser, type Role } from "../types/api";
 
@@ -47,6 +47,11 @@ export function UserManagementPage() {
     mutationFn: ({ id, active }: { id: number; active: boolean }) => setUserActive(id, active),
     onSuccess: invalidate,
     onError: onActionError,
+  });
+  const update = useMutation({
+    mutationFn: ({ id, email, name }: { id: number; email: string; name: string }) =>
+      updateUser(id, { email, name }),
+    onSuccess: invalidate,
   });
 
   if (!isAdmin) {
@@ -135,6 +140,7 @@ export function UserManagementPage() {
                   onAddRole={(role) => addRole.mutate({ id: u.id, role })}
                   onRemoveRole={(role) => removeRole.mutate({ id: u.id, role })}
                   onToggleActive={() => toggleActive.mutate({ id: u.id, active: !u.is_active })}
+                  onSave={(email, name) => update.mutateAsync({ id: u.id, email, name })}
                 />
               ))}
             </tbody>
@@ -151,20 +157,67 @@ function UserRow({
   onAddRole,
   onRemoveRole,
   onToggleActive,
+  onSave,
 }: {
   user: AdminUser;
   isSelf: boolean;
   onAddRole: (role: Role) => void;
   onRemoveRole: (role: Role) => void;
   onToggleActive: () => void;
+  onSave: (email: string, name: string) => Promise<unknown>;
 }) {
   const addable = ASSIGNABLE_ROLES.filter((r) => !user.roles.includes(r));
+  const [editing, setEditing] = useState(false);
+  const [email, setEmail] = useState(user.email);
+  const [name, setName] = useState(user.name);
+  const [saving, setSaving] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
+
+  const startEdit = () => {
+    setEmail(user.email);
+    setName(user.name);
+    setEditError(null);
+    setEditing(true);
+  };
+  const save = async () => {
+    setSaving(true);
+    setEditError(null);
+    try {
+      await onSave(email.trim(), name.trim());
+      setEditing(false);
+    } catch (e) {
+      setEditError(e instanceof ApiError ? e.message : "Failed to save");
+    } finally {
+      setSaving(false);
+    }
+  };
 
   return (
     <tr className={`border-b last:border-0 ${user.is_active ? "" : "bg-gray-50"}`}>
       <td className="px-4 py-3 align-top">
-        <div className="font-medium text-gray-900">{user.email || "(no email)"}</div>
-        {user.name && <div className="text-gray-500">{user.name}</div>}
+        {editing ? (
+          <div className="flex flex-col gap-2">
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="person@company.com"
+              className="w-64 rounded border px-2 py-1 text-sm"
+            />
+            <input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="Name (optional)"
+              className="w-64 rounded border px-2 py-1 text-sm"
+            />
+            {editError && <p className="text-xs text-red-600">{editError}</p>}
+          </div>
+        ) : (
+          <>
+            <div className="font-medium text-gray-900">{user.email || "(no email)"}</div>
+            {user.name && <div className="text-gray-500">{user.name}</div>}
+          </>
+        )}
       </td>
       <td className="px-4 py-3 align-top">
         {!user.is_active ? (
@@ -222,15 +275,50 @@ function UserRow({
         </div>
       </td>
       <td className="px-4 py-3 text-right align-top">
-        <button
-          type="button"
-          onClick={onToggleActive}
-          disabled={isSelf}
-          title={isSelf ? "You cannot deactivate your own account" : undefined}
-          className="rounded border px-3 py-1 text-xs text-gray-700 hover:bg-gray-50 disabled:opacity-40"
-        >
-          {user.is_active ? "Deactivate" : "Reactivate"}
-        </button>
+        <div className="flex justify-end gap-2">
+          {editing ? (
+            <>
+              <button
+                type="button"
+                onClick={save}
+                disabled={saving || email.trim() === ""}
+                className="rounded bg-indigo-600 px-3 py-1 text-xs font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+              >
+                {saving ? "Saving…" : "Save"}
+              </button>
+              <button
+                type="button"
+                onClick={() => setEditing(false)}
+                disabled={saving}
+                className="rounded border px-3 py-1 text-xs text-gray-700 hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+            </>
+          ) : (
+            <>
+              {user.pending && (
+                <button
+                  type="button"
+                  onClick={startEdit}
+                  title="Edit this invited user's email or name (available until their first sign-in)"
+                  className="rounded border px-3 py-1 text-xs text-gray-700 hover:bg-gray-50"
+                >
+                  Edit
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={onToggleActive}
+                disabled={isSelf}
+                title={isSelf ? "You cannot deactivate your own account" : undefined}
+                className="rounded border px-3 py-1 text-xs text-gray-700 hover:bg-gray-50 disabled:opacity-40"
+              >
+                {user.is_active ? "Deactivate" : "Reactivate"}
+              </button>
+            </>
+          )}
+        </div>
       </td>
     </tr>
   );

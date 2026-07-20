@@ -1,55 +1,61 @@
 import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useCostCenter, useCostCenterInvoices, useCostCenterUsage } from "../hooks/useCostCenters";
-import { useCanManageCostCenters } from "../hooks/useCanManageCostCenters";
-import { updateCostCenter } from "../api/costCenters";
+import { useBudgetUnit, useBudgetUnitInvoices, useBudgetUnitUsage } from "../hooks/useBudgetUnits";
+import { useCanManageBudgetUnits } from "../hooks/useCanManageBudgetUnits";
+import { updateBudgetUnit } from "../api/budgetUnits";
 import { ApiError } from "../api/client";
-import { CostCenterFields } from "../components/CostCenterFields";
+import { BudgetUnitFields } from "../components/BudgetUnitFields";
 import {
-  costCenterRef,
+  budgetUnitRef,
   formatMoney,
-  type CostCenter,
-  type CostCenterInput,
-  type CostCenterInvoiceCategory,
+  type BudgetUnit,
+  type BudgetUnitBracket,
+  type BudgetUnitInput,
+  type BudgetUnitInvoiceCategory,
 } from "../types/api";
 
 const labelCls = "font-medium text-gray-500";
 
-function toInput(c: CostCenter): CostCenterInput {
+function toInput(c: BudgetUnit): BudgetUnitInput {
   return {
     code: c.code,
     name: c.name,
     description: c.description,
-    primary_owner_id: c.primary_owner_id,
     budget: c.budget,
     currency: c.currency,
     is_active: c.is_active,
-    secondary_owner_ids: c.secondary_owners.map((u) => u.id),
+    default_approver_id: c.default_approver_id,
+    brackets: c.brackets.map((b) => ({
+      currency: b.currency,
+      min_value: b.min_value,
+      max_value: b.max_value,
+      approver_ids: b.approvers.map((u) => u.id),
+    })),
   };
 }
 
-export function CostCenterDetailPage() {
+export function BudgetUnitDetailPage() {
   const { id } = useParams();
-  const costCenterId = Number(id);
-  const canManage = useCanManageCostCenters();
+  const budgetUnitId = Number(id);
+  const canManage = useCanManageBudgetUnits();
   const qc = useQueryClient();
-  const { data: costCenter, isLoading, error } = useCostCenter(costCenterId);
-  const { data: usage } = useCostCenterUsage(costCenterId);
-  const { data: invoices } = useCostCenterInvoices(costCenterId);
+  const { data: budgetUnit, isLoading, error } = useBudgetUnit(budgetUnitId);
+  const { data: usage } = useBudgetUnitUsage(budgetUnitId);
+  const { data: invoices } = useBudgetUnitInvoices(budgetUnitId);
 
   const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState<CostCenterInput | null>(null);
+  const [draft, setDraft] = useState<BudgetUnitInput | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
 
   const invalidate = () => {
-    qc.invalidateQueries({ queryKey: ["cost_centers"] });
-    qc.invalidateQueries({ queryKey: ["cost_centers", costCenterId] });
+    qc.invalidateQueries({ queryKey: ["budget_units"] });
+    qc.invalidateQueries({ queryKey: ["budget_units", budgetUnitId] });
   };
 
   const save = useMutation({
-    mutationFn: (input: CostCenterInput) =>
-      updateCostCenter(costCenterId, { ...input, name: input.name.trim() }),
+    mutationFn: (input: BudgetUnitInput) =>
+      updateBudgetUnit(budgetUnitId, { ...input, name: input.name.trim() }),
     onSuccess: () => {
       invalidate();
       setEditing(false);
@@ -60,9 +66,9 @@ export function CostCenterDetailPage() {
 
   const toggleActive = useMutation({
     mutationFn: () =>
-      updateCostCenter(costCenterId, {
-        ...toInput(costCenter!),
-        is_active: !costCenter!.is_active,
+      updateBudgetUnit(budgetUnitId, {
+        ...toInput(budgetUnit!),
+        is_active: !budgetUnit!.is_active,
       }),
     onSuccess: invalidate,
     onError: (e) => setActionError(e instanceof ApiError ? e.message : "Failed to update status"),
@@ -71,15 +77,15 @@ export function CostCenterDetailPage() {
   if (!canManage) {
     return (
       <div className="rounded border border-dashed bg-white p-8 text-center text-gray-500">
-        You need the admin or finance_admin role to manage cost centers.
+        You need the admin or procurement_admin role to manage budget units.
       </div>
     );
   }
   if (isLoading) return <p className="text-gray-500">Loading…</p>;
-  if (error || !costCenter) return <p className="text-red-600">Failed to load cost center.</p>;
+  if (error || !budgetUnit) return <p className="text-red-600">Failed to load budget unit.</p>;
 
   const startEdit = () => {
-    setDraft(toInput(costCenter));
+    setDraft(toInput(budgetUnit));
     setEditing(true);
     setActionError(null);
   };
@@ -87,18 +93,18 @@ export function CostCenterDetailPage() {
   return (
     <div className="mx-auto max-w-2xl">
       <div className="mb-4 flex items-center gap-2 text-sm text-gray-500">
-        <Link to="/cost-centers" className="text-indigo-600">
-          Cost centers
+        <Link to="/budget-units" className="text-indigo-600">
+          Budget units
         </Link>
         <span>/</span>
-        <span>{costCenter.code || costCenterRef(costCenter.id)}</span>
+        <span>{budgetUnit.code || budgetUnitRef(budgetUnit.id)}</span>
       </div>
 
       <div className="mb-4 flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-semibold text-gray-900">{costCenter.name}</h1>
+          <h1 className="text-xl font-semibold text-gray-900">{budgetUnit.name}</h1>
           <div className="mt-1">
-            {costCenter.is_active ? (
+            {budgetUnit.is_active ? (
               <span className="rounded bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700">
                 Active
               </span>
@@ -122,7 +128,7 @@ export function CostCenterDetailPage() {
               disabled={toggleActive.isPending}
               className="rounded border px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50"
             >
-              {costCenter.is_active ? "Deactivate" : "Reactivate"}
+              {budgetUnit.is_active ? "Deactivate" : "Reactivate"}
             </button>
           </div>
         )}
@@ -133,7 +139,7 @@ export function CostCenterDetailPage() {
       <div className="rounded border bg-white p-6">
         {editing && draft ? (
           <div className="space-y-4">
-            <CostCenterFields value={draft} onChange={setDraft} />
+            <BudgetUnitFields value={draft} onChange={setDraft} />
             <div className="flex gap-2">
               <button
                 onClick={() => save.mutate(draft)}
@@ -154,43 +160,50 @@ export function CostCenterDetailPage() {
             </div>
           </div>
         ) : (
-          <dl className="grid grid-cols-2 gap-x-6 gap-y-4 text-sm">
-            <Field label="Code" value={costCenter.code} />
-            <Field
-              label="Budget"
-              value={costCenter.budget ? formatMoney(costCenter.budget, costCenter.currency) : ""}
-            />
-            <Field
-              label="Primary owner"
-              value={
-                costCenter.primary_owner
-                  ? costCenter.primary_owner.name || costCenter.primary_owner.email
-                  : ""
-              }
-            />
-            <div>
-              <dt className={labelCls}>Secondary owners</dt>
-              <dd className="mt-0.5 text-gray-900">
-                {costCenter.secondary_owners.length === 0
-                  ? "—"
-                  : costCenter.secondary_owners.map((u) => u.name || u.email).join(", ")}
-              </dd>
+          <>
+            <dl className="grid grid-cols-2 gap-x-6 gap-y-4 text-sm">
+              <Field label="Code" value={budgetUnit.code} />
+              <Field
+                label="Budget"
+                value={budgetUnit.budget ? formatMoney(budgetUnit.budget, budgetUnit.currency) : ""}
+              />
+              <Field label="Budget currency" value={budgetUnit.currency} />
+              <Field
+                label="Default approver"
+                value={
+                  budgetUnit.default_approver
+                    ? budgetUnit.default_approver.name || budgetUnit.default_approver.email
+                    : ""
+                }
+              />
+              <div className="col-span-2">
+                <dt className={labelCls}>Description</dt>
+                <dd className="mt-0.5 whitespace-pre-wrap text-gray-900">
+                  {budgetUnit.description || "—"}
+                </dd>
+              </div>
+            </dl>
+            <div className="mt-5">
+              <h2 className="mb-2 text-sm font-medium text-gray-900">Approval brackets</h2>
+              {budgetUnit.brackets.length === 0 ? (
+                <p className="text-sm text-gray-400">No brackets configured.</p>
+              ) : (
+                <ol className="space-y-2">
+                  {budgetUnit.brackets.map((b, i) => (
+                    <BracketView key={b.id} index={i} bracket={b} />
+                  ))}
+                </ol>
+              )}
             </div>
-            <div className="col-span-2">
-              <dt className={labelCls}>Description</dt>
-              <dd className="mt-0.5 whitespace-pre-wrap text-gray-900">
-                {costCenter.description || "—"}
-              </dd>
-            </div>
-          </dl>
+          </>
         )}
       </div>
 
-      {/* Invoices allocated to this cost center, by status */}
+      {/* Invoices allocated to this budget unit, by status */}
       <div className="mt-6 rounded border bg-white p-6">
         <h2 className="mb-1 font-medium text-gray-900">Invoices</h2>
         <p className="mb-3 text-xs text-gray-400">
-          Each invoice's allocated share to this cost center, grouped by status.
+          Each invoice's allocated share to this budget unit, grouped by status.
         </p>
         {!invoices ? (
           <p className="text-sm text-gray-400">Loading…</p>
@@ -210,17 +223,38 @@ export function CostCenterDetailPage() {
           <p className="text-sm text-gray-400">Loading…</p>
         ) : (
           <div className="grid grid-cols-2 gap-3 text-center">
-            <Link to={`/requests?cost_center=${costCenter.id}`} className="rounded border p-3 hover:bg-gray-50">
+            <Link to={`/requests?budget_unit=${budgetUnit.id}`} className="rounded border p-3 hover:bg-gray-50">
               <div className="text-2xl font-semibold text-gray-900">{usage.purchase_requests}</div>
               <div className="text-xs text-gray-500">Purchase requests</div>
             </Link>
           </div>
         )}
         <p className="mt-3 text-xs text-gray-400">
-          Cost centers referenced by these records cannot be deleted — deactivate instead.
+          Budget units referenced by these records cannot be deleted — deactivate instead.
         </p>
       </div>
     </div>
+  );
+}
+
+function BracketView({ index, bracket }: { index: number; bracket: BudgetUnitBracket }) {
+  const range =
+    bracket.max_value == null
+      ? `${formatMoney(bracket.min_value, bracket.currency)} and above`
+      : `${formatMoney(bracket.min_value, bracket.currency)} – ${formatMoney(bracket.max_value, bracket.currency)}`;
+  return (
+    <li className="rounded border border-gray-200 px-3 py-2">
+      <div className="flex items-center justify-between">
+        <span className="text-sm font-medium text-gray-800">
+          {index + 1}. {range}
+        </span>
+      </div>
+      <div className="mt-1 text-sm text-gray-600">
+        {bracket.approvers.length === 0
+          ? "No approvers"
+          : bracket.approvers.map((u) => u.name || u.email).join(", ")}
+      </div>
+    </li>
   );
 }
 
@@ -233,7 +267,7 @@ function Field({ label, value }: { label: string; value: string }) {
   );
 }
 
-function InvoiceCategory({ label, category }: { label: string; category: CostCenterInvoiceCategory }) {
+function InvoiceCategory({ label, category }: { label: string; category: BudgetUnitInvoiceCategory }) {
   return (
     <div className="rounded border p-3">
       <div className="flex items-baseline justify-between">
