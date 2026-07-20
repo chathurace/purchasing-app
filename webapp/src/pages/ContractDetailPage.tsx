@@ -1,7 +1,7 @@
 import { Link, useParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { useContract } from "../hooks/useContracts";
-import { useFinanceAccess } from "../hooks/useFinanceAccess";
+import { useProcurementAccess } from "../hooks/useProcurementAccess";
 import { EntityStatusBadge } from "../components/EntityStatusBadge";
 import { ContractContent } from "../components/ContractContent";
 import { RelatedDocuments } from "../components/RelatedDocuments";
@@ -15,7 +15,7 @@ export function ContractDetailPage() {
   const conId = Number(id);
   const qc = useQueryClient();
   const { data: c, isLoading, error } = useContract(conId);
-  const finance = useFinanceAccess();
+  const procurement = useProcurementAccess();
 
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ["contracts", conId] });
@@ -50,14 +50,14 @@ export function ContractDetailPage() {
 
       <div className="app-card p-6">
         <h2 className="mb-4 font-semibold text-slate-900">Contract</h2>
-        <ContractContent contract={c} canEdit={finance} invalidate={invalidate} />
+        <ContractContent contract={c} canEdit={procurement} invalidate={invalidate} />
       </div>
 
       <DirectParentCard prId={c.purchase_request_id} current={{ kind: "contract", id: c.id }} />
 
-      {/* Fulfillment: GRNs and invoices (once signed) — finance-only; approvers
+      {/* Fulfillment: GRNs and invoices (once signed) — procurement-only; approvers
           get a read-only view of the contract itself without fulfillment. */}
-      {finance && <ContractFulfillment contract={c} />}
+      {procurement && <ContractFulfillment contract={c} />}
 
       <RelatedDocuments prId={c.purchase_request_id} current={{ kind: "contract", id: c.id }} />
     </div>

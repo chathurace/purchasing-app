@@ -27,6 +27,20 @@ func IsApprovalDecision(d string) bool {
 	return d == PRApprovalApproved || d == PRApprovalRejected
 }
 
+// Team lead approval statuses. Each PR carries a single team lead decision
+// (reusing the same pending/approved/rejected vocabulary as named approvals).
+const (
+	TeamLeadPending  = "pending"
+	TeamLeadApproved = "approved"
+	TeamLeadRejected = "rejected"
+)
+
+// IsTeamLeadApproved reports whether a PR's team lead has approved it — the gate
+// for procurement visibility and procurement actions.
+func IsTeamLeadApproved(status string) bool {
+	return status == TeamLeadApproved
+}
+
 // Quotation statuses.
 const (
 	QuoReceived        = "received"
@@ -79,7 +93,6 @@ func ValidInvoiceTransition(from, to string) bool {
 	return false
 }
 
-
 // Procurement recommendation approval types. Each is one required sign-off card
 // on a PR's recommendation: budget owner (the cost-center owner), legal and
 // security. A recommendation requires a subset of these (budget is the default).
@@ -102,7 +115,7 @@ func IsRecApprovalType(t string) bool {
 }
 
 // ConfigList describes one runtime-editable dropdown list managed from the
-// Settings page (admin / finance_admin). Key is the stored list_key; Label is
+// Settings page (admin / procurement_admin). Key is the stored list_key; Label is
 // the human title shown for the section.
 type ConfigList struct {
 	Key   string `json:"key"`
@@ -148,18 +161,18 @@ const (
 
 // Roles maintained within the app.
 const (
-	RoleStaff        = "staff"
-	RoleFinance      = "finance"
-	RoleFinanceAdmin = "finance_admin"
-	RoleAdmin        = "admin"
-	RoleLegal        = "legal"
-	RoleSecurity     = "security"
+	RoleStaff            = "staff"
+	RoleProcurement      = "procurement"
+	RoleProcurementAdmin = "procurement_admin"
+	RoleAdmin            = "admin"
+	RoleLegal            = "legal"
+	RoleSecurity         = "security"
 )
 
 // AssignableRoles are the roles an admin may grant/revoke through user
 // management. `staff` is a permanent baseline (auto-granted on first login and
 // never removable), so it is not in this set.
-var AssignableRoles = []string{RoleFinance, RoleFinanceAdmin, RoleAdmin, RoleLegal, RoleSecurity}
+var AssignableRoles = []string{RoleProcurement, RoleProcurementAdmin, RoleAdmin, RoleLegal, RoleSecurity}
 
 // IsAssignableRole reports whether role can be added/removed via user management.
 func IsAssignableRole(role string) bool {

@@ -246,12 +246,6 @@ export function directParent(data: RelatedDocuments, current: CaseCurrent): Dire
   return null; // a purchase request has no parent
 }
 
-// contractsForQuotation returns the contracts drafted from a quotation — its
-// direct children, shown in the quotation page's main content.
-export function contractsForQuotation(data: RelatedDocuments, quotationId: number): CaseRecord[] {
-  return data.contracts.filter((c) => c.quotation_id === quotationId).map(conRecord);
-}
-
 // --- related documents (indirect ancestors, deeper descendants, siblings) ---
 
 export function relatedGroups(data: RelatedDocuments, current: CaseCurrent): RecordGroup[] {

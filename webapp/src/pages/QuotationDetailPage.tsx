@@ -2,19 +2,21 @@ import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useQuotation } from "../hooks/useQuotations";
-import { useFinanceAccess } from "../hooks/useFinanceAccess";
+import { useProcurementAccess } from "../hooks/useProcurementAccess";
 import { EntityStatusBadge } from "../components/EntityStatusBadge";
 import { QuotationFields } from "../components/QuotationFields";
 import { DocumentList } from "../components/DocumentList";
 import { RelatedDocuments } from "../components/RelatedDocuments";
 import { ChainStepper } from "../components/ChainStepper";
-import { DirectParentCard, ResultingContracts } from "../components/CaseSections";
+import { DirectParentCard } from "../components/CaseSections";
 import {
   deleteQuotationDocument,
+  deleteQuotationPDF,
   downloadQuotationDocument,
   selectQuotation,
   updateQuotation,
   uploadQuotationDocument,
+  uploadQuotationPDF,
 } from "../api/quotations";
 import { ApiError } from "../api/client";
 import { formatMoney, quoRef } from "../types/api";
@@ -39,7 +41,7 @@ export function QuotationDetailPage() {
   const { id } = useParams();
   const quoId = Number(id);
   const qc = useQueryClient();
-  const finance = useFinanceAccess();
+  const procurement = useProcurementAccess();
   const { data: q, isLoading, error } = useQuotation(quoId);
 
   const [editing, setEditing] = useState(false);
@@ -90,6 +92,28 @@ export function QuotationDetailPage() {
     onError: (e) => setActionError(e instanceof ApiError ? e.message : "Delete failed"),
   });
 
+  const uploadPdfMutation = useMutation({
+    mutationFn: (file: File) => uploadQuotationPDF(quoId, file),
+    onSuccess: invalidate,
+    onError: (e) => setActionError(e instanceof ApiError ? e.message : "Upload failed"),
+  });
+
+  const deletePdfMutation = useMutation({
+    mutationFn: () => deleteQuotationPDF(quoId),
+    onSuccess: invalidate,
+    onError: (e) => setActionError(e instanceof ApiError ? e.message : "Delete failed"),
+  });
+
+  const onPickPdf = (file: File | null) => {
+    if (!file) return;
+    if (!/\.pdf$/i.test(file.name)) {
+      setActionError(`Only .pdf files are allowed (got ${file.name}).`);
+      return;
+    }
+    setActionError(null);
+    uploadPdfMutation.mutate(file);
+  };
+
   if (isLoading) return <p className="text-gray-500">Loading…</p>;
   if (error || !q) return <p className="text-red-600">Failed to load quotation.</p>;
 
@@ -114,7 +138,7 @@ export function QuotationDetailPage() {
             <EntityStatusBadge status={q.status} />
           </div>
         </div>
-        {finance && !editing && (
+        {procurement && !editing && (
           <div className="flex gap-2">
             <button
               onClick={() => {
@@ -192,12 +216,51 @@ export function QuotationDetailPage() {
 
       <DirectParentCard prId={q.purchase_request_id} current={{ kind: "quotation", id: q.id }} />
 
-      <ResultingContracts prId={q.purchase_request_id} quotationId={q.id} />
+      <div className="mt-6 rounded border bg-white p-6">
+        <div className="mb-3 flex items-center justify-between">
+          <h2 className="font-medium text-gray-900">Quotation PDF</h2>
+          {procurement && (
+            <label className="cursor-pointer text-sm text-indigo-600">
+              {q.quotation_document ? "Replace" : "+ Add PDF"}
+              <input
+                type="file"
+                accept=".pdf"
+                className="hidden"
+                onChange={(e) => {
+                  onPickPdf(e.target.files?.[0] ?? null);
+                  e.target.value = "";
+                }}
+              />
+            </label>
+          )}
+        </div>
+        {q.quotation_document ? (
+          <div className="flex items-center justify-between text-sm">
+            <button
+              className="text-indigo-600 hover:underline"
+              onClick={() => downloadQuotationDocument(q.id, q.quotation_document!)}
+            >
+              📄 {q.quotation_document.filename}
+            </button>
+            <div className="flex items-center gap-3 text-gray-400">
+              <span>{(q.quotation_document.size_bytes / 1024).toFixed(0)} KB</span>
+              {procurement && (
+                <button className="hover:text-red-600" onClick={() => deletePdfMutation.mutate()}>
+                  Remove
+                </button>
+              )}
+            </div>
+          </div>
+        ) : (
+          <p className="text-sm text-gray-400">No quotation PDF attached.</p>
+        )}
+      </div>
 
       <div className="mt-6">
         <DocumentList
           documents={q.documents ?? []}
-          canEdit={finance}
+          canEdit={procurement}
+          title="Other documents"
           onUpload={(f) => uploadMutation.mutate(f)}
           onDelete={(docId) => deleteMutation.mutate(docId)}
           onDownload={(doc: Document) => downloadQuotationDocument(q.id, doc)}

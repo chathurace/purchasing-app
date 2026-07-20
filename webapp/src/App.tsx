@@ -9,7 +9,6 @@ import { PurchaseRequestDetailPage } from "./pages/PurchaseRequestDetailPage";
 import { ApprovalsListPage } from "./pages/ApprovalsListPage";
 import { QuotationListPage } from "./pages/QuotationListPage";
 import { QuotationDetailPage } from "./pages/QuotationDetailPage";
-import { NewContractPage } from "./pages/NewContractPage";
 import { ContractListPage } from "./pages/ContractListPage";
 import { ContractDetailPage } from "./pages/ContractDetailPage";
 import { NewGrnPage } from "./pages/NewGrnPage";
@@ -21,8 +20,8 @@ import { InvoiceListPage } from "./pages/InvoiceListPage";
 import { UserManagementPage } from "./pages/UserManagementPage";
 import { VendorListPage } from "./pages/VendorListPage";
 import { VendorDetailPage } from "./pages/VendorDetailPage";
-import { CostCenterListPage } from "./pages/CostCenterListPage";
-import { CostCenterDetailPage } from "./pages/CostCenterDetailPage";
+import { BudgetUnitListPage } from "./pages/BudgetUnitListPage";
+import { BudgetUnitDetailPage } from "./pages/BudgetUnitDetailPage";
 import { SettingsPage } from "./pages/SettingsPage";
 
 export default function App() {
@@ -46,7 +45,6 @@ export default function App() {
 
         <Route path="/quotations" element={<QuotationListPage />} />
         <Route path="/quotations/:id" element={<QuotationDetailPage />} />
-        <Route path="/quotations/:id/contracts/new" element={<NewContractPage />} />
 
         <Route path="/contracts" element={<ContractListPage />} />
         <Route path="/contracts/:id" element={<ContractDetailPage />} />
@@ -62,8 +60,8 @@ export default function App() {
         <Route path="/vendors" element={<VendorListPage />} />
         <Route path="/vendors/:id" element={<VendorDetailPage />} />
 
-        <Route path="/cost-centers" element={<CostCenterListPage />} />
-        <Route path="/cost-centers/:id" element={<CostCenterDetailPage />} />
+        <Route path="/budget-units" element={<BudgetUnitListPage />} />
+        <Route path="/budget-units/:id" element={<BudgetUnitDetailPage />} />
 
         <Route path="/users" element={<UserManagementPage />} />
         <Route path="/settings" element={<SettingsPage />} />

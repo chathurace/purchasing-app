@@ -37,7 +37,7 @@ export function useConfigLookup(enabled = true) {
 }
 
 // useConfigOptionsAdmin loads every option (active and inactive) for the Settings
-// page. Restricted to admin/finance_admin on the server.
+// page. Restricted to admin/procurement_admin on the server.
 export function useConfigOptionsAdmin() {
   return useQuery({
     queryKey: ["config_options", "all"],

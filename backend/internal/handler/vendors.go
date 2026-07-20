@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/cs/purchasing-app/internal/middleware"
+	"github.com/cs/purchasing-app/internal/model"
 	"github.com/cs/purchasing-app/internal/repository"
 	"github.com/jackc/pgx/v5"
 	"github.com/rs/zerolog"
@@ -52,7 +53,7 @@ func (in vendorInput) toRepo() repository.VendorInput {
 
 // Lookup returns active vendors as minimal summaries for the purchase-request
 // "proposed supplier" dropdown. Any authenticated user may call it (requesters
-// are usually staff, who cannot reach the finance-gated full vendor list).
+// are usually staff, who cannot reach the procurement-gated full vendor list).
 func (h *VendorsHandler) Lookup(w http.ResponseWriter, r *http.Request) {
 	vendors, err := h.Repo.ListVendorsLookup(r.Context())
 	if err != nil {
@@ -64,8 +65,8 @@ func (h *VendorsHandler) Lookup(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *VendorsHandler) List(w http.ResponseWriter, r *http.Request) {
-	if !middleware.HasFinanceAccess(r.Context()) {
-		writeError(w, http.StatusForbidden, "finance access required")
+	if !middleware.HasProcurementAccess(r.Context()) {
+		writeError(w, http.StatusForbidden, "procurement access required")
 		return
 	}
 	vendors, err := h.Repo.ListVendors(r.Context())
@@ -78,8 +79,8 @@ func (h *VendorsHandler) List(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *VendorsHandler) Create(w http.ResponseWriter, r *http.Request) {
-	if !middleware.HasFinanceAccess(r.Context()) {
-		writeError(w, http.StatusForbidden, "finance access required")
+	if !middleware.HasProcurementAccess(r.Context()) {
+		writeError(w, http.StatusForbidden, "procurement access required")
 		return
 	}
 	var in vendorInput
@@ -99,12 +100,13 @@ func (h *VendorsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to create vendor")
 		return
 	}
+	recordAuditEvent(r, h.Repo, model.AuditCreateVendor, "", model.EntityVendor, &v.ID, v.Name)
 	writeJSON(w, http.StatusCreated, v)
 }
 
 func (h *VendorsHandler) Get(w http.ResponseWriter, r *http.Request) {
-	if !middleware.HasFinanceAccess(r.Context()) {
-		writeError(w, http.StatusForbidden, "finance access required")
+	if !middleware.HasProcurementAccess(r.Context()) {
+		writeError(w, http.StatusForbidden, "procurement access required")
 		return
 	}
 	id, err := parseID(r, "id")
@@ -126,7 +128,7 @@ func (h *VendorsHandler) Get(w http.ResponseWriter, r *http.Request) {
 
 func (h *VendorsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if !middleware.HasVendorAdmin(r.Context()) {
-		writeError(w, http.StatusForbidden, "admin or finance_admin access required")
+		writeError(w, http.StatusForbidden, "admin or procurement_admin access required")
 		return
 	}
 	id, err := parseID(r, "id")
@@ -149,6 +151,7 @@ func (h *VendorsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to update vendor")
 		return
 	}
+	recordAuditEvent(r, h.Repo, model.AuditUpdateVendor, "", model.EntityVendor, &id, repoIn.Name)
 	v, err := h.Repo.GetVendor(r.Context(), id)
 	if err != nil {
 		reqLog(r).Error().Err(err).Msg("reload vendor after mutation")
@@ -162,7 +165,7 @@ func (h *VendorsHandler) Update(w http.ResponseWriter, r *http.Request) {
 // contracts, GRNs and invoices) for a vendor. Management page only.
 func (h *VendorsHandler) Usage(w http.ResponseWriter, r *http.Request) {
 	if !middleware.HasVendorAdmin(r.Context()) {
-		writeError(w, http.StatusForbidden, "admin or finance_admin access required")
+		writeError(w, http.StatusForbidden, "admin or procurement_admin access required")
 		return
 	}
 	id, err := parseID(r, "id")

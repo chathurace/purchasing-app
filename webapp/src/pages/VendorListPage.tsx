@@ -50,7 +50,7 @@ export function VendorListPage() {
   if (!canManage) {
     return (
       <div className="rounded border border-dashed bg-white p-8 text-center text-gray-500">
-        You need the admin or finance_admin role to manage vendors.
+        You need the admin or procurement_admin role to manage vendors.
       </div>
     );
   }

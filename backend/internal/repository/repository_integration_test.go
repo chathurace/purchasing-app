@@ -49,9 +49,8 @@ func TestPurchaseRequestLifecycle(t *testing.T) {
 
 	// Create with items + links.
 	pr, err := repo.CreatePurchaseRequest(ctx, user.ID, repository.PurchaseRequestInput{
-		Title:      "Monitors",
-		CostCenter: "Engineering",
-		Comments:   "Need by Q3",
+		Title:    "Monitors",
+		Comments: "Need by Q3",
 		Items: []repository.Item{
 			{Description: "Dell 27\" monitor", Quantity: 5},
 			{Description: "HDMI cable", Quantity: 5},
@@ -77,11 +76,10 @@ func TestPurchaseRequestLifecycle(t *testing.T) {
 
 	// Update: replace items/links.
 	if err := repo.UpdatePurchaseRequest(ctx, pr.ID, repository.PurchaseRequestInput{
-		Title:      "Monitors (revised)",
-		CostCenter: "Engineering",
-		Comments:   "Updated",
-		Items:      []repository.Item{{Description: "Dell 32\" monitor", Quantity: 3}},
-		Links:      nil,
+		Title:    "Monitors (revised)",
+		Comments: "Updated",
+		Items:    []repository.Item{{Description: "Dell 32\" monitor", Quantity: 3}},
+		Links:    nil,
 	}); err != nil {
 		t.Fatalf("update: %v", err)
 	}
@@ -110,62 +108,89 @@ func TestPurchaseRequestLifecycle(t *testing.T) {
 	}
 
 	// Scoped listing returns this requester's PR.
-	mine, err := repo.ListPurchaseRequests(ctx, user.ID, false, false, false, repository.PRScopeDefault)
+	mine, err := repo.ListPurchaseRequests(ctx, user.ID, user.Email, false, false, false, false, repository.PRScopeDefault)
 	if err != nil || len(mine) == 0 {
 		t.Fatalf("list scoped: err=%v count=%d", err, len(mine))
 	}
 }
 
-func TestCostCenterLifecycle(t *testing.T) {
+func TestBudgetUnitLifecycle(t *testing.T) {
 	repo, ctx := newTestRepo(t)
 
-	owner, err := repo.UpsertUser(ctx, "cc-owner-"+t.Name(), "owner@example.com", "Owner")
+	low, err := repo.UpsertUser(ctx, "bu-low-"+t.Name(), "low@example.com", "Low Approver")
 	if err != nil {
-		t.Fatalf("upsert owner: %v", err)
+		t.Fatalf("upsert low approver: %v", err)
 	}
-	sec, err := repo.UpsertUser(ctx, "cc-sec-"+t.Name(), "secondary@example.com", "Secondary")
+	high, err := repo.UpsertUser(ctx, "bu-high-"+t.Name(), "high@example.com", "High Approver")
 	if err != nil {
-		t.Fatalf("upsert secondary: %v", err)
+		t.Fatalf("upsert high approver: %v", err)
 	}
+	def, err := repo.UpsertUser(ctx, "bu-def-"+t.Name(), "default@example.com", "Default Approver")
+	if err != nil {
+		t.Fatalf("upsert default approver: %v", err)
+	}
+	max := 10000.0
 
-	// Create with owners, budget and code.
-	cc, err := repo.CreateCostCenter(ctx, repository.CostCenterInput{
-		Code:              "CC-ENG-001",
+	// Two USD brackets: [0, 10000] → low, (10000, ∞) → high; anything else (no
+	// value, out of range, or non-USD) → the default approver.
+	bu, err := repo.CreateBudgetUnit(ctx, repository.BudgetUnitInput{
+		Code:              "BU-ENG-001",
 		Name:              "Engineering",
 		Description:       "R&D spend",
-		PrimaryOwnerID:    &owner.ID,
 		Budget:            150000,
 		Currency:          "USD",
 		IsActive:          true,
-		SecondaryOwnerIDs: []int64{sec.ID},
-	}, owner.ID)
+		DefaultApproverID: &def.ID,
+		Brackets: []repository.BudgetUnitBracketInput{
+			{Currency: "USD", MinValue: 0, MaxValue: &max, ApproverIDs: []int64{low.ID}},
+			{Currency: "USD", MinValue: 10000.01, MaxValue: nil, ApproverIDs: []int64{high.ID}},
+		},
+	}, low.ID)
 	if err != nil {
-		t.Fatalf("create cost center: %v", err)
+		t.Fatalf("create budget unit: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = repo.Pool().Exec(context.Background(), `DELETE FROM cost_centers WHERE id=$1`, cc.ID)
+		_, _ = repo.Pool().Exec(context.Background(), `DELETE FROM budget_units WHERE id=$1`, bu.ID)
 	})
 
-	if cc.PrimaryOwner == nil || cc.PrimaryOwner.Email != "owner@example.com" {
-		t.Errorf("primary owner not populated: %+v", cc.PrimaryOwner)
+	if len(bu.Brackets) != 2 {
+		t.Fatalf("expected 2 brackets, got %d", len(bu.Brackets))
 	}
-	if len(cc.SecondaryOwners) != 1 || cc.SecondaryOwners[0].ID != sec.ID {
-		t.Errorf("secondary owners not populated: %+v", cc.SecondaryOwners)
+	if len(bu.Brackets[0].Approvers) != 1 || bu.Brackets[0].Approvers[0].ID != low.ID {
+		t.Errorf("bracket 0 approver not populated: %+v", bu.Brackets[0].Approvers)
 	}
 
-	// Lookup returns only active cost centers as summaries.
-	active, err := repo.ListActiveCostCenters(ctx)
+	// Lookup returns only active budget units as summaries.
+	active, err := repo.ListActiveBudgetUnits(ctx)
 	if err != nil {
 		t.Fatalf("list active: %v", err)
 	}
-	if !containsCostCenter(active, cc.ID) {
-		t.Errorf("active cost center missing from lookup")
+	if !containsBudgetUnit(active, bu.ID) {
+		t.Errorf("active budget unit missing from lookup")
 	}
 
-	// A PR linked to the cost center mirrors its name into the legacy column.
-	pr, err := repo.CreatePurchaseRequest(ctx, owner.ID, repository.PurchaseRequestInput{
+	// Preview resolution: a small USD value hits the low bracket, a large one the
+	// high bracket; a missing value, an out-of-range value, or a non-USD currency
+	// falls back to the default approver.
+	assertApprover := func(label string, value *float64, currency string, wantID int64) {
+		got, err := repo.BudgetApproversForValue(ctx, bu.ID, value, currency)
+		if err != nil {
+			t.Fatalf("%s: resolve: %v", label, err)
+		}
+		if len(got) != 1 || got[0].ID != wantID {
+			t.Errorf("%s: expected approver %d, got %+v", label, wantID, got)
+		}
+	}
+	small, large := 500.0, 50000.0
+	assertApprover("small USD", &small, "USD", low.ID)
+	assertApprover("large USD", &large, "USD", high.ID)
+	assertApprover("no value → default", nil, "USD", def.ID)
+	assertApprover("currency mismatch → default", &small, "EUR", def.ID)
+
+	// A PR + recommendation drives the actual budget-approver derivation.
+	pr, err := repo.CreatePurchaseRequest(ctx, low.ID, repository.PurchaseRequestInput{
 		Title:        "Laptops",
-		CostCenterID: &cc.ID,
+		BudgetUnitID: &bu.ID,
 	})
 	if err != nil {
 		t.Fatalf("create PR: %v", err)
@@ -173,15 +198,12 @@ func TestCostCenterLifecycle(t *testing.T) {
 	t.Cleanup(func() {
 		_, _ = repo.Pool().Exec(context.Background(), `DELETE FROM purchase_requests WHERE id=$1`, pr.ID)
 	})
-	if pr.CostCenterID == nil || *pr.CostCenterID != cc.ID {
-		t.Errorf("PR cost_center_id not linked: %+v", pr.CostCenterID)
-	}
-	if pr.CostCenter != "Engineering" {
-		t.Errorf("PR cost_center name not mirrored: %q", pr.CostCenter)
+	if pr.BudgetUnitID == nil || *pr.BudgetUnitID != bu.ID {
+		t.Errorf("PR budget_unit_id not linked: %+v", pr.BudgetUnitID)
 	}
 
 	// Usage reflects the linked PR.
-	usage, err := repo.GetCostCenterUsage(ctx, cc.ID)
+	usage, err := repo.GetBudgetUnitUsage(ctx, bu.ID)
 	if err != nil {
 		t.Fatalf("usage: %v", err)
 	}
@@ -190,35 +212,39 @@ func TestCostCenterLifecycle(t *testing.T) {
 	}
 
 	// Deactivate (soft delete) and confirm it drops from the active lookup and
-	// that secondary owners can be replaced.
-	if err := repo.UpdateCostCenter(ctx, cc.ID, repository.CostCenterInput{
-		Code:           cc.Code,
-		Name:           cc.Name,
-		PrimaryOwnerID: &owner.ID,
-		IsActive:       false,
+	// that brackets can be replaced (down to one).
+	if err := repo.UpdateBudgetUnit(ctx, bu.ID, repository.BudgetUnitInput{
+		Code:              bu.Code,
+		Name:              bu.Name,
+		Currency:          "USD",
+		IsActive:          false,
+		DefaultApproverID: &def.ID,
+		Brackets: []repository.BudgetUnitBracketInput{
+			{Currency: "USD", MinValue: 0, MaxValue: nil, ApproverIDs: []int64{high.ID}},
+		},
 	}); err != nil {
-		t.Fatalf("update cost center: %v", err)
+		t.Fatalf("update budget unit: %v", err)
 	}
-	active, err = repo.ListActiveCostCenters(ctx)
+	active, err = repo.ListActiveBudgetUnits(ctx)
 	if err != nil {
 		t.Fatalf("list active after deactivate: %v", err)
 	}
-	if containsCostCenter(active, cc.ID) {
-		t.Errorf("deactivated cost center still in active lookup")
+	if containsBudgetUnit(active, bu.ID) {
+		t.Errorf("deactivated budget unit still in active lookup")
 	}
-	got, err := repo.GetCostCenter(ctx, cc.ID)
+	got, err := repo.GetBudgetUnit(ctx, bu.ID)
 	if err != nil {
 		t.Fatalf("get after update: %v", err)
 	}
 	if got.IsActive {
 		t.Errorf("expected inactive after deactivate")
 	}
-	if len(got.SecondaryOwners) != 0 {
-		t.Errorf("expected secondary owners cleared, got %+v", got.SecondaryOwners)
+	if len(got.Brackets) != 1 {
+		t.Errorf("expected brackets replaced down to 1, got %d", len(got.Brackets))
 	}
 }
 
-func containsCostCenter(list []*repository.CostCenterSummary, id int64) bool {
+func containsBudgetUnit(list []*repository.BudgetUnitSummary, id int64) bool {
 	for _, c := range list {
 		if c.ID == id {
 			return true
@@ -236,16 +262,16 @@ func TestInvoiceCostAllocations(t *testing.T) {
 	}
 
 	// Two cost centers; the first is the PR's, used as the contract default.
-	cc1, err := repo.CreateCostCenter(ctx, repository.CostCenterInput{Name: "Engineering", IsActive: true}, user.ID)
+	cc1, err := repo.CreateBudgetUnit(ctx, repository.BudgetUnitInput{Name: "Engineering", IsActive: true}, user.ID)
 	if err != nil {
 		t.Fatalf("create cc1: %v", err)
 	}
-	cc2, err := repo.CreateCostCenter(ctx, repository.CostCenterInput{Name: "Marketing", IsActive: true}, user.ID)
+	cc2, err := repo.CreateBudgetUnit(ctx, repository.BudgetUnitInput{Name: "Marketing", IsActive: true}, user.ID)
 	if err != nil {
 		t.Fatalf("create cc2: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = repo.Pool().Exec(context.Background(), `DELETE FROM cost_centers WHERE id IN ($1,$2)`, cc1.ID, cc2.ID)
+		_, _ = repo.Pool().Exec(context.Background(), `DELETE FROM budget_units WHERE id IN ($1,$2)`, cc1.ID, cc2.ID)
 	})
 
 	vendor, err := repo.CreateVendor(ctx, repository.VendorInput{Name: "Acme", IsActive: true}, user.ID)
@@ -258,7 +284,7 @@ func TestInvoiceCostAllocations(t *testing.T) {
 
 	pr, err := repo.CreatePurchaseRequest(ctx, user.ID, repository.PurchaseRequestInput{
 		Title:        "Servers",
-		CostCenterID: &cc1.ID,
+		BudgetUnitID: &cc1.ID,
 	})
 	if err != nil {
 		t.Fatalf("create PR: %v", err)
@@ -283,8 +309,8 @@ func TestInvoiceCostAllocations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get contract: %v", err)
 	}
-	if con.CostCenter == nil || con.CostCenter.ID != cc1.ID {
-		t.Errorf("contract cost center not resolved from PR: %+v", con.CostCenter)
+	if con.BudgetUnit == nil || con.BudgetUnit.ID != cc1.ID {
+		t.Errorf("contract budget unit not resolved from PR: %+v", con.BudgetUnit)
 	}
 
 	// Create an invoice split 60/40 by percentage across both cost centers.
@@ -293,8 +319,8 @@ func TestInvoiceCostAllocations(t *testing.T) {
 		AllocationMode: "percentage",
 		Items:          []repository.InvoiceItem{{Description: "Server", Quantity: 1, UnitPrice: 1000}},
 		CostAllocations: []repository.CostAllocation{
-			{CostCenterID: cc1.ID, Value: 60},
-			{CostCenterID: cc2.ID, Value: 40},
+			{BudgetUnitID: cc1.ID, Value: 60},
+			{BudgetUnitID: cc2.ID, Value: 40},
 		},
 	}, user.ID)
 	if err != nil {
@@ -317,8 +343,8 @@ func TestInvoiceCostAllocations(t *testing.T) {
 		AllocationMode: "amount",
 		Items:          []repository.InvoiceItem{{Description: "Server", Quantity: 1, UnitPrice: 1000}},
 		CostAllocations: []repository.CostAllocation{
-			{CostCenterID: cc1.ID, Value: 700},
-			{CostCenterID: cc2.ID, Value: 300},
+			{BudgetUnitID: cc1.ID, Value: 700},
+			{BudgetUnitID: cc2.ID, Value: 300},
 		},
 	}); err != nil {
 		t.Fatalf("update invoice: %v", err)
@@ -336,7 +362,7 @@ func TestInvoiceCostAllocations(t *testing.T) {
 
 	// The cost-center invoice summary buckets the (received) invoice under
 	// pending, with each cost center's allocated share totalled per currency.
-	sum, err := repo.GetCostCenterInvoiceSummary(ctx, cc1.ID)
+	sum, err := repo.GetBudgetUnitInvoiceSummary(ctx, cc1.ID)
 	if err != nil {
 		t.Fatalf("cost center invoice summary: %v", err)
 	}
@@ -349,7 +375,7 @@ func TestInvoiceCostAllocations(t *testing.T) {
 	if sum.Approved.Count != 0 || sum.Paid.Count != 0 {
 		t.Errorf("expected no approved/paid for cc1, got approved=%d paid=%d", sum.Approved.Count, sum.Paid.Count)
 	}
-	sum2, err := repo.GetCostCenterInvoiceSummary(ctx, cc2.ID)
+	sum2, err := repo.GetBudgetUnitInvoiceSummary(ctx, cc2.ID)
 	if err != nil {
 		t.Fatalf("cost center invoice summary cc2: %v", err)
 	}
@@ -367,11 +393,11 @@ func TestInvoiceEnteredTotal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("upsert user: %v", err)
 	}
-	cc, err := repo.CreateCostCenter(ctx, repository.CostCenterInput{Name: "Ops", IsActive: true}, user.ID)
+	cc, err := repo.CreateBudgetUnit(ctx, repository.BudgetUnitInput{Name: "Ops", IsActive: true}, user.ID)
 	if err != nil {
 		t.Fatalf("create cc: %v", err)
 	}
-	t.Cleanup(func() { _, _ = repo.Pool().Exec(context.Background(), `DELETE FROM cost_centers WHERE id=$1`, cc.ID) })
+	t.Cleanup(func() { _, _ = repo.Pool().Exec(context.Background(), `DELETE FROM budget_units WHERE id=$1`, cc.ID) })
 
 	vendor, err := repo.CreateVendor(ctx, repository.VendorInput{Name: "Globex", IsActive: true}, user.ID)
 	if err != nil {
@@ -379,11 +405,13 @@ func TestInvoiceEnteredTotal(t *testing.T) {
 	}
 	t.Cleanup(func() { _, _ = repo.Pool().Exec(context.Background(), `DELETE FROM vendors WHERE id=$1`, vendor.ID) })
 
-	pr, err := repo.CreatePurchaseRequest(ctx, user.ID, repository.PurchaseRequestInput{Title: "Misc", CostCenterID: &cc.ID})
+	pr, err := repo.CreatePurchaseRequest(ctx, user.ID, repository.PurchaseRequestInput{Title: "Misc", BudgetUnitID: &cc.ID})
 	if err != nil {
 		t.Fatalf("create PR: %v", err)
 	}
-	t.Cleanup(func() { _, _ = repo.Pool().Exec(context.Background(), `DELETE FROM purchase_requests WHERE id=$1`, pr.ID) })
+	t.Cleanup(func() {
+		_, _ = repo.Pool().Exec(context.Background(), `DELETE FROM purchase_requests WHERE id=$1`, pr.ID)
+	})
 
 	var contractID int64
 	if err := repo.Pool().QueryRow(ctx, `
@@ -401,7 +429,7 @@ func TestInvoiceEnteredTotal(t *testing.T) {
 		EnteredTotal:   &entered,
 		Items:          []repository.InvoiceItem{{Description: "Server", Quantity: 1, UnitPrice: 1000}},
 		// Amount allocations validate (in the handler) against the entered total.
-		CostAllocations: []repository.CostAllocation{{CostCenterID: cc.ID, Value: 1500}},
+		CostAllocations: []repository.CostAllocation{{BudgetUnitID: cc.ID, Value: 1500}},
 	}, user.ID)
 	if err != nil {
 		t.Fatalf("create invoice: %v", err)
@@ -423,7 +451,7 @@ func TestInvoiceEnteredTotal(t *testing.T) {
 		AllocationMode:  "amount",
 		EnteredTotal:    nil,
 		Items:           []repository.InvoiceItem{{Description: "Server", Quantity: 1, UnitPrice: 1000}},
-		CostAllocations: []repository.CostAllocation{{CostCenterID: cc.ID, Value: 1000}},
+		CostAllocations: []repository.CostAllocation{{BudgetUnitID: cc.ID, Value: 1000}},
 	}); err != nil {
 		t.Fatalf("update invoice: %v", err)
 	}
@@ -436,6 +464,72 @@ func TestInvoiceEnteredTotal(t *testing.T) {
 	}
 	if got.TotalAmount != 1000 {
 		t.Errorf("expected derived total 1000 after clearing, got %v", got.TotalAmount)
+	}
+}
+
+// TestTeamLeadVisibilityGate verifies that a PR pending team-lead approval is
+// hidden from procurement but visible to the team lead and admins, and becomes
+// visible to procurement once approved.
+func TestTeamLeadVisibilityGate(t *testing.T) {
+	repo, ctx := newTestRepo(t)
+
+	requester, err := repo.UpsertUser(ctx, "tl-req-"+t.Name(), "tl-req-"+t.Name()+"@example.com", "Requester")
+	if err != nil {
+		t.Fatalf("upsert requester: %v", err)
+	}
+	lead, err := repo.UpsertUser(ctx, "tl-lead-"+t.Name(), "tl-lead-"+t.Name()+"@example.com", "Lead")
+	if err != nil {
+		t.Fatalf("upsert lead: %v", err)
+	}
+	fin, err := repo.UpsertUser(ctx, "tl-fin-"+t.Name(), "tl-fin-"+t.Name()+"@example.com", "Procurement")
+	if err != nil {
+		t.Fatalf("upsert procurement: %v", err)
+	}
+
+	pr, err := repo.CreatePurchaseRequest(ctx, requester.ID, repository.PurchaseRequestInput{
+		Title:         "Gated PR",
+		TeamLeadEmail: lead.Email,
+	})
+	if err != nil {
+		t.Fatalf("create PR: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = repo.Pool().Exec(context.Background(), `DELETE FROM purchase_requests WHERE id=$1`, pr.ID)
+	})
+
+	has := func(callerID int64, callerEmail string, seesAll, isAdmin bool, scope repository.PRListScope) bool {
+		prs, err := repo.ListPurchaseRequests(ctx, callerID, callerEmail, seesAll, isAdmin, false, false, scope)
+		if err != nil {
+			t.Fatalf("list: %v", err)
+		}
+		for _, p := range prs {
+			if p.ID == pr.ID {
+				return true
+			}
+		}
+		return false
+	}
+
+	// Pending: hidden from procurement, visible to team lead (Approvals) and admin.
+	if has(fin.ID, fin.Email, true, false, repository.PRScopeDefault) {
+		t.Error("pending PR should be hidden from procurement")
+	}
+	if !has(lead.ID, lead.Email, false, false, repository.PRScopeApprovals) {
+		t.Error("pending PR should be in the team lead's Approvals queue")
+	}
+	if !has(requester.ID, requester.Email, false, false, repository.PRScopeMine) {
+		t.Error("requester should always see their own PR")
+	}
+	if !has(fin.ID, fin.Email, true, true, repository.PRScopeDefault) {
+		t.Error("admin should see the pending PR")
+	}
+
+	// Approve, then procurement can see it.
+	if err := repo.RecordTeamLeadDecision(ctx, pr.ID, lead.ID, "approved", "ok"); err != nil {
+		t.Fatalf("record decision: %v", err)
+	}
+	if !has(fin.ID, fin.Email, true, false, repository.PRScopeDefault) {
+		t.Error("approved PR should be visible to procurement")
 	}
 }
 

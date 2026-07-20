@@ -2,11 +2,11 @@ import { useEffect, useRef, useState } from "react";
 import { NavLink, Outlet } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 import { useMe } from "../hooks/useMe";
-import { useFinanceAccess } from "../hooks/useFinanceAccess";
+import { useProcurementAccess } from "../hooks/useProcurementAccess";
 import { useIsAdmin } from "../hooks/useIsAdmin";
 import { useIsApprover } from "../hooks/useIsApprover";
 import { useCanManageVendors } from "../hooks/useCanManageVendors";
-import { useCanManageCostCenters } from "../hooks/useCanManageCostCenters";
+import { useCanManageBudgetUnits } from "../hooks/useCanManageBudgetUnits";
 
 const linkCls = ({ isActive }: { isActive: boolean }) =>
   `rounded-lg px-3 py-1.5 text-sm font-medium transition ${
@@ -26,15 +26,17 @@ function initials(email?: string): string {
 export function Layout() {
   const { logout } = useAuth();
   const { data: me } = useMe();
-  const finance = useFinanceAccess();
+  const procurement = useProcurementAccess();
   const isAdmin = useIsAdmin();
   const isApprover = useIsApprover();
   const canManageVendors = useCanManageVendors();
-  const canManageCostCenters = useCanManageCostCenters();
-  // Approvers (named approvers, or budget/legal/security card actors) and finance
-  // see the Approvals, Quotations, and Contracts tabs; approvers get a read-only,
+  const canManageBudgetUnits = useCanManageBudgetUnits();
+  // Requests and Approvals are visible to everyone (staff-only users included);
+  // the Approvals page just lists whatever is awaiting the caller. Approvers
+  // (named approvers, or budget/legal/security card actors) and procurement
+  // additionally see the Quotations and Contracts tabs, with a read-only,
   // PR-scoped view of the latter two.
-  const canApprove = finance || isApprover;
+  const canApprove = procurement || isApprover;
 
   return (
     <div className="min-h-screen">
@@ -53,11 +55,9 @@ export function Layout() {
               <NavLink to="/requests" className={linkCls}>
                 Requests
               </NavLink>
-              {canApprove && (
-                <NavLink to="/approvals" className={linkCls}>
-                  Approvals
-                </NavLink>
-              )}
+              <NavLink to="/approvals" className={linkCls}>
+                Approvals
+              </NavLink>
               {canApprove && (
                 <NavLink to="/quotations" className={linkCls}>
                   Quotations
@@ -68,7 +68,7 @@ export function Layout() {
                   Contracts
                 </NavLink>
               )}
-              {finance && (
+              {procurement && (
                 <>
                   <NavLink to="/grns" className={linkCls}>
                     GRNs
@@ -83,9 +83,9 @@ export function Layout() {
                   Vendors
                 </NavLink>
               )}
-              {canManageCostCenters && (
-                <NavLink to="/cost-centers" className={linkCls}>
-                  Cost centers
+              {canManageBudgetUnits && (
+                <NavLink to="/budget-units" className={linkCls}>
+                  Budget units
                 </NavLink>
               )}
               {isAdmin && (
@@ -93,7 +93,7 @@ export function Layout() {
                   Users
                 </NavLink>
               )}
-              {canManageCostCenters && (
+              {canManageBudgetUnits && (
                 <NavLink to="/settings" className={linkCls}>
                   Settings
                 </NavLink>

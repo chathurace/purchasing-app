@@ -1,5 +1,6 @@
 import { VendorSelect } from "./VendorSelect";
 import { NumberInput } from "./NumberInput";
+import { CurrencyInput } from "./CurrencyInput";
 import type { QuotationInput } from "../types/api";
 
 interface Props {
@@ -38,11 +39,11 @@ export function QuotationFields({ value, onChange }: Props) {
         </div>
         <div className="w-28 shrink-0">
           <label className={labelCls}>Currency</label>
-          <input
+          <CurrencyInput
             className={inputCls}
             value={value.currency}
             maxLength={3}
-            onChange={(e) => set({ currency: e.target.value.toUpperCase() })}
+            onChange={(currency) => set({ currency })}
             placeholder="USD"
           />
         </div>

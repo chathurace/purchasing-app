@@ -2,9 +2,11 @@ package handler
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 
+	"github.com/cs/purchasing-app/internal/email"
 	"github.com/cs/purchasing-app/internal/middleware"
 	"github.com/cs/purchasing-app/internal/model"
 	"github.com/cs/purchasing-app/internal/repository"
@@ -14,9 +16,11 @@ import (
 )
 
 type QuotationsHandler struct {
-	Repo    *repository.Repository
-	Storage storage.Store
-	Log     zerolog.Logger
+	Repo       *repository.Repository
+	Storage    storage.Store
+	Mailer     email.Mailer
+	AppBaseURL string
+	Log        zerolog.Logger
 }
 
 type quotationItemInput struct {
@@ -61,8 +65,8 @@ func (in quotationInput) toRepo() repository.QuotationInput {
 
 // ListForPR returns the quotations associated with a purchase request.
 func (h *QuotationsHandler) ListForPR(w http.ResponseWriter, r *http.Request) {
-	if !middleware.HasFinanceAccess(r.Context()) {
-		writeError(w, http.StatusForbidden, "finance access required")
+	if !middleware.HasProcurementAccess(r.Context()) {
+		writeError(w, http.StatusForbidden, "procurement access required")
 		return
 	}
 	prID, err := parseID(r, "id")
@@ -81,8 +85,8 @@ func (h *QuotationsHandler) ListForPR(w http.ResponseWriter, r *http.Request) {
 
 // Create associates a new quotation with a purchase request.
 func (h *QuotationsHandler) Create(w http.ResponseWriter, r *http.Request) {
-	if !middleware.HasFinanceAccess(r.Context()) {
-		writeError(w, http.StatusForbidden, "finance access required")
+	if !middleware.HasProcurementAccess(r.Context()) {
+		writeError(w, http.StatusForbidden, "procurement access required")
 		return
 	}
 	prID, err := parseID(r, "id")
@@ -90,12 +94,24 @@ func (h *QuotationsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid request id")
 		return
 	}
-	if _, err := h.Repo.GetPurchaseRequest(r.Context(), prID); err != nil {
+	pr, err := h.Repo.GetPurchaseRequest(r.Context(), prID)
+	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			writeError(w, http.StatusNotFound, "request not found")
 			return
 		}
 		writeError(w, http.StatusInternalServerError, "failed to load request")
+		return
+	}
+	// Procurement work is gated behind team lead approval.
+	if !model.IsTeamLeadApproved(pr.TeamLeadStatus) {
+		writeError(w, http.StatusConflict, "purchase request is awaiting team lead approval")
+		return
+	}
+	// ...and behind assignment: the PR must be assigned and the caller must be the
+	// assignee, a collaborator, or a procurement_admin/admin.
+	if code, msg, ok := assignmentWorkGate(r, pr); !ok {
+		writeError(w, code, msg)
 		return
 	}
 	var in quotationInput
@@ -114,7 +130,21 @@ func (h *QuotationsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to create quotation")
 		return
 	}
+	recordProcessEvent(r, h.Repo, q.PurchaseRequestID, model.ProcessAddQuotation, "")
+	ensureCollaborator(r, h.Repo, q.PurchaseRequestID)
+	h.notifyQuotationAdded(r, pr)
 	writeJSON(w, http.StatusCreated, q)
+}
+
+// notifyQuotationAdded tells the Procurement team + the PR's assignee/collaborators
+// that a quotation was added. Best-effort.
+func (h *QuotationsHandler) notifyQuotationAdded(r *http.Request, pr *repository.PurchaseRequest) {
+	title := prTitleOrRef(pr)
+	subject := fmt.Sprintf("Quotation added: %s", title)
+	body := fmt.Sprintf(
+		"Hi,\n\n%s added a quotation to purchase request %s — \"%s\".\n\nView it here:\n%s\n",
+		actorName(r), prDisplayRef(pr), title, prURLWith(h.AppBaseURL, pr))
+	notifyPRActivity(r.Context(), h.Repo, h.Mailer, h.Log, pr, actorEmail(r), subject, body)
 }
 
 func (h *QuotationsHandler) List(w http.ResponseWriter, r *http.Request) {
@@ -123,7 +153,7 @@ func (h *QuotationsHandler) List(w http.ResponseWriter, r *http.Request) {
 		quotes []*repository.Quotation
 		err    error
 	)
-	if middleware.HasFinanceAccess(ctx) {
+	if middleware.HasProcurementAccess(ctx) {
 		quotes, err = h.Repo.ListQuotations(ctx, nil)
 	} else {
 		// Approvers get a read-only view scoped to the PRs they approve.
@@ -166,6 +196,8 @@ func (h *QuotationsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to update quotation")
 		return
 	}
+	recordProcessEvent(r, h.Repo, q.PurchaseRequestID, model.ProcessUpdateQuotation, "")
+	ensureCollaborator(r, h.Repo, q.PurchaseRequestID)
 	updated, err := h.Repo.GetQuotation(r.Context(), q.ID)
 	if err != nil {
 		reqLog(r).Error().Err(err).Msg("reload quotation after mutation")
@@ -190,6 +222,8 @@ func (h *QuotationsHandler) Select(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to select quotation")
 		return
 	}
+	recordProcessEvent(r, h.Repo, q.PurchaseRequestID, model.ProcessSelectQuotation, "")
+	ensureCollaborator(r, h.Repo, q.PurchaseRequestID)
 	updated, err := h.Repo.GetQuotation(r.Context(), q.ID)
 	if err != nil {
 		reqLog(r).Error().Err(err).Msg("reload quotation after mutation")
@@ -217,6 +251,7 @@ func (h *QuotationsHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	for _, p := range paths {
 		_ = h.Storage.Delete(p)
 	}
+	recordProcessEvent(r, h.Repo, q.PurchaseRequestID, model.ProcessDeleteQuotation, "")
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -260,16 +295,81 @@ func (h *QuotationsHandler) DeleteDocument(w http.ResponseWriter, r *http.Reques
 	deleteOwnedDoc(w, r, h.Repo, h.Storage, model.OwnerQuotation, q.ID, docID)
 }
 
-// load fetches a quotation for a mutating action — finance access required.
+// --- primary quotation PDF (single; replaceable + removable) ---
+
+// UploadQuotationPDF attaches (or replaces) the quotation's single primary PDF.
+// On replace, the previously attached PDF is deleted.
+func (h *QuotationsHandler) UploadQuotationPDF(w http.ResponseWriter, r *http.Request) {
+	q, ok := h.load(w, r)
+	if !ok {
+		return
+	}
+	doc, ok := saveUploadedDoc(w, r, h.Repo, h.Storage, q.PurchaseRequestID, model.OwnerQuotation, q.ID, pdfOnly)
+	if !ok {
+		return
+	}
+	prevID, err := h.Repo.SetQuotationDocument(r.Context(), q.ID, doc.ID)
+	if err != nil {
+		_ = h.Repo.DeleteOwnedDocument(r.Context(), model.OwnerQuotation, q.ID, doc.ID)
+		_ = h.Storage.Delete(doc.StoredPath)
+		reqLog(r).Error().Err(err).Msg("set quotation document")
+		writeError(w, http.StatusInternalServerError, "failed to attach quotation PDF")
+		return
+	}
+	// Clean up the replaced PDF, if any.
+	if prevID != nil {
+		if old, err := h.Repo.GetOwnedDocument(r.Context(), model.OwnerQuotation, q.ID, *prevID); err == nil {
+			_ = h.Repo.DeleteOwnedDocument(r.Context(), model.OwnerQuotation, q.ID, *prevID)
+			_ = h.Storage.Delete(old.StoredPath)
+		}
+	}
+	updated, err := h.Repo.GetQuotation(r.Context(), q.ID)
+	if err != nil {
+		reqLog(r).Error().Err(err).Msg("reload quotation after mutation")
+		writeError(w, http.StatusInternalServerError, "failed to reload quotation")
+		return
+	}
+	writeJSON(w, http.StatusOK, updated)
+}
+
+// DeleteQuotationPDF removes the quotation's primary PDF.
+func (h *QuotationsHandler) DeleteQuotationPDF(w http.ResponseWriter, r *http.Request) {
+	q, ok := h.load(w, r)
+	if !ok {
+		return
+	}
+	path, err := h.Repo.ClearQuotationDocument(r.Context(), q.ID)
+	if err != nil {
+		if errors.Is(err, repository.ErrInvalidState) {
+			writeError(w, http.StatusConflict, "no quotation PDF is attached")
+			return
+		}
+		reqLog(r).Error().Err(err).Msg("clear quotation document")
+		writeError(w, http.StatusInternalServerError, "failed to remove quotation PDF")
+		return
+	}
+	if path != "" {
+		_ = h.Storage.Delete(path)
+	}
+	updated, err := h.Repo.GetQuotation(r.Context(), q.ID)
+	if err != nil {
+		reqLog(r).Error().Err(err).Msg("reload quotation after mutation")
+		writeError(w, http.StatusInternalServerError, "failed to reload quotation")
+		return
+	}
+	writeJSON(w, http.StatusOK, updated)
+}
+
+// load fetches a quotation for a mutating action — procurement access required.
 func (h *QuotationsHandler) load(w http.ResponseWriter, r *http.Request) (*repository.Quotation, bool) {
-	if !middleware.HasFinanceAccess(r.Context()) {
-		writeError(w, http.StatusForbidden, "finance access required")
+	if !middleware.HasProcurementAccess(r.Context()) {
+		writeError(w, http.StatusForbidden, "procurement access required")
 		return nil, false
 	}
 	return h.fetch(w, r)
 }
 
-// loadViewable fetches a quotation for a read action: finance/admin, or an
+// loadViewable fetches a quotation for a read action: procurement/admin, or an
 // approver on the quotation's PR (read-only). Mutations must use load.
 func (h *QuotationsHandler) loadViewable(w http.ResponseWriter, r *http.Request) (*repository.Quotation, bool) {
 	q, ok := h.fetch(w, r)
@@ -277,7 +377,7 @@ func (h *QuotationsHandler) loadViewable(w http.ResponseWriter, r *http.Request)
 		return nil, false
 	}
 	ctx := r.Context()
-	if middleware.HasFinanceAccess(ctx) {
+	if middleware.HasProcurementAccess(ctx) {
 		return q, true
 	}
 	user := middleware.UserFromCtx(ctx)

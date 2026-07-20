@@ -136,6 +136,7 @@ func (h *StorageHandler) Connect(w http.ResponseWriter, r *http.Request) {
 			reqLog(r).Warn().Err(err).Msg("reconfigure after connect")
 		}
 	}
+	recordAuditEvent(r, h.Repo, model.AuditConnectStorage, "", model.EntityStorage, nil, email)
 	writeJSON(w, http.StatusOK, h.statusResponse())
 }
 
@@ -194,5 +195,6 @@ func (h *StorageHandler) SetFolder(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "storage configured but failed to persist settings")
 		return
 	}
+	recordAuditEvent(r, h.Repo, model.AuditSetStorageFolder, "", model.EntityStorage, nil, st.BaseFolderName)
 	writeJSON(w, http.StatusOK, h.statusResponse())
 }

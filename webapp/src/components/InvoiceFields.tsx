@@ -6,8 +6,9 @@ import {
   invoiceItemsTotal,
 } from "../types/api";
 import type { AllocationMode, CostAllocationInput, InvoiceInput } from "../types/api";
-import { useCostCenterLookup } from "../hooks/useCostCenters";
+import { useBudgetUnitLookup } from "../hooks/useBudgetUnits";
 import { NullableNumberInput, NumberInput } from "./NumberInput";
+import { CurrencyInput } from "./CurrencyInput";
 
 interface Props {
   value: InvoiceInput;
@@ -22,7 +23,7 @@ type IItem = { description: string; quantity: number; unit_price: number };
 
 export function InvoiceFields({ value, onChange }: Props) {
   const set = (patch: Partial<InvoiceInput>) => onChange({ ...value, ...patch });
-  const { data: costCenters, isLoading: ccLoading } = useCostCenterLookup();
+  const { data: budgetUnits, isLoading: buLoading } = useBudgetUnitLookup();
 
   const setItem = (i: number, patch: Partial<IItem>) => {
     const items = value.items.map((it, idx) => (idx === i ? { ...it, ...patch } : it));
@@ -38,12 +39,12 @@ export function InvoiceFields({ value, onChange }: Props) {
   const mismatch =
     hasEnteredTotal && value.items.length > 0 && Math.abs((value.entered_total ?? 0) - itemsTotal) > 0.01;
 
-  // --- cost-center allocation helpers ---
+  // --- budget-unit allocation helpers ---
   const allocs = value.cost_allocations;
   const setAlloc = (i: number, patch: Partial<CostAllocationInput>) =>
     set({ cost_allocations: allocs.map((a, idx) => (idx === i ? { ...a, ...patch } : a)) });
   const addAlloc = () =>
-    set({ cost_allocations: [...allocs, { cost_center_id: 0, value: 0 }] });
+    set({ cost_allocations: [...allocs, { budget_unit_id: 0, value: 0 }] });
   const removeAlloc = (i: number) =>
     set({ cost_allocations: allocs.filter((_, idx) => idx !== i) });
   const setMode = (mode: AllocationMode) => set({ allocation_mode: mode });
@@ -51,9 +52,9 @@ export function InvoiceFields({ value, onChange }: Props) {
   const allocSum = allocationsSum(allocs);
   const allocTarget = value.allocation_mode === "percentage" ? 100 : total;
   const allocOk = allocationsValid(value.allocation_mode, allocs, total);
-  // Cost centers already chosen on other rows, to avoid picking duplicates.
+  // Budget units already chosen on other rows, to avoid picking duplicates.
   const chosenIds = (i: number) =>
-    new Set(allocs.filter((_, idx) => idx !== i).map((a) => a.cost_center_id));
+    new Set(allocs.filter((_, idx) => idx !== i).map((a) => a.budget_unit_id));
 
   return (
     <div className="space-y-5">
@@ -69,11 +70,11 @@ export function InvoiceFields({ value, onChange }: Props) {
         </div>
         <div className="w-28 shrink-0">
           <label className={labelCls}>Currency</label>
-          <input
+          <CurrencyInput
             className={inputCls}
             value={value.currency}
             maxLength={3}
-            onChange={(e) => set({ currency: e.target.value.toUpperCase() })}
+            onChange={(currency) => set({ currency })}
             placeholder="USD"
           />
         </div>
@@ -191,10 +192,10 @@ export function InvoiceFields({ value, onChange }: Props) {
         )}
       </div>
 
-      {/* Cost-center allocation */}
+      {/* Budget-unit allocation */}
       <div>
         <div className="mb-1 flex items-center justify-between">
-          <label className={labelCls}>Cost centers</label>
+          <label className={labelCls}>Budget units</label>
           <div className="flex items-center gap-3 text-sm">
             <label className="flex items-center gap-1 text-gray-600">
               <input
@@ -215,16 +216,16 @@ export function InvoiceFields({ value, onChange }: Props) {
               Amount
             </label>
             <button type="button" className="text-indigo-600" onClick={addAlloc}>
-              + Add cost center
+              + Add budget unit
             </button>
           </div>
         </div>
         <p className="mb-2 text-xs text-gray-400">
-          Split this invoice across one or more cost centers
+          Split this invoice across one or more budget units
           {value.allocation_mode === "percentage" ? " by percentage (must total 100%)" : " by amount (must total the invoice total)"}.
         </p>
         <div className="space-y-2">
-          {allocs.length === 0 && <p className="text-sm text-gray-400">No cost centers assigned.</p>}
+          {allocs.length === 0 && <p className="text-sm text-gray-400">No budget units assigned.</p>}
           {allocs.map((a, i) => {
             const taken = chosenIds(i);
             const resolved =
@@ -237,12 +238,12 @@ export function InvoiceFields({ value, onChange }: Props) {
               <div key={i} className="flex items-center gap-2">
                 <select
                   className={baseInputCls + " min-w-0 flex-1"}
-                  value={a.cost_center_id || ""}
-                  onChange={(e) => setAlloc(i, { cost_center_id: Number(e.target.value) })}
+                  value={a.budget_unit_id || ""}
+                  onChange={(e) => setAlloc(i, { budget_unit_id: Number(e.target.value) })}
                 >
-                  <option value="">{ccLoading ? "Loading…" : "Select cost center"}</option>
-                  {(costCenters ?? [])
-                    .filter((c) => c.id === a.cost_center_id || !taken.has(c.id))
+                  <option value="">{buLoading ? "Loading…" : "Select budget unit"}</option>
+                  {(budgetUnits ?? [])
+                    .filter((c) => c.id === a.budget_unit_id || !taken.has(c.id))
                     .map((c) => (
                       <option key={c.id} value={c.id}>
                         {c.code ? `${c.code} — ${c.name}` : c.name}

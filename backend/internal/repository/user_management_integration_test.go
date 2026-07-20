@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/cs/purchasing-app/internal/repository"
+	"github.com/jackc/pgx/v5"
 )
 
 // TestInviteThenLoginLinksBySub covers the core user-management flow: an admin
@@ -50,6 +51,65 @@ func TestInviteThenLoginLinksBySub(t *testing.T) {
 	again, err := repo.ProvisionUserOnLogin(ctx, sub, email, "Invitee Real")
 	if err != nil || again.ID != invited.ID {
 		t.Fatalf("second login not idempotent: id=%d err=%v", again.ID, err)
+	}
+}
+
+// TestUpdateInvitedUser covers editing a pending invite: it succeeds while the
+// row has no sub, collides on a duplicate email, and is refused once the user has
+// logged in (sub set).
+func TestUpdateInvitedUser(t *testing.T) {
+	repo, ctx := newTestRepo(t)
+	base := strings.ToLower(t.Name())
+	email := "invitee-" + base + "@example.com"
+
+	u, err := repo.CreateInvitedUser(ctx, email, "Invitee")
+	if err != nil {
+		t.Fatalf("create invited: %v", err)
+	}
+	t.Cleanup(func() { _, _ = repo.Pool().Exec(ctx, `DELETE FROM users WHERE id=$1`, u.ID) })
+
+	// Editing a pending user succeeds (email lowercased, name updated).
+	if err := repo.UpdateInvitedUser(ctx, u.ID, "NEW-"+email, "New Name"); err != nil {
+		t.Fatalf("update pending: %v", err)
+	}
+	users, err := repo.ListUsersWithRoles(ctx)
+	if err != nil {
+		t.Fatalf("list users: %v", err)
+	}
+	var got *repository.AdminUser
+	for _, x := range users {
+		if x.ID == u.ID {
+			got = x
+		}
+	}
+	if got == nil {
+		t.Fatal("updated user missing from listing")
+	}
+	if got.Email != "new-"+email || got.Name != "New Name" {
+		t.Errorf("update not applied: email=%q name=%q", got.Email, got.Name)
+	}
+
+	// A second invite whose email would collide with the edited one is rejected.
+	other, err := repo.CreateInvitedUser(ctx, "other-"+base+"@example.com", "Other")
+	if err != nil {
+		t.Fatalf("create other: %v", err)
+	}
+	t.Cleanup(func() { _, _ = repo.Pool().Exec(ctx, `DELETE FROM users WHERE id=$1`, other.ID) })
+	if err := repo.UpdateInvitedUser(ctx, other.ID, strings.ToUpper("new-"+email), "Other"); !errors.Is(err, repository.ErrEmailExists) {
+		t.Errorf("expected ErrEmailExists, got %v", err)
+	}
+
+	// Unknown user → ErrNoRows.
+	if err := repo.UpdateInvitedUser(ctx, -1, "nobody@example.com", ""); !errors.Is(err, pgx.ErrNoRows) {
+		t.Errorf("expected ErrNoRows for unknown user, got %v", err)
+	}
+
+	// Once the user logs in (sub set), editing is refused.
+	if _, err := repo.ProvisionUserOnLogin(ctx, "oidc-sub-"+t.Name(), "new-"+email, "Invitee"); err != nil {
+		t.Fatalf("provision on login: %v", err)
+	}
+	if err := repo.UpdateInvitedUser(ctx, u.ID, "changed-"+email, "Nope"); !errors.Is(err, repository.ErrUserAlreadyLoggedIn) {
+		t.Errorf("expected ErrUserAlreadyLoggedIn, got %v", err)
 	}
 }
 

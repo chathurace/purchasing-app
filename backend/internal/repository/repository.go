@@ -224,6 +224,10 @@ func (r *Repository) ListUsersWithRoles(ctx context.Context) ([]*AdminUser, erro
 // ErrEmailExists is returned when an admin invites an email already on file.
 var ErrEmailExists = errors.New("a user with this email already exists")
 
+// ErrNotProcurementUser is returned when a PR assignee/collaborator does not hold
+// the procurement role.
+var ErrNotProcurementUser = errors.New("user is not a member of the procurement team")
+
 // CreateInvitedUser pre-creates a user from an email (no OIDC sub yet). The row
 // is claimed on that person's first login (see ProvisionUserOnLogin).
 func (r *Repository) CreateInvitedUser(ctx context.Context, email, name string) (*User, error) {
@@ -240,6 +244,48 @@ func (r *Repository) CreateInvitedUser(ctx context.Context, email, name string) 
 		return nil, err
 	}
 	return u, nil
+}
+
+// ErrUserAlreadyLoggedIn is returned when an admin tries to edit a user who has
+// already claimed their account (has an OIDC sub). Their email is the login-match
+// key at that point and is owned by the IdP, so it is no longer editable here.
+var ErrUserAlreadyLoggedIn = errors.New("user has already logged in")
+
+// UpdateInvitedUser edits the email/name of a pending invite (sub IS NULL) — a
+// user an admin added but who has never signed in. Once claimed (sub set) the
+// email is the login-match key and can't be changed; that case returns
+// ErrUserAlreadyLoggedIn. A missing user returns pgx.ErrNoRows, and an email
+// collision returns ErrEmailExists.
+func (r *Repository) UpdateInvitedUser(ctx context.Context, id int64, email, name string) error {
+	emailArg, nameArg := emailArgOf(email), nilIfEmpty(name)
+	var updatedID int64
+	err := r.pool.QueryRow(ctx, `
+		UPDATE users SET email = $2, name = $3, updated_at = NOW()
+		WHERE id = $1 AND sub IS NULL
+		RETURNING id`, id, emailArg, nameArg).Scan(&updatedID)
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, pgx.ErrNoRows) {
+		// The row exists but has a sub (already logged in), or doesn't exist.
+		var hasSub bool
+		switch qerr := r.pool.QueryRow(ctx,
+			`SELECT sub IS NOT NULL FROM users WHERE id = $1`, id).Scan(&hasSub); {
+		case errors.Is(qerr, pgx.ErrNoRows):
+			return pgx.ErrNoRows
+		case qerr != nil:
+			return qerr
+		case hasSub:
+			return ErrUserAlreadyLoggedIn
+		default:
+			return pgx.ErrNoRows
+		}
+	}
+	var pgErr interface{ SQLState() string }
+	if errors.As(err, &pgErr) && pgErr.SQLState() == "23505" {
+		return ErrEmailExists
+	}
+	return err
 }
 
 // RemoveUserRole revokes a role from a user (idempotent).
@@ -277,10 +323,17 @@ func scanUser(row pgx.Row) (*User, error) {
 	if err := row.Scan(&u.ID, &sub, &email, &name, &u.IsActive, &u.CreatedAt, &u.UpdatedAt); err != nil {
 		return nil, err
 	}
-	u.Sub = sub.String   // empty for invited users who have never logged in
+	u.Sub = sub.String // empty for invited users who have never logged in
 	u.Email = email.String
 	u.Name = name.String
 	return u, nil
+}
+
+// normEmail returns a lowercased, trimmed email as a plain string ("" when
+// empty) — for NOT NULL columns (e.g. team_lead_email) and case-insensitive
+// matching against the lowercased emails stored in the users table.
+func normEmail(email string) string {
+	return strings.ToLower(strings.TrimSpace(email))
 }
 
 // emailArgOf returns a lowercased, trimmed email for binding, or nil (SQL NULL)
@@ -319,11 +372,11 @@ type Link struct {
 }
 
 type Document struct {
-	ID          int64     `json:"id"`
-	Filename    string    `json:"filename"`
-	StoredPath  string    `json:"-"`
-	ContentType string    `json:"content_type"`
-	SizeBytes   int64     `json:"size_bytes"`
+	ID          int64  `json:"id"`
+	Filename    string `json:"filename"`
+	StoredPath  string `json:"-"`
+	ContentType string `json:"content_type"`
+	SizeBytes   int64  `json:"size_bytes"`
 	// Notes is an optional free-text note attached to the document (used by the
 	// contract card for each draft/signed PDF).
 	Notes      string    `json:"notes"`
@@ -332,17 +385,16 @@ type Document struct {
 }
 
 type PurchaseRequest struct {
-	ID              int64      `json:"id"`
+	ID int64 `json:"id"`
 	// Reference is the human-readable PR-YYYY-NNNNNNN identifier assigned at
 	// submission. Nil for requests created before the feature (legacy display).
-	Reference       *string    `json:"reference"`
-	Title           string     `json:"title"`
-	RequesterID     int64      `json:"requester_id"`
-	CostCenter      string     `json:"cost_center"`
-	CostCenterID    *int64     `json:"cost_center_id"`
-	Comments        string     `json:"comments"`
-	Status          string     `json:"status"`
-	RejectionReason string     `json:"rejection_reason"`
+	Reference       *string `json:"reference"`
+	Title           string  `json:"title"`
+	RequesterID     int64   `json:"requester_id"`
+	BudgetUnitID    *int64  `json:"budget_unit_id"`
+	Comments        string  `json:"comments"`
+	Status          string  `json:"status"`
+	RejectionReason string  `json:"rejection_reason"`
 	// Requisition form fields (WSO2 SOP-85000). Core/queryable fields are columns;
 	// the remaining structured form data lives in Details (opaque JSON).
 	Team                string          `json:"team"`
@@ -353,11 +405,35 @@ type PurchaseRequest struct {
 	BudgetApproverName  string          `json:"budget_approver_name"`
 	BudgetApproverEmail string          `json:"budget_approver_email"`
 	Details             json.RawMessage `json:"details"`
-	CreatedAt       time.Time  `json:"created_at"`
-	UpdatedAt       time.Time  `json:"updated_at"`
-	Items           []Item     `json:"items"`
-	Links           []Link     `json:"links"`
-	Documents       []Document `json:"documents"`
+	// Team lead approval: the requester names a team lead by email who must
+	// approve the PR before procurement can see or act on it. One decision per PR.
+	TeamLeadEmail     string     `json:"team_lead_email"`
+	TeamLeadStatus    string     `json:"team_lead_status"`
+	TeamLeadNotes     string     `json:"team_lead_notes"`
+	TeamLeadDecidedAt *time.Time `json:"team_lead_decided_at"`
+	TeamLeadDecidedBy *int64     `json:"team_lead_decided_by"`
+	// MyTeamLeadActionable is a per-caller display flag (detail reads only): true
+	// when the caller may record the team lead decision (they are the team lead or
+	// an admin). Not persisted; set by the handler like MyActionableTypes.
+	MyTeamLeadActionable bool `json:"my_team_lead_actionable"`
+	// PR assignment: once the team lead has approved, a procurement user must be
+	// assigned before procurement work can start. Assignee + Collaborators are the
+	// procurement users who may act on the PR. AssignedAt/AssignedBy stamp the
+	// assignment. Collaborators is populated on detail reads.
+	AssigneeID    *int64        `json:"assignee_id"`
+	Assignee      *UserSummary  `json:"assignee,omitempty"`
+	AssignedAt    *time.Time    `json:"assigned_at,omitempty"`
+	Collaborators []UserSummary `json:"collaborators,omitempty"`
+	// MyCanAssign / MyCanManageCollaborators / MyCanWork are per-caller display
+	// flags (detail reads only), set by the handler — see the flag helpers there.
+	MyCanAssign              bool      `json:"my_can_assign"`
+	MyCanManageCollaborators bool      `json:"my_can_manage_collaborators"`
+	MyCanWork                bool      `json:"my_can_work"`
+	CreatedAt                time.Time `json:"created_at"`
+	UpdatedAt            time.Time  `json:"updated_at"`
+	Items                []Item     `json:"items"`
+	Links                []Link     `json:"links"`
+	Documents            []Document `json:"documents"`
 	// Requester is populated on detail/list reads for display.
 	Requester *UserSummary `json:"requester,omitempty"`
 	// Approvals is the full per-approver decision list (detail reads only).
@@ -388,15 +464,13 @@ type UserSummary struct {
 
 // PurchaseRequestInput carries the writable fields for create/update.
 type PurchaseRequestInput struct {
-	Title      string
-	CostCenter string
-	// CostCenterID links the request to a managed cost center. When set, the
-	// cost center's name is mirrored into the free-text CostCenter column for
-	// display continuity; when nil, the free-text CostCenter is used as-is.
-	CostCenterID *int64
+	Title string
+	// BudgetUnitID links the request to a managed budget unit (nullable). The
+	// budget approver is derived from it plus an estimated value + currency.
+	BudgetUnitID *int64
 	Comments     string
-	Items      []Item
-	Links      []Link
+	Items        []Item
+	Links        []Link
 	// ApproverIDs are the users asked to approve the request. Honored only on
 	// create — approvers are managed afterwards through dedicated endpoints so an
 	// edit never discards recorded decisions.
@@ -411,6 +485,10 @@ type PurchaseRequestInput struct {
 	BudgetApproverName  string
 	BudgetApproverEmail string
 	Details             json.RawMessage
+	// TeamLeadEmail is the requester's team lead who must approve the PR. Stored
+	// lowercased; honored on both create and update (an email change resets any
+	// prior decision to pending — see UpdatePurchaseRequest).
+	TeamLeadEmail string
 }
 
 // detailsOrEmpty returns the details JSON, defaulting to an empty object so the
@@ -447,15 +525,16 @@ func (r *Repository) CreatePurchaseRequest(ctx context.Context, requesterID int6
 	var id int64
 	if err := tx.QueryRow(ctx, `
 		INSERT INTO purchase_requests
-			(title, requester_id, cost_center, cost_center_id, comments,
+			(title, requester_id, budget_unit_id, comments,
 			 team, entity, category, estimated_value, currency,
-			 budget_approver_name, budget_approver_email, details, reference)
-		VALUES ($1, $2, COALESCE((SELECT name FROM cost_centers WHERE id = $4), $3), $4, $5,
-			 $6, $7, $8, $9, $10, $11, $12, $13::jsonb, $14)
+			 budget_approver_name, budget_approver_email, details, reference, team_lead_email)
+		VALUES ($1, $2, $3, $4,
+			 $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13, $14)
 		RETURNING id`,
-		in.Title, requesterID, in.CostCenter, in.CostCenterID, in.Comments,
+		in.Title, requesterID, in.BudgetUnitID, in.Comments,
 		in.Team, in.Entity, in.Category, in.EstimatedValue, in.Currency,
-		in.BudgetApproverName, in.BudgetApproverEmail, detailsOrEmpty(in.Details), reference).Scan(&id); err != nil {
+		in.BudgetApproverName, in.BudgetApproverEmail, detailsOrEmpty(in.Details), reference,
+		normEmail(in.TeamLeadEmail)).Scan(&id); err != nil {
 		return nil, err
 	}
 	if err := replaceItemsLinks(ctx, tx, id, in); err != nil {
@@ -475,6 +554,16 @@ func (r *Repository) CreatePurchaseRequest(ctx context.Context, requesterID int6
 }
 
 // UpdatePurchaseRequest updates the writable fields and replaces items/links.
+// SetBudgetApprover updates only the PR's named budget-approver fields, leaving
+// everything else (including team-lead decision state) untouched.
+func (r *Repository) SetBudgetApprover(ctx context.Context, prID int64, name, email string) error {
+	_, err := r.pool.Exec(ctx, `
+		UPDATE purchase_requests
+		SET budget_approver_name = $2, budget_approver_email = $3, updated_at = NOW()
+		WHERE id = $1`, prID, name, email)
+	return err
+}
+
 func (r *Repository) UpdatePurchaseRequest(ctx context.Context, id int64, in PurchaseRequestInput) error {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
@@ -482,18 +571,31 @@ func (r *Repository) UpdatePurchaseRequest(ctx context.Context, id int64, in Pur
 	}
 	defer tx.Rollback(ctx)
 
+	// A team-lead email change (or a currently-rejected decision) resets the
+	// decision to pending so the (possibly new) team lead reviews the edited PR —
+	// "edit & resubmit". The CASE predicates see the row's OLD values, so
+	// `team_lead_email <> $13` compares the stored email to the incoming one.
 	if _, err := tx.Exec(ctx, `
 		UPDATE purchase_requests
 		SET title = $2,
-			cost_center = COALESCE((SELECT name FROM cost_centers WHERE id = $4), $3),
-			cost_center_id = $4, comments = $5,
-			team = $6, entity = $7, category = $8, estimated_value = $9, currency = $10,
-			budget_approver_name = $11, budget_approver_email = $12, details = $13::jsonb,
+			budget_unit_id = $3, comments = $4,
+			team = $5, entity = $6, category = $7, estimated_value = $8, currency = $9,
+			budget_approver_name = $10, budget_approver_email = $11, details = $12::jsonb,
+			team_lead_status = CASE WHEN team_lead_status = 'rejected' OR team_lead_email <> $13
+				THEN 'pending' ELSE team_lead_status END,
+			team_lead_notes = CASE WHEN team_lead_status = 'rejected' OR team_lead_email <> $13
+				THEN '' ELSE team_lead_notes END,
+			team_lead_decided_at = CASE WHEN team_lead_status = 'rejected' OR team_lead_email <> $13
+				THEN NULL ELSE team_lead_decided_at END,
+			team_lead_decided_by = CASE WHEN team_lead_status = 'rejected' OR team_lead_email <> $13
+				THEN NULL ELSE team_lead_decided_by END,
+			team_lead_email = $13,
 			updated_at = NOW()
 		WHERE id = $1`,
-		id, in.Title, in.CostCenter, in.CostCenterID, in.Comments,
+		id, in.Title, in.BudgetUnitID, in.Comments,
 		in.Team, in.Entity, in.Category, in.EstimatedValue, in.Currency,
-		in.BudgetApproverName, in.BudgetApproverEmail, detailsOrEmpty(in.Details)); err != nil {
+		in.BudgetApproverName, in.BudgetApproverEmail, detailsOrEmpty(in.Details),
+		normEmail(in.TeamLeadEmail)); err != nil {
 		return err
 	}
 	if err := replaceItemsLinks(ctx, tx, id, in); err != nil {
@@ -531,7 +633,7 @@ func replaceItemsLinks(ctx context.Context, tx pgx.Tx, prID int64, in PurchaseRe
 type PRListScope string
 
 const (
-	// PRScopeDefault preserves the legacy behavior: finance/admin (seesAll) get
+	// PRScopeDefault preserves the legacy behavior: procurement/admin (seesAll) get
 	// every PR, everyone else gets the union of their own submissions plus any
 	// PR awaiting their approval. Used by callers that don't pass ?scope=.
 	PRScopeDefault PRListScope = ""
@@ -556,66 +658,91 @@ const approvablePredicate = `(
 		WHERE rec.purchase_request_id = pr.id AND (
 			(ra.approval_type = 'legal'    AND $2)
 			OR (ra.approval_type = 'security' AND $3)
-			OR (ra.approval_type = 'budget' AND pr.cost_center_id IS NOT NULL AND EXISTS (
-				SELECT 1 FROM cost_centers cc
-				WHERE cc.id = pr.cost_center_id AND (
-					cc.primary_owner_id = $1
-					OR EXISTS (SELECT 1 FROM cost_center_secondary_owners s
-					           WHERE s.cost_center_id = cc.id AND s.user_id = $1))))
+			OR (ra.approval_type = 'budget' AND pr.budget_unit_id IS NOT NULL AND EXISTS (
+				SELECT 1 FROM resolve_budget_approvers(pr.budget_unit_id, rec.estimated_value, rec.currency) rba
+				WHERE rba.user_id = $1))
 		)))`
 
+// teamLeadMatch is a SQL boolean fragment, true when the caller is the named team
+// lead of the PR aliased `pr` — a case-insensitive match of the PR's team lead
+// email against the caller's email. Binds $4 (caller email, lowercased); the
+// empty-string guard means a PR with no team lead never matches an empty caller.
+const teamLeadMatch = `(pr.team_lead_email <> '' AND pr.team_lead_email = $4)`
+
 // myApprovalStateExpr is a SQL scalar expression resolving the caller's unified
-// approval state across both systems: 'pending' if any named row or actionable
-// card is still outstanding, else 'rejected' if the caller rejected a named row
-// (cards cannot be rejected), else 'approved'. Binds $1/$2/$3 as above. Only
-// meaningful for PRs the caller actually approves; harmless ('approved') otherwise.
+// approval state across all three systems: 'pending' if the caller's team-lead
+// decision is pending, any named row is pending, or an actionable card is still
+// outstanding; else 'rejected' if the caller rejected as team lead or on a named
+// row (cards cannot be rejected); else 'approved'. Binds $1/$2/$3/$4 as above.
+// Only meaningful for PRs the caller actually approves; harmless ('approved')
+// otherwise.
 const myApprovalStateExpr = `
 	CASE
-		WHEN EXISTS (SELECT 1 FROM pr_approvals a WHERE a.purchase_request_id = pr.id AND a.approver_id = $1 AND a.status = 'pending')
+		WHEN (` + teamLeadMatch + ` AND pr.team_lead_status = 'pending')
+		  OR EXISTS (SELECT 1 FROM pr_approvals a WHERE a.purchase_request_id = pr.id AND a.approver_id = $1 AND a.status = 'pending')
 		  OR EXISTS (
 			SELECT 1 FROM pr_recommendation_approvals ra
 			JOIN pr_recommendations rec ON rec.id = ra.recommendation_id
 			WHERE rec.purchase_request_id = pr.id AND ra.approved_by IS NULL AND (
 				(ra.approval_type = 'legal'    AND $2)
 				OR (ra.approval_type = 'security' AND $3)
-				OR (ra.approval_type = 'budget' AND pr.cost_center_id IS NOT NULL AND EXISTS (
-					SELECT 1 FROM cost_centers cc
-					WHERE cc.id = pr.cost_center_id AND (
-						cc.primary_owner_id = $1
-						OR EXISTS (SELECT 1 FROM cost_center_secondary_owners s
-						           WHERE s.cost_center_id = cc.id AND s.user_id = $1))))))
+				OR (ra.approval_type = 'budget' AND pr.budget_unit_id IS NOT NULL AND EXISTS (
+					SELECT 1 FROM resolve_budget_approvers(pr.budget_unit_id, rec.estimated_value, rec.currency) rba
+					WHERE rba.user_id = $1))))
 		THEN 'pending'
-		WHEN EXISTS (SELECT 1 FROM pr_approvals a WHERE a.purchase_request_id = pr.id AND a.approver_id = $1 AND a.status = 'rejected')
+		WHEN (` + teamLeadMatch + ` AND pr.team_lead_status = 'rejected')
+		  OR EXISTS (SELECT 1 FROM pr_approvals a WHERE a.purchase_request_id = pr.id AND a.approver_id = $1 AND a.status = 'rejected')
 		THEN 'rejected'
 		ELSE 'approved'
 	END`
 
 // ListPurchaseRequests returns request summaries (no items/links/documents) with
-// an approval tally, the caller's own named-approval status, and their unified
-// approval state on each. callerID/hasLegal/hasSecurity resolve those per-caller
-// fields; scope selects which rows are returned (see PRListScope). seesAll only
-// applies to PRScopeDefault.
-func (r *Repository) ListPurchaseRequests(ctx context.Context, callerID int64, seesAll, hasLegal, hasSecurity bool, scope PRListScope) ([]*PurchaseRequest, error) {
+// an approval tally, the caller's own approval status, and their unified approval
+// state on each. callerID/callerEmail/hasLegal/hasSecurity resolve those
+// per-caller fields; scope selects which rows are returned (see PRListScope).
+// seesAll/isAdmin only apply to PRScopeDefault.
+//
+// Visibility gate: a PR is broadly visible only once its team lead has approved
+// it. Before that only the requester, the team lead (email match), and admins may
+// see it — procurement/named-approvers/recommendation-card actors are excluded.
+func (r *Repository) ListPurchaseRequests(ctx context.Context, callerID int64, callerEmail string, seesAll, isAdmin, hasLegal, hasSecurity bool, scope PRListScope) ([]*PurchaseRequest, error) {
 	query := `
-		SELECT pr.id, pr.reference, pr.title, pr.requester_id, pr.cost_center, pr.cost_center_id, pr.comments, pr.status,
+		SELECT pr.id, pr.reference, pr.title, pr.requester_id, pr.budget_unit_id, pr.comments, pr.status,
 		       pr.rejection_reason, pr.created_at, pr.updated_at, u.email, u.name,
 		       pr.team, pr.entity, pr.category, pr.estimated_value, pr.currency,
+		       pr.team_lead_email, pr.team_lead_status,
+		       pr.assignee_id, au.email, au.name,
 		       (SELECT count(*) FROM pr_approvals a WHERE a.purchase_request_id = pr.id) AS approvals_total,
 		       (SELECT count(*) FROM pr_approvals a WHERE a.purchase_request_id = pr.id AND a.status = 'approved') AS approvals_approved,
-		       (SELECT a.status FROM pr_approvals a WHERE a.purchase_request_id = pr.id AND a.approver_id = $1) AS my_approval_status,
+		       COALESCE(
+		           (SELECT a.status FROM pr_approvals a WHERE a.purchase_request_id = pr.id AND a.approver_id = $1),
+		           CASE WHEN ` + teamLeadMatch + ` THEN pr.team_lead_status ELSE NULL END
+		       ) AS my_approval_status,
 		       (` + myApprovalStateExpr + `) AS my_approval_state
 		FROM purchase_requests pr
-		JOIN users u ON u.id = pr.requester_id`
-	// $1/$2/$3 are always bound because myApprovalStateExpr references all three.
-	args := []any{callerID, hasLegal, hasSecurity}
+		JOIN users u ON u.id = pr.requester_id
+		LEFT JOIN users au ON au.id = pr.assignee_id`
+	// $1/$2/$3/$4 are always bound because myApprovalStateExpr references all four.
+	args := []any{callerID, hasLegal, hasSecurity, normEmail(callerEmail)}
 	switch scope {
 	case PRScopeMine:
 		query += ` WHERE pr.requester_id = $1`
 	case PRScopeApprovals:
-		query += ` WHERE pr.requester_id <> $1 AND ` + approvablePredicate
+		// Team lead sees their own queue at any status; other card actors only
+		// after the team lead has approved (before that the PR is hidden).
+		query += ` WHERE pr.requester_id <> $1 AND (` + teamLeadMatch +
+			` OR (pr.team_lead_status = 'approved' AND ` + approvablePredicate + `))`
 	default:
-		if !seesAll {
-			query += ` WHERE (pr.requester_id = $1 OR ` + approvablePredicate + `)`
+		switch {
+		case isAdmin:
+			// Admins see every PR at any status — no WHERE.
+		case seesAll:
+			// Procurement (non-admin): own + team-lead-of + any team-lead-approved PR.
+			query += ` WHERE (pr.requester_id = $1 OR ` + teamLeadMatch +
+				` OR pr.team_lead_status = 'approved')`
+		default:
+			query += ` WHERE (pr.requester_id = $1 OR ` + teamLeadMatch +
+				` OR (pr.team_lead_status = 'approved' AND ` + approvablePredicate + `))`
 		}
 	}
 	query += ` ORDER BY pr.created_at DESC`
@@ -630,14 +757,23 @@ func (r *Repository) ListPurchaseRequests(ctx context.Context, callerID int64, s
 	for rows.Next() {
 		pr := &PurchaseRequest{}
 		var email, name, myStatus, myState, reference pgtype.Text
-		if err := rows.Scan(&pr.ID, &reference, &pr.Title, &pr.RequesterID, &pr.CostCenter, &pr.CostCenterID, &pr.Comments,
+		var assigneeID pgtype.Int8
+		var assigneeEmail, assigneeName pgtype.Text
+		if err := rows.Scan(&pr.ID, &reference, &pr.Title, &pr.RequesterID, &pr.BudgetUnitID, &pr.Comments,
 			&pr.Status, &pr.RejectionReason, &pr.CreatedAt, &pr.UpdatedAt, &email, &name,
 			&pr.Team, &pr.Entity, &pr.Category, &pr.EstimatedValue, &pr.Currency,
+			&pr.TeamLeadEmail, &pr.TeamLeadStatus,
+			&assigneeID, &assigneeEmail, &assigneeName,
 			&pr.ApprovalsTotal, &pr.ApprovalsApproved, &myStatus, &myState); err != nil {
 			return nil, err
 		}
 		if reference.Valid {
 			pr.Reference = &reference.String
+		}
+		if assigneeID.Valid {
+			v := assigneeID.Int64
+			pr.AssigneeID = &v
+			pr.Assignee = &UserSummary{ID: v, Email: assigneeEmail.String, Name: assigneeName.String}
 		}
 		pr.Requester = &UserSummary{ID: pr.RequesterID, Email: email.String, Name: name.String}
 		if myStatus.Valid {
@@ -668,14 +804,190 @@ func (r *Repository) IsApproverForPR(ctx context.Context, prID, callerID int64, 
 
 // HasApprovableWork reports whether the caller is an approver on any PR they did
 // not submit — drives the is_approver capability flag on /me (nav tab visibility).
-func (r *Repository) HasApprovableWork(ctx context.Context, callerID int64, hasLegal, hasSecurity bool) (bool, error) {
+// A team lead always counts (their queue is visible pre-approval); other card
+// actors count only once the team lead has approved, matching the Approvals-tab
+// scope in ListPurchaseRequests.
+func (r *Repository) HasApprovableWork(ctx context.Context, callerID int64, callerEmail string, hasLegal, hasSecurity bool) (bool, error) {
 	var ok bool
 	err := r.pool.QueryRow(ctx, `
 		SELECT EXISTS (
 			SELECT 1 FROM purchase_requests pr
-			WHERE pr.requester_id <> $1 AND `+approvablePredicate+`)`,
-		callerID, hasLegal, hasSecurity).Scan(&ok)
+			WHERE pr.requester_id <> $1 AND (`+teamLeadMatch+`
+				OR (pr.team_lead_status = 'approved' AND `+approvablePredicate+`)))`,
+		callerID, hasLegal, hasSecurity, normEmail(callerEmail)).Scan(&ok)
 	return ok, err
+}
+
+// RecordTeamLeadDecision sets the PR's team lead decision (approve|reject) with
+// notes, stamping who decided and when. Allowed from any current status so the
+// team lead can revise a prior decision. Returns ErrInvalidState if the PR is gone.
+func (r *Repository) RecordTeamLeadDecision(ctx context.Context, prID, deciderID int64, decision, notes string) error {
+	ct, err := r.pool.Exec(ctx, `
+		UPDATE purchase_requests
+		SET team_lead_status = $2, team_lead_notes = $3,
+			team_lead_decided_at = NOW(), team_lead_decided_by = $4, updated_at = NOW()
+		WHERE id = $1`, prID, decision, notes, deciderID)
+	if err != nil {
+		return err
+	}
+	if ct.RowsAffected() == 0 {
+		return ErrInvalidState
+	}
+	return nil
+}
+
+// ResetTeamLeadToPending clears a PR's team lead decision — status back to
+// pending, notes blanked, decided stamp removed — so it can be reconsidered
+// ("edit decision" → move to pending). ErrInvalidState if the PR is gone.
+func (r *Repository) ResetTeamLeadToPending(ctx context.Context, prID int64) error {
+	ct, err := r.pool.Exec(ctx, `
+		UPDATE purchase_requests
+		SET team_lead_status = $2, team_lead_notes = '',
+			team_lead_decided_at = NULL, team_lead_decided_by = NULL, updated_at = NOW()
+		WHERE id = $1`, prID, model.TeamLeadPending)
+	if err != nil {
+		return err
+	}
+	if ct.RowsAffected() == 0 {
+		return ErrInvalidState
+	}
+	return nil
+}
+
+// UpdateTeamLeadEmail changes a PR's team lead email (normalized). Used for the
+// inline edit on the approval card while approval is still pending; the decision
+// fields are untouched (they are already empty at pending). ErrInvalidState if the
+// PR is gone.
+func (r *Repository) UpdateTeamLeadEmail(ctx context.Context, prID int64, email string) error {
+	ct, err := r.pool.Exec(ctx, `
+		UPDATE purchase_requests
+		SET team_lead_email = $2, updated_at = NOW()
+		WHERE id = $1`, prID, normEmail(email))
+	if err != nil {
+		return err
+	}
+	if ct.RowsAffected() == 0 {
+		return ErrInvalidState
+	}
+	return nil
+}
+
+// CanBeAssignedPR reports whether the user may be a PR assignee/collaborator — they
+// hold procurement, procurement_admin, or admin. (Membership of the Procurement team
+// is the plain procurement role, but procurement_admins/admins do procurement work
+// too and must be assignable, e.g. a procurement_admin claiming a PR for themselves.)
+func (r *Repository) CanBeAssignedPR(ctx context.Context, userID int64) (bool, error) {
+	var ok bool
+	err := r.pool.QueryRow(ctx, `
+		SELECT EXISTS(
+			SELECT 1 FROM user_roles ur
+			JOIN roles rl ON rl.id = ur.role_id
+			WHERE ur.user_id = $1 AND rl.name = ANY($2))`,
+		userID, []string{model.RoleProcurement, model.RoleProcurementAdmin, model.RoleAdmin}).Scan(&ok)
+	return ok, err
+}
+
+// SetPRAssignee sets (or clears, when assigneeID is nil) the PR's procurement
+// assignee, stamping who assigned and when. A non-nil assignee must be able to work
+// on procurement (see CanBeAssignedPR), else ErrNotProcurementUser. ErrInvalidState
+// if the PR is gone.
+func (r *Repository) SetPRAssignee(ctx context.Context, prID int64, assigneeID *int64, actorID int64) error {
+	if assigneeID != nil {
+		ok, err := r.CanBeAssignedPR(ctx, *assigneeID)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return ErrNotProcurementUser
+		}
+	}
+	var assignedAt any
+	var assignedBy any
+	if assigneeID != nil {
+		assignedAt = time.Now()
+		assignedBy = actorID
+	}
+	ct, err := r.pool.Exec(ctx, `
+		UPDATE purchase_requests
+		SET assignee_id = $2, assigned_at = $3, assigned_by = $4, updated_at = NOW()
+		WHERE id = $1`, prID, assigneeID, assignedAt, assignedBy)
+	if err != nil {
+		return err
+	}
+	if ct.RowsAffected() == 0 {
+		return ErrInvalidState
+	}
+	return nil
+}
+
+// AddPRCollaborator adds a procurement user as a collaborator on the PR (idempotent).
+// The user must be able to work on procurement (see CanBeAssignedPR), else
+// ErrNotProcurementUser.
+func (r *Repository) AddPRCollaborator(ctx context.Context, prID, userID, actorID int64) error {
+	ok, err := r.CanBeAssignedPR(ctx, userID)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return ErrNotProcurementUser
+	}
+	_, err = r.pool.Exec(ctx, `
+		INSERT INTO purchase_request_collaborators (purchase_request_id, user_id, added_by)
+		VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`, prID, userID, actorID)
+	return err
+}
+
+// EnsurePRCollaborator records userID as a collaborator on the PR unless they are
+// already the assignee or already a collaborator (self-added). Returns whether a new
+// row was inserted, so the caller records a single event only when it actually adds
+// them. Idempotent; the caller is responsible for confirming the user is a
+// procurement actor.
+func (r *Repository) EnsurePRCollaborator(ctx context.Context, prID, userID int64) (bool, error) {
+	ct, err := r.pool.Exec(ctx, `
+		INSERT INTO purchase_request_collaborators (purchase_request_id, user_id, added_by)
+		SELECT $1, $2, $2
+		WHERE NOT EXISTS (
+			SELECT 1 FROM purchase_requests WHERE id = $1 AND assignee_id = $2)
+		ON CONFLICT DO NOTHING`, prID, userID)
+	if err != nil {
+		return false, err
+	}
+	return ct.RowsAffected() > 0, nil
+}
+
+// RemovePRCollaborator removes a collaborator from the PR (no-op if absent).
+func (r *Repository) RemovePRCollaborator(ctx context.Context, prID, userID int64) error {
+	_, err := r.pool.Exec(ctx, `
+		DELETE FROM purchase_request_collaborators
+		WHERE purchase_request_id = $1 AND user_id = $2`, prID, userID)
+	return err
+}
+
+// listCollaborators returns the PR's collaborator users (id/email/name), ordered
+// by email.
+func (r *Repository) listCollaborators(ctx context.Context, prID int64) ([]UserSummary, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT u.id, u.email, u.name
+		FROM purchase_request_collaborators c
+		JOIN users u ON u.id = c.user_id
+		WHERE c.purchase_request_id = $1
+		ORDER BY lower(u.email), u.id`, prID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []UserSummary{}
+	for rows.Next() {
+		var u UserSummary
+		var email, name pgtype.Text
+		if err := rows.Scan(&u.ID, &email, &name); err != nil {
+			return nil, err
+		}
+		u.Email = email.String
+		u.Name = name.String
+		out = append(out, u)
+	}
+	return out, rows.Err()
 }
 
 // GetPurchaseRequest loads a request with its items, links, documents and requester.
@@ -683,19 +995,47 @@ func (r *Repository) GetPurchaseRequest(ctx context.Context, id int64) (*Purchas
 	pr := &PurchaseRequest{}
 	var email, name, reference pgtype.Text
 	var details []byte
+	var tlDecidedAt pgtype.Timestamptz
+	var tlDecidedBy pgtype.Int8
+	var assigneeID pgtype.Int8
+	var assignedAt pgtype.Timestamptz
+	var assigneeEmail, assigneeName pgtype.Text
 	err := r.pool.QueryRow(ctx, `
-		SELECT pr.id, pr.reference, pr.title, pr.requester_id, pr.cost_center, pr.cost_center_id, pr.comments, pr.status,
+		SELECT pr.id, pr.reference, pr.title, pr.requester_id, pr.budget_unit_id, pr.comments, pr.status,
 		       pr.rejection_reason, pr.created_at, pr.updated_at, u.email, u.name,
 		       pr.team, pr.entity, pr.category, pr.estimated_value, pr.currency,
-		       pr.budget_approver_name, pr.budget_approver_email, pr.details
+		       pr.budget_approver_name, pr.budget_approver_email, pr.details,
+		       pr.team_lead_email, pr.team_lead_status, pr.team_lead_notes,
+		       pr.team_lead_decided_at, pr.team_lead_decided_by,
+		       pr.assignee_id, pr.assigned_at, au.email, au.name
 		FROM purchase_requests pr
 		JOIN users u ON u.id = pr.requester_id
-		WHERE pr.id = $1`, id).Scan(&pr.ID, &reference, &pr.Title, &pr.RequesterID, &pr.CostCenter, &pr.CostCenterID,
+		LEFT JOIN users au ON au.id = pr.assignee_id
+		WHERE pr.id = $1`, id).Scan(&pr.ID, &reference, &pr.Title, &pr.RequesterID, &pr.BudgetUnitID,
 		&pr.Comments, &pr.Status, &pr.RejectionReason, &pr.CreatedAt, &pr.UpdatedAt, &email, &name,
 		&pr.Team, &pr.Entity, &pr.Category, &pr.EstimatedValue, &pr.Currency,
-		&pr.BudgetApproverName, &pr.BudgetApproverEmail, &details)
+		&pr.BudgetApproverName, &pr.BudgetApproverEmail, &details,
+		&pr.TeamLeadEmail, &pr.TeamLeadStatus, &pr.TeamLeadNotes, &tlDecidedAt, &tlDecidedBy,
+		&assigneeID, &assignedAt, &assigneeEmail, &assigneeName)
 	if err != nil {
 		return nil, err
+	}
+	if assigneeID.Valid {
+		v := assigneeID.Int64
+		pr.AssigneeID = &v
+		pr.Assignee = &UserSummary{ID: v, Email: assigneeEmail.String, Name: assigneeName.String}
+	}
+	if assignedAt.Valid {
+		t := assignedAt.Time
+		pr.AssignedAt = &t
+	}
+	if tlDecidedAt.Valid {
+		t := tlDecidedAt.Time
+		pr.TeamLeadDecidedAt = &t
+	}
+	if tlDecidedBy.Valid {
+		v := tlDecidedBy.Int64
+		pr.TeamLeadDecidedBy = &v
 	}
 	if reference.Valid {
 		pr.Reference = &reference.String
@@ -722,6 +1062,9 @@ func (r *Repository) GetPurchaseRequest(ctx context.Context, id int64) (*Purchas
 		}
 	}
 	if pr.Recommendation, err = r.GetRecommendation(ctx, id); err != nil {
+		return nil, err
+	}
+	if pr.Collaborators, err = r.listCollaborators(ctx, id); err != nil {
 		return nil, err
 	}
 	return pr, nil

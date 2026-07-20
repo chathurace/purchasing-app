@@ -4,13 +4,13 @@ import {
   getRelatedDocuments,
   listPurchaseRequests,
 } from "../api/purchaseRequests";
-import { useFinanceAccess } from "./useFinanceAccess";
+import { useProcurementAccess } from "./useProcurementAccess";
 
-// usePurchaseRequests powers the Requests tab. Finance/admin see the full
+// usePurchaseRequests powers the Requests tab. Procurement/admin see the full
 // procurement queue; everyone else sees only their own submissions (scope=mine).
 export function usePurchaseRequests() {
-  const finance = useFinanceAccess();
-  const scope = finance ? undefined : ("mine" as const);
+  const procurement = useProcurementAccess();
+  const scope = procurement ? undefined : ("mine" as const);
   return useQuery({
     queryKey: ["purchase-requests", scope ?? "all"],
     queryFn: () => listPurchaseRequests(scope),
@@ -37,7 +37,7 @@ export function usePurchaseRequest(id: number) {
 }
 
 // useRelatedDocuments loads the procurement case anchored on a PR. Pass enabled
-// (e.g. the caller's finance access) to skip the finance-only fetch entirely.
+// (e.g. the caller's procurement access) to skip the procurement-only fetch entirely.
 export function useRelatedDocuments(prId: number, enabled = true) {
   return useQuery({
     queryKey: ["purchase-requests", prId, "related"],

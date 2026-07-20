@@ -58,5 +58,5 @@ gate — see the "Procurement recommendation" entry in `CLAUDE.md` (migration `0
 
 ## Fulfillment
 
-Unchanged (see `docs/plans/03-invoices-grns.md`): once `signed`, finance records GRNs
+Unchanged (see `docs/plans/03-invoices-grns.md`): once `signed`, procurement records GRNs
 and invoices against the contract.

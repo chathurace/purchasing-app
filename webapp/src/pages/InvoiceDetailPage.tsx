@@ -35,7 +35,7 @@ function toInput(inv: Invoice): InvoiceInput {
       unit_price: it.unit_price,
     })),
     cost_allocations: inv.cost_allocations.map((a) => ({
-      cost_center_id: a.cost_center_id,
+      budget_unit_id: a.budget_unit_id,
       value: a.value,
     })),
   };
@@ -256,18 +256,18 @@ export function InvoiceDetailPage() {
                 </ul>
               )}
             </Field>
-            <Field label={`Cost centers (by ${inv.allocation_mode})`}>
+            <Field label={`Budget units (by ${inv.allocation_mode})`}>
               {inv.cost_allocations.length === 0 ? (
                 "—"
               ) : (
                 <ul className="list-disc pl-5">
                   {inv.cost_allocations.map((a) => (
-                    <li key={a.id ?? a.cost_center_id}>
-                      {a.cost_center
-                        ? a.cost_center.code
-                          ? `${a.cost_center.code} — ${a.cost_center.name}`
-                          : a.cost_center.name
-                        : `#${a.cost_center_id}`}{" "}
+                    <li key={a.id ?? a.budget_unit_id}>
+                      {a.budget_unit
+                        ? a.budget_unit.code
+                          ? `${a.budget_unit.code} — ${a.budget_unit.name}`
+                          : a.budget_unit.name
+                        : `#${a.budget_unit_id}`}{" "}
                       <span className="text-gray-500">
                         {inv.allocation_mode === "percentage"
                           ? `${a.value}% (${formatMoney(a.amount ?? 0, inv.currency)})`

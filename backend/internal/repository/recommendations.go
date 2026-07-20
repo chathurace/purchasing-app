@@ -15,18 +15,23 @@ const ownerRecommendationComment = model.OwnerRecommendationComment
 // Procurement recommendations
 // =====================================================================
 
-// Recommendation is finance's proposal to proceed with a vendor on a PR, plus
+// Recommendation is procurement's proposal to proceed with a vendor on a PR, plus
 // the required approval cards (budget owner / legal / security) and their
 // comments. One per purchase request.
 type Recommendation struct {
-	ID                int64         `json:"id"`
-	PurchaseRequestID int64         `json:"purchase_request_id"`
-	VendorID          int64         `json:"vendor_id"`
-	Vendor            *Vendor       `json:"vendor,omitempty"`
-	Description       string        `json:"description"`
-	CreatedAt         time.Time     `json:"created_at"`
-	UpdatedAt         time.Time     `json:"updated_at"`
-	Approvals         []RecApproval `json:"approvals"`
+	ID                int64   `json:"id"`
+	PurchaseRequestID int64   `json:"purchase_request_id"`
+	VendorID          int64   `json:"vendor_id"`
+	Vendor            *Vendor `json:"vendor,omitempty"`
+	Description       string  `json:"description"`
+	// Commercial details, mirroring the PR's commercial section — procurement may
+	// refine these on the recommendation independently of the PR's figures.
+	EstimatedValue float64       `json:"estimated_value"`
+	Currency       string        `json:"currency"`
+	EngagementType string        `json:"engagement_type"`
+	CreatedAt      time.Time     `json:"created_at"`
+	UpdatedAt      time.Time     `json:"updated_at"`
+	Approvals      []RecApproval `json:"approvals"`
 	// MyActionableTypes is the subset of required approval types the calling user
 	// may act on (toggle/comment). Computed in the handler layer, not here.
 	MyActionableTypes []string `json:"my_actionable_types"`
@@ -42,14 +47,23 @@ type Recommendation struct {
 }
 
 // RecApproval is one required approval card: its type, whether it is approved
-// (and by whom), and the comments left on it.
+// (and by whom), its assignee (legal/security only), and the comments left on it.
 type RecApproval struct {
 	ApprovalType string       `json:"approval_type"`
 	Approved     bool         `json:"approved"`
 	ApprovedBy   *int64       `json:"approved_by"`
 	Approver     *UserSummary `json:"approver,omitempty"`
 	ApprovedAt   *time.Time   `json:"approved_at"`
-	Comments     []RecComment `json:"comments"`
+	// AssigneeID / Assignee is the team member responsible for this card
+	// (legal/security). Only the assignee may approve; the budget card has none.
+	AssigneeID *int64       `json:"assignee_id"`
+	Assignee   *UserSummary `json:"assignee,omitempty"`
+	Comments   []RecComment `json:"comments"`
+	// CanComment / CanApprove / CanAssign are per-caller capability flags computed
+	// in the handler layer (not persisted), so the UI shows only allowed controls.
+	CanComment bool `json:"can_comment"`
+	CanApprove bool `json:"can_approve"`
+	CanAssign  bool `json:"can_assign"`
 }
 
 // RecComment is one comment on an approval card, with optional document attachments.
@@ -62,9 +76,20 @@ type RecComment struct {
 	Documents []Document   `json:"documents"`
 }
 
+// RecommendationInput carries the writable fields of a recommendation for
+// create/update (the vendor, description, commercial details and required cards).
+type RecommendationInput struct {
+	VendorID       int64
+	Description    string
+	EstimatedValue float64
+	Currency       string
+	EngagementType string
+	RequiredTypes  []string
+}
+
 // CreateRecommendation inserts a recommendation and its required approval cards
 // (each pending). Fails if the PR already has one (enforced by the UNIQUE index).
-func (r *Repository) CreateRecommendation(ctx context.Context, prID, vendorID int64, description string, requiredTypes []string, createdBy int64) (*Recommendation, error) {
+func (r *Repository) CreateRecommendation(ctx context.Context, prID int64, in RecommendationInput, createdBy int64) (*Recommendation, error) {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return nil, err
@@ -73,12 +98,13 @@ func (r *Repository) CreateRecommendation(ctx context.Context, prID, vendorID in
 
 	var id int64
 	if err := tx.QueryRow(ctx, `
-		INSERT INTO pr_recommendations (purchase_request_id, vendor_id, description, created_by)
-		VALUES ($1, $2, $3, $4) RETURNING id`,
-		prID, vendorID, description, createdBy).Scan(&id); err != nil {
+		INSERT INTO pr_recommendations
+			(purchase_request_id, vendor_id, description, estimated_value, currency, engagement_type, created_by)
+		VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
+		prID, in.VendorID, in.Description, in.EstimatedValue, in.Currency, in.EngagementType, createdBy).Scan(&id); err != nil {
 		return nil, err
 	}
-	for _, t := range requiredTypes {
+	for _, t := range in.RequiredTypes {
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO pr_recommendation_approvals (recommendation_id, approval_type)
 			VALUES ($1, $2) ON CONFLICT DO NOTHING`, id, t); err != nil {
@@ -96,7 +122,7 @@ func (r *Repository) CreateRecommendation(ctx context.Context, prID, vendorID in
 // re-opens the recommendation for fresh sign-off). Cards no longer required have
 // their comments removed; the stored paths of those comments' documents are
 // returned so the handler can unlink the files after commit.
-func (r *Repository) UpdateRecommendation(ctx context.Context, prID, vendorID int64, description string, requiredTypes []string) ([]string, error) {
+func (r *Repository) UpdateRecommendation(ctx context.Context, prID int64, in RecommendationInput) ([]string, error) {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return nil, err
@@ -108,13 +134,15 @@ func (r *Repository) UpdateRecommendation(ctx context.Context, prID, vendorID in
 		return nil, err
 	}
 	if _, err := tx.Exec(ctx, `
-		UPDATE pr_recommendations SET vendor_id = $2, description = $3, updated_at = NOW() WHERE id = $1`,
-		recID, vendorID, description); err != nil {
+		UPDATE pr_recommendations
+		SET vendor_id = $2, description = $3, estimated_value = $4, currency = $5, engagement_type = $6, updated_at = NOW()
+		WHERE id = $1`,
+		recID, in.VendorID, in.Description, in.EstimatedValue, in.Currency, in.EngagementType); err != nil {
 		return nil, err
 	}
 
 	wanted := map[string]bool{}
-	for _, t := range requiredTypes {
+	for _, t := range in.RequiredTypes {
 		wanted[t] = true
 	}
 
@@ -163,7 +191,7 @@ func (r *Repository) UpdateRecommendation(ctx context.Context, prID, vendorID in
 	}
 
 	// Upsert each wanted card, resetting it to pending.
-	for _, t := range requiredTypes {
+	for _, t := range in.RequiredTypes {
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO pr_recommendation_approvals (recommendation_id, approval_type)
 			VALUES ($1, $2)
@@ -249,9 +277,12 @@ func (r *Repository) GetRecommendation(ctx context.Context, prID int64) (*Recomm
 	rec := &Recommendation{RFIDocuments: []Document{}}
 	var contractID pgtype.Int8
 	err := r.pool.QueryRow(ctx, `
-		SELECT id, purchase_request_id, vendor_id, description, contract_id, rfi_description, created_at, updated_at
+		SELECT id, purchase_request_id, vendor_id, description, estimated_value, currency, engagement_type,
+		       contract_id, rfi_description, created_at, updated_at
 		FROM pr_recommendations WHERE purchase_request_id = $1`, prID).
-		Scan(&rec.ID, &rec.PurchaseRequestID, &rec.VendorID, &rec.Description, &contractID, &rec.RFIDescription, &rec.CreatedAt, &rec.UpdatedAt)
+		Scan(&rec.ID, &rec.PurchaseRequestID, &rec.VendorID, &rec.Description,
+			&rec.EstimatedValue, &rec.Currency, &rec.EngagementType,
+			&contractID, &rec.RFIDescription, &rec.CreatedAt, &rec.UpdatedAt)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			return nil, nil
@@ -271,11 +302,14 @@ func (r *Repository) GetRecommendation(ctx context.Context, prID int64) (*Recomm
 		return nil, err
 	}
 
-	// Approval cards, with the approver's identity when approved.
+	// Approval cards, with the approver's identity when approved and the assignee's
+	// identity when set.
 	rows, err := r.pool.Query(ctx, `
-		SELECT a.approval_type, a.approved_by, a.approved_at, u.email, u.name
+		SELECT a.approval_type, a.approved_by, a.approved_at, u.email, u.name,
+		       a.assignee_id, au.email, au.name
 		FROM pr_recommendation_approvals a
 		LEFT JOIN users u ON u.id = a.approved_by
+		LEFT JOIN users au ON au.id = a.assignee_id
 		WHERE a.recommendation_id = $1
 		ORDER BY a.approval_type`, rec.ID)
 	if err != nil {
@@ -287,7 +321,10 @@ func (r *Repository) GetRecommendation(ctx context.Context, prID int64) (*Recomm
 		var approvedBy pgtype.Int8
 		var approvedAt pgtype.Timestamptz
 		var email, name pgtype.Text
-		if err := rows.Scan(&a.ApprovalType, &approvedBy, &approvedAt, &email, &name); err != nil {
+		var assigneeID pgtype.Int8
+		var assigneeEmail, assigneeName pgtype.Text
+		if err := rows.Scan(&a.ApprovalType, &approvedBy, &approvedAt, &email, &name,
+			&assigneeID, &assigneeEmail, &assigneeName); err != nil {
 			rows.Close()
 			return nil, err
 		}
@@ -299,6 +336,10 @@ func (r *Repository) GetRecommendation(ctx context.Context, prID int64) (*Recomm
 		if approvedAt.Valid {
 			t := approvedAt.Time
 			a.ApprovedAt = &t
+		}
+		if assigneeID.Valid {
+			a.AssigneeID = &assigneeID.Int64
+			a.Assignee = &UserSummary{ID: assigneeID.Int64, Email: assigneeEmail.String, Name: assigneeName.String}
 		}
 		a.Comments = []RecComment{}
 		rec.Approvals = append(rec.Approvals, a)
@@ -556,6 +597,24 @@ func (r *Repository) ClearRecApproval(ctx context.Context, prID int64, approvalT
 	return nil
 }
 
+// SetRecAssignee sets (or clears, when assigneeID is nil) the assignee of a
+// legal/security approval card. Returns ErrInvalidState if the card is not a
+// required one on this PR's recommendation.
+func (r *Repository) SetRecAssignee(ctx context.Context, prID int64, approvalType string, assigneeID *int64) error {
+	tag, err := r.pool.Exec(ctx, `
+		UPDATE pr_recommendation_approvals
+		SET assignee_id = $3
+		WHERE recommendation_id = (SELECT id FROM pr_recommendations WHERE purchase_request_id = $1)
+		  AND approval_type = $2`, prID, approvalType, assigneeID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrInvalidState
+	}
+	return nil
+}
+
 // AddRecComment appends a comment to an approval card. Returns ErrInvalidState if
 // the card is not a required one.
 func (r *Repository) AddRecComment(ctx context.Context, prID int64, approvalType string, authorID int64, comment string) (*RecComment, error) {
@@ -626,20 +685,70 @@ func recommendationFullyApprovedTx(ctx context.Context, tx pgx.Tx, prID int64) (
 	return ok, err
 }
 
-// IsBudgetOwnerForPR reports whether the user owns the cost center the PR is
-// charged to (the actor allowed to sign off the budget card). The budget owner
-// is the primary or secondary owner of the PR's selected cost center
-// (purchase_requests.cost_center_id).
-func (r *Repository) IsBudgetOwnerForPR(ctx context.Context, prID, userID int64) (bool, error) {
+// IsBudgetApproverForPR reports whether the user is a qualified budget approver
+// for the PR's recommendation: a member of the approver set that the
+// recommendation's estimated value + currency resolve to within the PR's budget
+// unit (a matching bracket's approvers, else the unit's default approver).
+func (r *Repository) IsBudgetApproverForPR(ctx context.Context, prID, userID int64) (bool, error) {
 	var ok bool
 	err := r.pool.QueryRow(ctx, `
 		SELECT EXISTS(
-			SELECT 1 FROM purchase_requests pr
-			JOIN cost_centers cc ON cc.id = pr.cost_center_id
-			WHERE pr.id = $1 AND (
-				cc.primary_owner_id = $2
-				OR EXISTS(SELECT 1 FROM cost_center_secondary_owners s
-				          WHERE s.cost_center_id = cc.id AND s.user_id = $2)
-			))`, prID, userID).Scan(&ok)
+			SELECT 1
+			FROM purchase_requests pr
+			JOIN pr_recommendations rec ON rec.purchase_request_id = pr.id
+			JOIN resolve_budget_approvers(pr.budget_unit_id, rec.estimated_value, rec.currency) rba
+			  ON rba.user_id = $2
+			WHERE pr.id = $1)`, prID, userID).Scan(&ok)
 	return ok, err
+}
+
+// BudgetApproversForPR returns all qualified budget approvers for the PR's
+// recommendation (a matching bracket's approvers, else the default approver),
+// for notification.
+func (r *Repository) BudgetApproversForPR(ctx context.Context, prID int64) ([]*UserSummary, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT u.id, u.email, u.name
+		FROM purchase_requests pr
+		JOIN pr_recommendations rec ON rec.purchase_request_id = pr.id
+		JOIN resolve_budget_approvers(pr.budget_unit_id, rec.estimated_value, rec.currency) rba
+		  ON TRUE
+		JOIN users u ON u.id = rba.user_id
+		WHERE pr.id = $1`, prID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanUserSummaries(rows)
+}
+
+// BudgetApproversForValue resolves the qualified budget approvers for a budget
+// unit at a given estimated value + currency, without a recommendation — used
+// for the creation-phase preview shown to the requester. When no bracket matches
+// (nil value, currency mismatch, or out of range) it yields the default approver.
+func (r *Repository) BudgetApproversForValue(ctx context.Context, budgetUnitID int64, value *float64, currency string) ([]*UserSummary, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT u.id, u.email, u.name
+		FROM resolve_budget_approvers($1, $2, $3) rba
+		JOIN users u ON u.id = rba.user_id`, budgetUnitID, value, currency)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanUserSummaries(rows)
+}
+
+// scanUserSummaries reads (id, email, name) rows into UserSummary values.
+func scanUserSummaries(rows pgx.Rows) ([]*UserSummary, error) {
+	out := []*UserSummary{}
+	for rows.Next() {
+		u := &UserSummary{}
+		var email, name pgtype.Text
+		if err := rows.Scan(&u.ID, &email, &name); err != nil {
+			return nil, err
+		}
+		u.Email = email.String
+		u.Name = name.String
+		out = append(out, u)
+	}
+	return out, rows.Err()
 }

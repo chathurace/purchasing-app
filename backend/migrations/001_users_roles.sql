@@ -9,7 +9,7 @@ CREATE TABLE users (
 
 CREATE TABLE roles (
     id         BIGSERIAL   PRIMARY KEY,
-    name       TEXT        NOT NULL UNIQUE, -- staff | finance | finance_admin | admin
+    name       TEXT        NOT NULL UNIQUE, -- staff | procurement | procurement_admin | admin
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
@@ -20,4 +20,4 @@ CREATE TABLE user_roles (
     PRIMARY KEY (user_id, role_id)
 );
 
-INSERT INTO roles (name) VALUES ('staff'), ('finance'), ('finance_admin'), ('admin');
+INSERT INTO roles (name) VALUES ('staff'), ('procurement'), ('procurement_admin'), ('admin');

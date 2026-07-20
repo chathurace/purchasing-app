@@ -5,9 +5,6 @@ export const listContracts = () => apiFetch<Contract[]>("/api/v1/contracts");
 
 export const getContract = (id: number) => apiFetch<Contract>(`/api/v1/contracts/${id}`);
 
-export const createContractFromQuotation = (quotationId: number, input: ContractInput) =>
-  apiFetch<Contract>(`/api/v1/quotations/${quotationId}/contracts`, { method: "POST", body: input });
-
 export const updateContract = (id: number, input: ContractInput) =>
   apiFetch<Contract>(`/api/v1/contracts/${id}`, { method: "PUT", body: input });
 

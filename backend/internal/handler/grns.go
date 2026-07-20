@@ -50,8 +50,8 @@ func (in grnInput) toRepo() repository.GRNInput {
 
 // Create records a GRN against a signed contract.
 func (h *GRNsHandler) Create(w http.ResponseWriter, r *http.Request) {
-	if !middleware.HasFinanceAccess(r.Context()) {
-		writeError(w, http.StatusForbidden, "finance access required")
+	if !middleware.HasProcurementAccess(r.Context()) {
+		writeError(w, http.StatusForbidden, "procurement access required")
 		return
 	}
 	contractID, err := parseID(r, "id")
@@ -79,13 +79,14 @@ func (h *GRNsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to create GRN")
 		return
 	}
+	recordProcessEvent(r, h.Repo, g.PurchaseRequestID, model.ProcessCreateGRN, "")
 	writeJSON(w, http.StatusCreated, g)
 }
 
 // ListForContract returns the GRNs of one contract.
 func (h *GRNsHandler) ListForContract(w http.ResponseWriter, r *http.Request) {
-	if !middleware.HasFinanceAccess(r.Context()) {
-		writeError(w, http.StatusForbidden, "finance access required")
+	if !middleware.HasProcurementAccess(r.Context()) {
+		writeError(w, http.StatusForbidden, "procurement access required")
 		return
 	}
 	contractID, err := parseID(r, "id")
@@ -103,8 +104,8 @@ func (h *GRNsHandler) ListForContract(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *GRNsHandler) List(w http.ResponseWriter, r *http.Request) {
-	if !middleware.HasFinanceAccess(r.Context()) {
-		writeError(w, http.StatusForbidden, "finance access required")
+	if !middleware.HasProcurementAccess(r.Context()) {
+		writeError(w, http.StatusForbidden, "procurement access required")
 		return
 	}
 	grns, err := h.Repo.ListGRNs(r.Context(), nil)
@@ -139,6 +140,7 @@ func (h *GRNsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to update GRN")
 		return
 	}
+	recordProcessEvent(r, h.Repo, g.PurchaseRequestID, model.ProcessUpdateGRN, "")
 	updated, err := h.Repo.GetGRN(r.Context(), g.ID)
 	if err != nil {
 		reqLog(r).Error().Err(err).Msg("reload GRN after mutation")
@@ -162,6 +164,7 @@ func (h *GRNsHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	for _, p := range paths {
 		_ = h.Storage.Delete(p)
 	}
+	recordProcessEvent(r, h.Repo, g.PurchaseRequestID, model.ProcessDeleteGRN, "")
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -203,10 +206,10 @@ func (h *GRNsHandler) DeleteDocument(w http.ResponseWriter, r *http.Request) {
 	deleteOwnedDoc(w, r, h.Repo, h.Storage, model.OwnerGRN, g.ID, docID)
 }
 
-// load fetches the GRN for finance-level actions, enforcing finance access.
+// load fetches the GRN for procurement-level actions, enforcing procurement access.
 func (h *GRNsHandler) load(w http.ResponseWriter, r *http.Request) (*repository.GRN, bool) {
-	if !middleware.HasFinanceAccess(r.Context()) {
-		writeError(w, http.StatusForbidden, "finance access required")
+	if !middleware.HasProcurementAccess(r.Context()) {
+		writeError(w, http.StatusForbidden, "procurement access required")
 		return nil, false
 	}
 	id, err := parseID(r, "id")

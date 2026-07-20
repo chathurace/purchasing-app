@@ -39,51 +39,13 @@ func (in contractInput) toRepo() repository.ContractInput {
 	return out
 }
 
-// CreateFromQuotation drafts a contract from a selected quotation.
-func (h *ContractsHandler) CreateFromQuotation(w http.ResponseWriter, r *http.Request) {
-	if !middleware.HasFinanceAccess(r.Context()) {
-		writeError(w, http.StatusForbidden, "finance access required")
-		return
-	}
-	quotationID, err := parseID(r, "id")
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid quotation id")
-		return
-	}
-	if _, err := h.Repo.GetQuotation(r.Context(), quotationID); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			writeError(w, http.StatusNotFound, "quotation not found")
-			return
-		}
-		writeError(w, http.StatusInternalServerError, "failed to load quotation")
-		return
-	}
-	var in contractInput
-	if err := decodeJSON(r, &in); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
-		return
-	}
-	user := middleware.UserFromCtx(r.Context())
-	c, err := h.Repo.CreateContractFromQuotation(r.Context(), quotationID, in.toRepo(), user.ID)
-	if err != nil {
-		if errors.Is(err, repository.ErrInvalidState) {
-			writeError(w, http.StatusConflict, "the procurement recommendation must be fully approved before drafting a contract")
-			return
-		}
-		reqLog(r).Error().Err(err).Msg("create contract")
-		writeError(w, http.StatusInternalServerError, "failed to create contract")
-		return
-	}
-	writeJSON(w, http.StatusCreated, c)
-}
-
 func (h *ContractsHandler) List(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	var (
 		contracts []*repository.Contract
 		err       error
 	)
-	if middleware.HasFinanceAccess(ctx) {
+	if middleware.HasProcurementAccess(ctx) {
 		contracts, err = h.Repo.ListContracts(ctx, nil)
 	} else {
 		// Approvers (incl. legal/security) get a read-only view scoped to the PRs
@@ -127,6 +89,7 @@ func (h *ContractsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to update contract")
 		return
 	}
+	recordProcessEvent(r, h.Repo, c.PurchaseRequestID, model.ProcessUpdateContract, "")
 	updated, err := h.Repo.GetContract(r.Context(), c.ID)
 	if err != nil {
 		reqLog(r).Error().Err(err).Msg("reload contract after mutation")
@@ -167,6 +130,7 @@ func (h *ContractsHandler) UploadSignedDocument(w http.ResponseWriter, r *http.R
 			_ = h.Storage.Delete(old.StoredPath)
 		}
 	}
+	recordProcessEvent(r, h.Repo, c.PurchaseRequestID, model.ProcessSignContract, model.QualifierSign)
 	updated, err := h.Repo.GetContract(r.Context(), c.ID)
 	if err != nil {
 		reqLog(r).Error().Err(err).Msg("reload contract after mutation")
@@ -195,6 +159,7 @@ func (h *ContractsHandler) DeleteSignedDocument(w http.ResponseWriter, r *http.R
 	if path != "" {
 		_ = h.Storage.Delete(path)
 	}
+	recordProcessEvent(r, h.Repo, c.PurchaseRequestID, model.ProcessSignContract, model.QualifierUnsign)
 	updated, err := h.Repo.GetContract(r.Context(), c.ID)
 	if err != nil {
 		reqLog(r).Error().Err(err).Msg("reload contract after mutation")
@@ -279,27 +244,27 @@ func (h *ContractsHandler) DeleteDocument(w http.ResponseWriter, r *http.Request
 	deleteOwnedDoc(w, r, h.Repo, h.Storage, model.OwnerContract, c.ID, docID)
 }
 
-// load fetches the contract for finance-level actions (create, edit, sign,
+// load fetches the contract for procurement-level actions (create, edit, sign,
 // supporting documents).
 func (h *ContractsHandler) load(w http.ResponseWriter, r *http.Request) (*repository.Contract, bool) {
-	if !middleware.HasFinanceAccess(r.Context()) {
-		writeError(w, http.StatusForbidden, "finance access required")
+	if !middleware.HasProcurementAccess(r.Context()) {
+		writeError(w, http.StatusForbidden, "procurement access required")
 		return nil, false
 	}
 	return h.fetch(w, r)
 }
 
-// loadViewable fetches the contract for read access: finance/admin, or an
+// loadViewable fetches the contract for read access: procurement/admin, or an
 // approver (legal/security card actor or budget owner) on the contract's PR —
 // read-only and scoped to PRs the caller is actually involved with. Mutations
-// use load, which is finance-only.
+// use load, which is procurement-only.
 func (h *ContractsHandler) loadViewable(w http.ResponseWriter, r *http.Request) (*repository.Contract, bool) {
 	c, ok := h.fetch(w, r)
 	if !ok {
 		return nil, false
 	}
 	ctx := r.Context()
-	if middleware.HasFinanceAccess(ctx) {
+	if middleware.HasProcurementAccess(ctx) {
 		return c, true
 	}
 	user := middleware.UserFromCtx(ctx)

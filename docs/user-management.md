@@ -39,7 +39,7 @@ page only lets an admin pre-assign roles (or deactivate) before/without a login.
 
 ## Roles
 
-The six roles (`staff`, `finance`, `finance_admin`, `admin`, `legal`, `security`)
+The six roles (`staff`, `procurement`, `procurement_admin`, `admin`, `legal`, `security`)
 are unchanged. In the management UI:
 
 - **`staff` is a permanent baseline** — auto-granted, never removable
@@ -55,9 +55,15 @@ are unchanged. In the management UI:
 | --- | --- |
 | `GET /api/v1/users` | list users with roles + lifecycle flags (`AdminUser`) |
 | `POST /api/v1/users` | invite a user by `{email, name?}` (409 if email exists) |
+| `PUT /api/v1/users/{id}` | edit an **invited** user's `{email, name?}` — only while `pending` (409 `ErrUserAlreadyLoggedIn` once signed in; 409 if email exists) |
 | `POST /api/v1/users/{id}/roles` | grant a role `{role}` |
 | `DELETE /api/v1/users/{id}/roles/{role}` | revoke a role |
 | `PUT /api/v1/users/{id}/active` | `{active}` — deactivate / reactivate |
 
 The list view (`AdminUser`) exposes a `pending` flag (`sub IS NULL`, i.e. never
 logged in → shown as **Invited**) and `is_active` (→ **Active** / **Deactivated**).
+
+An **Edit** button (email/name, inline) shows only on **Invited** rows. Once a user
+signs in, their `sub` is set and their email becomes the login-match key owned by
+the IdP, so it is no longer editable here (the server 409s). Audit action
+`update_user`.

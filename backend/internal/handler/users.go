@@ -29,7 +29,7 @@ func (h *UsersHandler) Me(w http.ResponseWriter, r *http.Request) {
 	if roles == nil {
 		roles = []string{}
 	}
-	isApprover, err := h.Repo.HasApprovableWork(ctx, user.ID,
+	isApprover, err := h.Repo.HasApprovableWork(ctx, user.ID, user.Email,
 		middleware.HasRole(ctx, model.RoleLegal), middleware.HasRole(ctx, model.RoleSecurity))
 	if err != nil {
 		reqLog(r).Error().Err(err).Msg("resolve is_approver")
@@ -116,7 +116,54 @@ func (h *UsersHandler) Create(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to create user")
 		return
 	}
+	recordAuditEvent(r, h.Repo, model.AuditCreateUser, "", model.EntityUser, &u.ID, email)
 	writeJSON(w, http.StatusCreated, u)
+}
+
+type updateUserInput struct {
+	Email string `json:"email"`
+	Name  string `json:"name"`
+}
+
+// Update edits an invited user's email/name (admin only). Allowed only while the
+// user is a pending invite (never signed in); once they've logged in their email
+// is the login-match key and is fixed (409).
+func (h *UsersHandler) Update(w http.ResponseWriter, r *http.Request) {
+	if !h.requireAdmin(w, r) {
+		return
+	}
+	userID, err := parseID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid user id")
+		return
+	}
+	var in updateUserInput
+	if err := decodeJSON(r, &in); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	email := strings.ToLower(strings.TrimSpace(in.Email))
+	if !looksLikeEmail(email) {
+		writeError(w, http.StatusBadRequest, "a valid email address is required")
+		return
+	}
+	switch err := h.Repo.UpdateInvitedUser(r.Context(), userID, email, strings.TrimSpace(in.Name)); {
+	case errors.Is(err, pgx.ErrNoRows):
+		writeError(w, http.StatusNotFound, "user not found")
+		return
+	case errors.Is(err, repository.ErrUserAlreadyLoggedIn):
+		writeError(w, http.StatusConflict, "this user has already signed in; their email can no longer be changed")
+		return
+	case errors.Is(err, repository.ErrEmailExists):
+		writeError(w, http.StatusConflict, "a user with this email already exists")
+		return
+	case err != nil:
+		reqLog(r).Error().Err(err).Int64("target_user_id", userID).Msg("update invited user")
+		writeError(w, http.StatusInternalServerError, "failed to update user")
+		return
+	}
+	recordAuditEvent(r, h.Repo, model.AuditUpdateUser, "", model.EntityUser, &userID, email)
+	h.writeUser(w, r, userID)
 }
 
 type roleInput struct {
@@ -156,6 +203,7 @@ func (h *UsersHandler) AddRole(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to add role")
 		return
 	}
+	recordAuditEvent(r, h.Repo, model.AuditGrantRole, in.Role, model.EntityUser, &userID, "")
 	h.writeUser(w, r, userID)
 }
 
@@ -196,6 +244,7 @@ func (h *UsersHandler) RemoveRole(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to remove role")
 		return
 	}
+	recordAuditEvent(r, h.Repo, model.AuditRevokeRole, role, model.EntityUser, &userID, "")
 	h.writeUser(w, r, userID)
 }
 
@@ -242,6 +291,11 @@ func (h *UsersHandler) SetActive(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to update user")
 		return
 	}
+	activeQualifier := model.QualifierInactive
+	if in.Active {
+		activeQualifier = model.QualifierActive
+	}
+	recordAuditEvent(r, h.Repo, model.AuditSetUserActive, activeQualifier, model.EntityUser, &userID, "")
 	h.writeUser(w, r, userID)
 }
 
