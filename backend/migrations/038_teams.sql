@@ -1,4 +1,4 @@
--- Teams: named groups (Legal, Security, Procurement) whose membership is a role and
+-- Teams: named groups (Legal, Security, Finance) whose membership is a role and
 -- which carry a shared team email for notifications. Membership is *derived* from
 -- the member_role (a user is a member iff they hold that role) — adding/removing a
 -- member simply grants/revokes the role — so there is no separate membership table.
@@ -18,4 +18,4 @@ CREATE TABLE teams (
 INSERT INTO teams (key, name, member_role) VALUES
     ('legal',    'Legal',    'legal'),
     ('security', 'Security', 'security'),
-    ('procurement', 'Procurement', 'procurement');
+    ('finance',  'Finance',  'finance');

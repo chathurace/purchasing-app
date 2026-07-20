@@ -3,8 +3,9 @@
 -- (referenced by `teams.member_role` and, via id, by `user_roles`); renaming in place
 -- keeps `roles.id` stable so existing `user_roles` grants are preserved.
 --
--- Fresh installs already seed the new names (migrations 001/038), so every statement
--- here is a no-op on a fresh DB. This migration exists to migrate already-deployed DBs.
+-- This is the SINGLE source of the finance->procurement rename: migrations 001/038
+-- still seed the original `finance` names, so this runs as a real rename on every DB
+-- (fresh or already-deployed) and applies cleanly regardless of migration level.
 
 -- teams.member_role has a plain FK to roles(name) (no ON UPDATE CASCADE), so drop it
 -- for the rename and re-add it afterwards.
