@@ -46,7 +46,7 @@ func (h *ConfigOptionsHandler) Lookup(w http.ResponseWriter, r *http.Request) {
 
 // List returns every option (active and inactive) for the Settings page.
 func (h *ConfigOptionsHandler) List(w http.ResponseWriter, r *http.Request) {
-	if !middleware.HasBudgetUnitAdmin(r.Context()) {
+	if !middleware.HasBusinessUnitAdmin(r.Context()) {
 		writeError(w, http.StatusForbidden, "admin or procurement_admin access required")
 		return
 	}
@@ -60,7 +60,7 @@ func (h *ConfigOptionsHandler) List(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *ConfigOptionsHandler) Create(w http.ResponseWriter, r *http.Request) {
-	if !middleware.HasBudgetUnitAdmin(r.Context()) {
+	if !middleware.HasBusinessUnitAdmin(r.Context()) {
 		writeError(w, http.StatusForbidden, "admin or procurement_admin access required")
 		return
 	}
@@ -96,7 +96,7 @@ func (h *ConfigOptionsHandler) Create(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *ConfigOptionsHandler) Update(w http.ResponseWriter, r *http.Request) {
-	if !middleware.HasBudgetUnitAdmin(r.Context()) {
+	if !middleware.HasBusinessUnitAdmin(r.Context()) {
 		writeError(w, http.StatusForbidden, "admin or procurement_admin access required")
 		return
 	}
@@ -142,7 +142,7 @@ func (h *ConfigOptionsHandler) Update(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *ConfigOptionsHandler) Delete(w http.ResponseWriter, r *http.Request) {
-	if !middleware.HasBudgetUnitAdmin(r.Context()) {
+	if !middleware.HasBusinessUnitAdmin(r.Context()) {
 		writeError(w, http.StatusForbidden, "admin or procurement_admin access required")
 		return
 	}

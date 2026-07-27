@@ -2,9 +2,9 @@
 
 Two append-only tables record who did what, for later BPMN-style process analysis
 and admin auditing. Migrations `034_process_events.sql` and `035_audit_events.sql`.
-Recording is **write-only in v1** — no API/UI exposes the tables yet; query them
-directly (SQL/BI). The one read method, `Repository.ListProcessEvents`, backs
-tests and future analysis.
+Recording is still **write-only at the mutating handlers** (best-effort, see below),
+but an **admin-only read view** now exposes both logs — see **Audit log view** at the
+end. `Repository.ListProcessEvents` remains the per-PR timeline read used by tests.
 
 ## Model
 
@@ -75,7 +75,7 @@ sub-steps and are **not** recorded in v1.
 | action | qualifier | entity_type | trigger |
 |---|---|---|---|
 | `create_vendor` / `update_vendor` | — | `vendor` | vendor Create/Update |
-| `create_budget_unit` / `update_budget_unit` | — | `budget_unit` | budget-unit Create/Update |
+| `create_business_unit` / `update_business_unit` | — | `business_unit` | business-unit Create/Update |
 | `create_config_option` | list key | `config_option` | config-option Create |
 | `update_config_option` / `delete_config_option` | — | `config_option` | config-option Update/Delete |
 | `create_user` | — | `user` | user Create (invite) |
@@ -101,6 +101,39 @@ FROM process_events GROUP BY purchase_request_id;
 SELECT created_at, actor_email, entity_id AS target_user
 FROM audit_events WHERE action='grant_role' AND qualifier='admin' ORDER BY created_at;
 ```
+
+## Audit log view (issue #2502)
+
+A read view over both logs for **admin / procurement_admin**, at `/audit`
+("Audit log" in the Admin nav group). One page, a segmented control switching two
+sections:
+
+- **Process events** — `process_events`, newest-first across all PRs.
+- **System events** — `audit_events`, newest-first.
+
+**Filters** (server-side, debounced) shared by both sections: **actor**
+(case-insensitive substring against the `actor_email` snapshot *and* the actor's
+current joined name), **action** (exact, from a dropdown populated by the fixed Go
+catalog), and a **date range** (inclusive `created_at::date` bounds). Process events
+add a **PR id** filter. Results are capped at the latest **2000** rows per section
+(`defaultEventLimit` 500 / `maxEventLimit` 2000 in `repository/events.go`); the UI
+notes when the cap is hit.
+
+Backend:
+
+- `Repository.FilterProcessEvents` / `FilterAuditEvents` (`repository/events.go`)
+  build the shared WHERE via `eventWheres` and `LEFT JOIN users` to surface
+  `actor_name` (display-only; the immutable audit key stays `actor_email`).
+- `EventsHandler` (`handler/events_view.go`) serves `GET /api/v1/events/process`,
+  `/events/audit`, and `/events/actions` (the two action catalogs, from
+  `model.SortedProcessActions`/`SortedAuditActions`). All three are gated to
+  **admin / procurement_admin** (`EventsHandler.requireAccess` — `HasRole(admin)
+  || HasRole(procurement_admin)`); the log carries sensitive actions (role grants,
+  deactivations) so it is not open to plain procurement/staff.
+
+Frontend: `pages/AuditEventsPage.tsx` (+ `api/events.ts`, `hooks/useEvents.ts`,
+`hooks/useCanViewAuditLog.ts`; nav gated on the `canViewAuditLog` flag).
+The view is read-only — no mutations, no new event action.
 
 ## Adding a new action
 

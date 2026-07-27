@@ -53,14 +53,28 @@ Whenever test data is added by claude, clean up all those test data after testin
 ## Status
 
 - **Phase 1 (staff view)** — see `docs/plans/01-staff-view.md`. Pages: login, list requests, new
-  request, view/edit request. The new-request form is the **WSO2 SOP-85000 requisition wizard**
-  (`components/RequisitionForm.tsx`, shared by create + edit): a 4-step flow (Requester / Purchase
-  [IT vs Non-IT toggle + IT data-security assessment] / Vendor & budget / Review). Core fields are
-  columns on `purchase_requests` (`team`, `entity`, `category`, `estimated_value`, `currency`,
-  `budget_approver_name/email`, derived `title`); the rest of the form is a `details` **JSONB** blob
-  (migration `023`, shape = `PRDetails` on the client). Requesters no longer pick system approvers —
-  procurement sign-off is the recommendation (below). Old `pr_items`/`pr_links` are unused by the
-  new form (kept for legacy rows).
+  request, view/edit request. The new-request form is the **ProQ requisition wizard**
+  (`components/RequisitionForm.tsx` + scoped `RequisitionForm.css`, shared by create + edit; matches
+  `resources/ProQ-new-requisition.html`, see `docs/plans/16-proq-requisition-form.md`): a **5-step**
+  flow (Requester details / Procurement Category / Requirement Details / Vendor & budget / Review),
+  styled with the ProQ visual language (dark hero, pill stepper, Space Grotesk/IBM Plex Mono/Inter
+  fonts loaded in `index.html`) scoped under `.proq-req` so it doesn't leak into the Tailwind app.
+  There are **three categories** (`PRCategory` = `IT | NON-IT | EVENTS`; `category` is free-text on
+  `purchase_requests` — no CHECK/enum, so EVENTS needed no migration); **Marketing & Events** is a
+  real stored category rendered as "under development" placeholders. The rest of the form is a
+  `details` **JSONB** blob (shape = `PRDetails`). Following the ProQ mockup, the form **no longer
+  collects** WSO2 entity, config-list budget coding, estimated value, or currency — those
+  columns remain (nullable/defaulted) and pass through unchanged when editing legacy PRs, but new PRs
+  leave them empty; budget coding (category / product / region / engagement code) is now
+  **free-text in `details`**. The form **does** collect a **business unit** (dropdown, required) and a
+  **budget approver** (dropdown, required) chosen from that unit's approvers — see the **Business
+  units** entry below. `team_lead_email` is also required. The selected approver is stored in the
+  free-text `budget_approver_name/email`; the recommendation's **budget approval** matches the caller's
+  email against `budget_approver_email` (case-insensitive) — see
+  `IsBudgetApproverForPR`/`BudgetApproversForPR` in `repository/recommendations.go` and the
+  `budgetEmailMatch` fragment folded into `approvablePredicate`/`myApprovalStateExpr` in
+  `repository.go`. Supplier attachments staged in the create form are uploaded (best-effort) after the
+  PR is created. Old `pr_items`/`pr_links` are unused (kept for legacy rows).
 - **Phase 2 (procurement view)** — see `docs/plans/02-finance-view.md` (plan archive) and
   `docs/contracts.md` (as-built contract model). The procurement workflow up to contract signing:
   vendors, quotations (with line items), and contracts. **RFQs were removed** (migration `021`): a PR
@@ -103,10 +117,9 @@ Whenever test data is added by claude, clean up all those test data after testin
   required approvals: budget owner / legal / security, budget default-checked) inline on the PR page.
   Each required approval is an **approval card** with an approve toggle and a comment thread (text +
   doc attachments, owner type `pr_recommendation_comment`). Card actors: legal→`legal` role,
-  security→`security` role, budget→a **qualified budget approver** of the PR's **budget unit** (see
-  the **Budget units** entry below): the approver(s) of the bracket that the *recommendation's*
-  estimated value + currency resolve to (`IsBudgetApproverForPR` via `resolve_budget_approvers`, falling
-  back to the unit's default approver); any of them may approve, and all are notified (admin passes any).
+  security→`security` role, budget→the PR's **named budget approver** (the person the requester picked
+  from the business unit's approvers, stored in `budget_approver_email`): `IsBudgetApproverForPR` /
+  `BudgetApproversForPR` match the caller's email against it (case-insensitive); admin passes any.
   The card a caller may act on is server-computed
   into `recommendation.my_actionable_types` (comment/view) plus per-card `can_comment`/`can_approve`/
   `can_assign` flags — see the **Teams & approval assignees** entry below for the legal/security
@@ -116,6 +129,23 @@ Whenever test data is added by claude, clean up all those test data after testin
   access is extended so card actors can see and find the PRs awaiting them. The recommendation view
   renders each item as an elevated **sub-card** (`components/RecommendationSection.tsx` →
   `SubCard`/`IconTile`): the approval cards, plus two optional cards procurement manages inline:
+  - **Budget approval chain** (migration `045`; `docs/chained-budget-approvals.md`): the budget card
+    is a **serial chain of steps** (`pr_recommendation_budget_steps`), not a single toggle. Step 1
+    (base) is governed by the PR's named budget approver (above); procurement appends further **named**
+    steps (approver email, matched case-insensitively like team-lead) via a "+ Add another approval
+    step" control. Each
+    step is **approve / reject / pending**; a step is decidable only once the previous is approved, and
+    **locks once the next step decides** (approve/reject/reverse until then). The
+    `pr_recommendation_approvals` budget row's `approved_by` is now a **projection** — set iff every
+    step is approved (`syncBudgetApprovalFromStepsTx`), so `recApprovedSQL`/`SelectQuotation` are
+    unchanged; a rejected/pending step blocks selection. Endpoints under
+    `.../recommendation/budget-steps[/{stepID}[/decision|/remind]]`; budget decisions no longer use
+    `POST .../approvals/budget` (it 400s). Per-step `can_decide`/`can_manage` flags; step comments carry
+    `budget_step_id`. A named step approver (not the base budget approver) gets view/list access via
+    `callerCanView` + the budget-step branch of `approvablePredicate`/`myApprovalStateExpr`/
+    `IsApproverForPR` (which gained a `callerEmail` arg — `$4` = caller email). Process events:
+    `rec_approval_budget` (approve/reject/revert) for decisions, `update_budget_chain` (add/update/remove)
+    for chain edits.
   - **RFI card** (migration `030`; `rfi_description` on `pr_recommendations` + docs owner type
     `pr_recommendation_rfi`): a request-for-information raised with the vendor — a description plus one
     or more PDF attachments. Endpoints under `.../recommendation/rfi`.
@@ -186,13 +216,19 @@ Whenever test data is added by claude, clean up all those test data after testin
 - **Audit & process events** — see `docs/process-events.md`. Two append-only tables (migrations
   `034`/`035`): `process_events` logs the significant PR business-process tasks (BPMN-style —
   `submit_pr`, `pr_approval`, `add_quotation`, `sign_contract`, …), `audit_events` logs non-process
-  master-data/admin mutations (vendors, budget units, config options, users/roles, storage). The
+  master-data/admin mutations (vendors, business units, config options, users/roles, storage). The
   `action` set is fixed in Go (`model.ValidProcessActions`/`ValidAuditActions`, in
   `internal/model/events.go`) and validated on write — a task-decision direction (approve/reject,
   sign/unsign, target status) is a `qualifier`, not a new action. Recorded best-effort at the handler
   layer (`recordProcessEvent`/`recordAuditEvent`) after a successful mutation; PR status
-  auto-advances are *not* recorded (derivable). v1 is write-only (no API/UI); query the tables
-  directly.
+  auto-advances are *not* recorded (derivable). A read view (issue #2502) for **admin /
+  procurement_admin** exposes both logs at `/audit` ("Audit log" nav): one page, a segmented control
+  over **Process events** and **System events**, filtered server-side by actor / action / date range
+  (+ PR id for process). Backend `Repository.FilterProcessEvents`/`FilterAuditEvents` (LEFT JOIN users
+  for a display `actor_name`) + `EventsHandler` (`handler/events_view.go`) at
+  `GET /api/v1/events/{process,audit,actions}`, gated by `requireAccess` (`HasRole(admin) ||
+  HasRole(procurement_admin)`; frontend `useCanViewAuditLog`/`canViewAuditLog` nav flag); capped at
+  the latest 2000 rows/section. Read-only — no new event action.
 - **Teams & approval assignees** — see `docs/teams-approval-assignee.md` (migrations `038` teams,
   `039` assignee). A **team** (`teams` table, seeded fixed set Legal/Security/Procurement) is a name
   + a fixed/display-only `member_role` + a shared `team_email`.
@@ -214,30 +250,51 @@ Whenever test data is added by claude, clean up all those test data after testin
   (`Mailer.SendCC` added for the CC); disabled in dev = logged. Endpoints
   `PUT/POST .../recommendation/approvals/{type}/assignee[/remind]`; process events
   `assign_rec_legal`/`assign_rec_security` (qualifier `assign`/`unassign`).
-- **Budget units (was cost centers)** — see `docs/budget-units.md` (migrations `041`/`042`; dev-only,
-  no data migration — `041` **truncates** existing cost-center data). `cost_centers` →
-  **`budget_units`**; the old primary/secondary-owner model is dropped and replaced by value-based
-  **approval brackets** plus a **default approver** (`budget_units.default_approver_id`, required). A
-  budget unit has one or more ordered `budget_unit_brackets` (own `currency`, `min_value`, `max_value`
-  NULL = unbounded) each with one or more `budget_unit_bracket_approvers`. The **budget approver** is
-  derived, not stored: SQL function `resolve_budget_approvers(bu_id, value, currency)` returns the
-  approvers of the first bracket (by position) whose **own currency** matches and whose range contains
-  the value; otherwise (no value / no currency-matched bracket / out of range) it returns the unit's
-  **default approver**. All returned approvers qualify (any may approve; all are notified — there is no
-  "first"). Two resolution
-  points: the **requester's** `estimated_value` drives a creation-phase **preview**
-  (`GET /budget-units/{id}/approvers?value=&currency=`, shown on the requisition form and PR page); the
-  **recommendation's** `estimated_value` + `currency` drive the **actual** budget-card approver
-  (`IsBudgetApproverForPR` + the two list/dashboard predicates in `repository.go`, all via the
-  function). `purchase_requests.cost_center_id` → `budget_unit_id` (legacy free-text `cost_center`
-  dropped); `invoice_cost_allocations.cost_center_id` → `budget_unit_id`. Management (create/edit
-  brackets, deactivate) is procurement_admin/admin at `/budget-units` (`middleware.HasBudgetUnitAdmin`,
-  which also gates config options); the active-unit lookup is open. Procurement can re-notify budget
-  approvers via `POST .../recommendation/approvals/budget/remind`; approvers are also emailed on
-  recommendation create/update. Audit actions `create_budget_unit`/`update_budget_unit`, entity
-  `budget_unit`. The resolved approver(s) are called the **designated approver(s)** in the UI. The
-  requisition form keeps an **editable** budget approver (`purchase_requests.budget_approver_name/email`)
-  with a "use designated" shortcut; a mismatch with the designated approver is flagged on the Review
-  step (non-blocking). The recommendation budget card shows that named approver — procurement edits it
-  inline or syncs it to the designated one via `PUT /purchase-requests/{id}/budget-approver`
-  (`SetBudgetApprover`, procurement; touches only the approver fields).
+- **Business units (was budget units, was cost centers)** — see `docs/business-units.md` (migration
+  `046`, which renames `budget_units` → **`business_units`**, drops the bracket/currency/value model,
+  and — dev-only, no data migration — **truncates** existing data). A business unit is just a **name**,
+  an optional **description**, and a **flat list of approvers** (`business_unit_approvers`) — no
+  brackets, no unit budget/currency, no default approver, and the `resolve_budget_approvers` SQL
+  function is gone. On the **requisition form** the requester picks a business unit (dropdown, required)
+  and then a **budget approver** from that unit's approvers (dropdown, required); the choice is stored in
+  the free-text `purchase_requests.budget_approver_name/email`. Budget-approval authority everywhere is a
+  case-insensitive **email match** against `budget_approver_email` — `IsBudgetApproverForPR` /
+  `BudgetApproversForPR` in `repository/recommendations.go` and the `budgetEmailMatch` fragment in
+  `approvablePredicate`/`myApprovalStateExpr` (`repository.go`). `purchase_requests.budget_unit_id` →
+  `business_unit_id`; `invoice_cost_allocations.budget_unit_id` → `business_unit_id`. Management
+  (create/edit, deactivate) is procurement_admin/admin at `/business-units`
+  (`middleware.HasBusinessUnitAdmin`, which also gates config options); the active-unit **lookup**
+  (`GET /business-units/lookup`) and the unit's **approver list** (`GET /business-units/{id}/approvers`,
+  which feeds the budget-approver dropdown) are open to any authenticated user. Procurement can re-notify
+  the budget approver via `POST .../recommendation/approvals/budget/remind` (`remindBudgetApprovers`);
+  the approver is also emailed on recommendation create/update. Audit actions
+  `create_business_unit`/`update_business_unit`, entity `business_unit`. The recommendation budget card
+  shows the named approver — procurement changes it inline (dropdown of the unit's approvers) via
+  `PUT /purchase-requests/{id}/budget-approver` (`SetBudgetApprover`, procurement; touches only the
+  approver fields).
+- **Role-based home page** — see `docs/home-pages.md` and `docs/plans/18-role-home-pages.md`. The
+  post-login landing page (`/`, first nav item "Home") is a dashboard of count tiles + a "latest
+  activity" feed, rendered as **stacked sections per role** the caller has (mirrors the nav): **My
+  requests** (everyone), **Approvals** (when `is_approver`), **Procurement** (procurement/admin).
+  One read-only endpoint `GET /api/v1/home` (`handler/home.go`) returns `HomeResponse{staff?,
+  approvals?, procurement?}`; aggregation in `repository/home.go` **reuses** the `approvablePredicate`/
+  `myApprovalStateExpr`/`teamLeadMatch`/`budgetEmailMatch` fragments (same `$1..$4` bind order as
+  `ListPurchaseRequests`). "Completed" = `order_signed` (+ reserved `completed`); the procurement
+  card splits `order_signed` into **awaiting delivery** (not fully paid) vs **completed** (≥1 invoice,
+  all `paid`, via `invoices.purchase_request_id`/`status`). No migration, no new event action (read).
+- **User directory (SCIM autocomplete)** — see `docs/user-directory.md` (issue #2496). Name/email
+  form fields offer type-to-search suggestions sourced from the connected identity server (WSO2 IS /
+  Asgardeo) via its **SCIM2 Users** API. The backend (`internal/directory`) fetches the **full**
+  directory once per TTL into an in-memory cache (single-flight refresh; ~1000 users, so cache-all +
+  client-side filter beats live-per-keystroke) using an OAuth2 **client-credentials** M2M token
+  (scope `internal_user_mgt_list`); the browser never sees SCIM or the credentials. Config is a new
+  `scim` block in `config.yaml` — **when `scim.enabled` is false (default), it falls back to the
+  app's active DB users**, so dev needs no M2M app. `GET /api/v1/users/directory` (any user) returns
+  the cached `[{name,email}]`; `POST /api/v1/users/ensure` (procurement_admin/admin) get-or-creates a
+  DB user by email (`GetOrCreateUserByEmail`, reusing the invite-by-email path) so **id-based**
+  pickers can select someone who hasn't logged in. Frontend: `EmailAutocomplete` (free-text +
+  suggestions — accepts a typed email not in the directory) on **team-lead email** (create + edit),
+  **budget-chain steps** (add/edit), and the **invite-user** form; `DirectoryUserPicker` (search →
+  ensure → id) on **business-unit approvers** and **team members**. PR assignee/collaborators stay
+  DB/procurement-scoped (the backend requires the procurement role there). No migration, no new event
+  action (reads + reuses the invite mechanism).

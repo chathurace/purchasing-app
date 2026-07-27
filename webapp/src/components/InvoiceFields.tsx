@@ -1,4 +1,16 @@
 import {
+  Box,
+  Button,
+  FormControlLabel,
+  MenuItem,
+  Radio,
+  RadioGroup,
+  Stack,
+  TextField,
+  Typography,
+} from "@wso2/oxygen-ui";
+import { Plus } from "@wso2/oxygen-ui-icons-react";
+import {
   allocationsSum,
   allocationsValid,
   formatMoney,
@@ -6,7 +18,7 @@ import {
   invoiceItemsTotal,
 } from "../types/api";
 import type { AllocationMode, CostAllocationInput, InvoiceInput } from "../types/api";
-import { useBudgetUnitLookup } from "../hooks/useBudgetUnits";
+import { useBusinessUnitLookup } from "../hooks/useBusinessUnits";
 import { NullableNumberInput, NumberInput } from "./NumberInput";
 import { CurrencyInput } from "./CurrencyInput";
 
@@ -15,15 +27,42 @@ interface Props {
   onChange: (next: InvoiceInput) => void;
 }
 
-const baseInputCls = "rounded border px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none";
-const inputCls = "w-full " + baseInputCls;
-const labelCls = "block text-sm font-medium text-gray-700 mb-1";
-
 type IItem = { description: string; quantity: number; unit_price: number };
+
+// A numeric field with a trailing unit/currency suffix (e.g. "%", "USD"),
+// keeping the specialised NumberInput's controlled behaviour intact.
+function SuffixNumber({
+  width,
+  suffix,
+  children,
+}: {
+  width: number | string;
+  suffix: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <Box sx={{ position: "relative", width, flexShrink: 0 }}>
+      {children}
+      <Typography
+        variant="caption"
+        color="text.secondary"
+        sx={{
+          position: "absolute",
+          right: 10,
+          top: "50%",
+          transform: "translateY(-50%)",
+          pointerEvents: "none",
+        }}
+      >
+        {suffix}
+      </Typography>
+    </Box>
+  );
+}
 
 export function InvoiceFields({ value, onChange }: Props) {
   const set = (patch: Partial<InvoiceInput>) => onChange({ ...value, ...patch });
-  const { data: budgetUnits, isLoading: buLoading } = useBudgetUnitLookup();
+  const { data: businessUnits, isLoading: buLoading } = useBusinessUnitLookup();
 
   const setItem = (i: number, patch: Partial<IItem>) => {
     const items = value.items.map((it, idx) => (idx === i ? { ...it, ...patch } : it));
@@ -39,12 +78,11 @@ export function InvoiceFields({ value, onChange }: Props) {
   const mismatch =
     hasEnteredTotal && value.items.length > 0 && Math.abs((value.entered_total ?? 0) - itemsTotal) > 0.01;
 
-  // --- budget-unit allocation helpers ---
+  // --- business-unit allocation helpers ---
   const allocs = value.cost_allocations;
   const setAlloc = (i: number, patch: Partial<CostAllocationInput>) =>
     set({ cost_allocations: allocs.map((a, idx) => (idx === i ? { ...a, ...patch } : a)) });
-  const addAlloc = () =>
-    set({ cost_allocations: [...allocs, { budget_unit_id: 0, value: 0 }] });
+  const addAlloc = () => set({ cost_allocations: [...allocs, { business_unit_id: 0, value: 0 }] });
   const removeAlloc = (i: number) =>
     set({ cost_allocations: allocs.filter((_, idx) => idx !== i) });
   const setMode = (mode: AllocationMode) => set({ allocation_mode: mode });
@@ -52,180 +90,199 @@ export function InvoiceFields({ value, onChange }: Props) {
   const allocSum = allocationsSum(allocs);
   const allocTarget = value.allocation_mode === "percentage" ? 100 : total;
   const allocOk = allocationsValid(value.allocation_mode, allocs, total);
-  // Budget units already chosen on other rows, to avoid picking duplicates.
+  // Business units already chosen on other rows, to avoid picking duplicates.
   const chosenIds = (i: number) =>
-    new Set(allocs.filter((_, idx) => idx !== i).map((a) => a.budget_unit_id));
+    new Set(allocs.filter((_, idx) => idx !== i).map((a) => a.business_unit_id));
 
   return (
-    <div className="space-y-5">
-      <div className="flex gap-2">
-        <div className="flex-1">
-          <label className={labelCls}>Vendor invoice no.</label>
-          <input
-            className={inputCls}
-            value={value.vendor_invoice_no}
-            onChange={(e) => set({ vendor_invoice_no: e.target.value })}
-            placeholder="The vendor's own invoice number"
-          />
-        </div>
-        <div className="w-28 shrink-0">
-          <label className={labelCls}>Currency</label>
-          <CurrencyInput
-            className={inputCls}
-            value={value.currency}
-            maxLength={3}
-            onChange={(currency) => set({ currency })}
-            placeholder="USD"
-          />
-        </div>
-      </div>
+    <Stack spacing={2.5}>
+      <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5}>
+        <TextField
+          label="Vendor invoice no."
+          size="small"
+          fullWidth
+          value={value.vendor_invoice_no}
+          onChange={(e) => set({ vendor_invoice_no: e.target.value })}
+          placeholder="The vendor's own invoice number"
+        />
+        <Box
+          component={CurrencyInput}
+          sx={{ width: { xs: "100%", sm: 112 }, flexShrink: 0 }}
+          value={value.currency}
+          maxLength={3}
+          onChange={(currency: string) => set({ currency })}
+          placeholder="USD"
+        />
+      </Stack>
 
-      <div className="flex gap-2">
-        <div className="w-44 shrink-0">
-          <label className={labelCls}>Invoice date</label>
-          <input
-            type="date"
-            className={inputCls}
-            value={value.invoice_date}
-            onChange={(e) => set({ invoice_date: e.target.value })}
-          />
-        </div>
-        <div className="w-44 shrink-0">
-          <label className={labelCls}>Due date</label>
-          <input
-            type="date"
-            className={inputCls}
-            value={value.due_date ?? ""}
-            onChange={(e) => set({ due_date: e.target.value || null })}
-          />
-        </div>
-      </div>
+      <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5}>
+        <TextField
+          label="Invoice date"
+          type="date"
+          size="small"
+          InputLabelProps={{ shrink: true }}
+          value={value.invoice_date}
+          onChange={(e) => set({ invoice_date: e.target.value })}
+          sx={{ width: { xs: "100%", sm: 200 }, flexShrink: 0 }}
+        />
+        <TextField
+          label="Due date"
+          type="date"
+          size="small"
+          InputLabelProps={{ shrink: true }}
+          value={value.due_date ?? ""}
+          onChange={(e) => set({ due_date: e.target.value || null })}
+          sx={{ width: { xs: "100%", sm: 200 }, flexShrink: 0 }}
+        />
+      </Stack>
 
-      <div>
-        <div className="mb-1 flex items-center justify-between">
-          <label className={labelCls}>Line items</label>
-          <button
-            type="button"
-            className="text-sm text-indigo-600"
-            onClick={() => set({ items: [...value.items, { description: "", quantity: 1, unit_price: 0 }] })}
+      {/* Line items */}
+      <Box>
+        <Box sx={{ mb: 1, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <Typography variant="body2" sx={{ fontWeight: 600 }}>
+            Line items
+          </Typography>
+          <Button
+            variant="text"
+            size="small"
+            startIcon={<Plus size={16} />}
+            onClick={() =>
+              set({ items: [...value.items, { description: "", quantity: 1, unit_price: 0 }] })
+            }
           >
-            + Add line
-          </button>
-        </div>
-        <div className="space-y-2">
-          {value.items.length === 0 && <p className="text-sm text-gray-400">No line items.</p>}
+            Add line
+          </Button>
+        </Box>
+        <Stack spacing={1}>
+          {value.items.length === 0 && (
+            <Typography variant="body2" color="text.secondary">
+              No line items.
+            </Typography>
+          )}
           {value.items.map((it, i) => (
-            <div key={i} className="flex gap-2">
-              <input
-                className={baseInputCls + " min-w-0 flex-1"}
+            <Stack key={i} direction="row" spacing={1} alignItems="center">
+              <TextField
+                size="small"
+                fullWidth
                 value={it.description}
                 onChange={(e) => setItem(i, { description: e.target.value })}
                 placeholder="Description"
+                sx={{ minWidth: 0, flex: 1 }}
               />
-              <NumberInput
+              <Box
+                component={NumberInput}
+                sx={{ width: 80, flexShrink: 0 }}
                 min={0}
                 step="any"
-                className={baseInputCls + " w-20 shrink-0"}
                 value={it.quantity}
-                onChange={(quantity) => setItem(i, { quantity })}
+                onChange={(quantity: number) => setItem(i, { quantity })}
                 placeholder="Qty"
               />
-              <NumberInput
+              <Box
+                component={NumberInput}
+                sx={{ width: 112, flexShrink: 0 }}
                 min={0}
                 step="any"
-                className={baseInputCls + " w-28 shrink-0"}
                 value={it.unit_price}
-                onChange={(unit_price) => setItem(i, { unit_price })}
+                onChange={(unit_price: number) => setItem(i, { unit_price })}
                 placeholder="Unit price"
               />
-              <button
-                type="button"
-                className="rounded border px-2 text-sm text-gray-500 hover:bg-gray-50"
+              <Button
+                variant="outlined"
+                color="inherit"
+                size="small"
                 onClick={() => set({ items: value.items.filter((_, idx) => idx !== i) })}
               >
                 Remove
-              </button>
-            </div>
+              </Button>
+            </Stack>
           ))}
-        </div>
-        <p className="mt-2 text-right text-sm text-gray-600">
+        </Stack>
+        <Typography variant="body2" color="text.secondary" sx={{ mt: 1, textAlign: "right" }}>
           Line items total:{" "}
-          <span className="font-medium text-gray-900">{formatMoney(itemsTotal, value.currency)}</span>
-        </p>
-      </div>
+          <Box component="span" sx={{ fontWeight: 600, color: "text.primary" }}>
+            {formatMoney(itemsTotal, value.currency)}
+          </Box>
+        </Typography>
+      </Box>
 
       {/* Invoice total — may be entered directly; takes priority over the line items. */}
-      <div>
-        <label className={labelCls}>Invoice total</label>
-        <div className="flex items-center gap-2">
-          <div className="relative w-44">
-            <NullableNumberInput
+      <Box>
+        <Typography variant="body2" sx={{ fontWeight: 600, mb: 0.5 }}>
+          Invoice total
+        </Typography>
+        <Stack direction="row" spacing={1} alignItems="center">
+          <SuffixNumber width={176} suffix={value.currency}>
+            <Box
+              component={NullableNumberInput}
+              sx={{ width: "100%" }}
               min={0}
               step="any"
-              className={baseInputCls + " w-full pr-12"}
               value={value.entered_total}
-              onChange={(entered_total) => set({ entered_total })}
+              onChange={(entered_total: number | null) => set({ entered_total })}
               placeholder={itemsTotal.toFixed(2)}
             />
-            <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-xs text-gray-400">
-              {value.currency}
-            </span>
-          </div>
+          </SuffixNumber>
           {hasEnteredTotal && (
-            <button
-              type="button"
-              className="text-sm text-indigo-600"
-              onClick={() => set({ entered_total: null })}
-            >
+            <Button variant="text" size="small" onClick={() => set({ entered_total: null })}>
               Use line items total
-            </button>
+            </Button>
           )}
-        </div>
-        <p className="mt-1 text-xs text-gray-400">
+        </Stack>
+        <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 0.5 }}>
           Leave blank to use the line items total. When set, this value is the invoice total.
-        </p>
+        </Typography>
         {mismatch && (
-          <p className="mt-1 text-sm text-amber-600">
-            Entered total ({formatMoney(value.entered_total ?? 0, value.currency)}) differs from the line items
-            total ({formatMoney(itemsTotal, value.currency)}). The entered total will be used.
-          </p>
+          <Typography variant="body2" color="warning.main" sx={{ mt: 0.5 }}>
+            Entered total ({formatMoney(value.entered_total ?? 0, value.currency)}) differs from the
+            line items total ({formatMoney(itemsTotal, value.currency)}). The entered total will be
+            used.
+          </Typography>
         )}
-      </div>
+      </Box>
 
       {/* Budget-unit allocation */}
-      <div>
-        <div className="mb-1 flex items-center justify-between">
-          <label className={labelCls}>Budget units</label>
-          <div className="flex items-center gap-3 text-sm">
-            <label className="flex items-center gap-1 text-gray-600">
-              <input
-                type="radio"
-                name="allocation_mode"
-                checked={value.allocation_mode === "percentage"}
-                onChange={() => setMode("percentage")}
+      <Box>
+        <Box sx={{ mb: 1, display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 1 }}>
+          <Typography variant="body2" sx={{ fontWeight: 600 }}>
+            Budget units
+          </Typography>
+          <Stack direction="row" spacing={1.5} alignItems="center">
+            <RadioGroup
+              row
+              name="allocation_mode"
+              value={value.allocation_mode}
+              onChange={(e) => setMode(e.target.value as AllocationMode)}
+            >
+              <FormControlLabel
+                value="percentage"
+                control={<Radio size="small" />}
+                label={<Typography variant="body2">Percentage</Typography>}
               />
-              Percentage
-            </label>
-            <label className="flex items-center gap-1 text-gray-600">
-              <input
-                type="radio"
-                name="allocation_mode"
-                checked={value.allocation_mode === "amount"}
-                onChange={() => setMode("amount")}
+              <FormControlLabel
+                value="amount"
+                control={<Radio size="small" />}
+                label={<Typography variant="body2">Amount</Typography>}
               />
-              Amount
-            </label>
-            <button type="button" className="text-indigo-600" onClick={addAlloc}>
-              + Add budget unit
-            </button>
-          </div>
-        </div>
-        <p className="mb-2 text-xs text-gray-400">
+            </RadioGroup>
+            <Button variant="text" size="small" startIcon={<Plus size={16} />} onClick={addAlloc}>
+              Add budget unit
+            </Button>
+          </Stack>
+        </Box>
+        <Typography variant="caption" color="text.secondary" sx={{ display: "block", mb: 1 }}>
           Split this invoice across one or more budget units
-          {value.allocation_mode === "percentage" ? " by percentage (must total 100%)" : " by amount (must total the invoice total)"}.
-        </p>
-        <div className="space-y-2">
-          {allocs.length === 0 && <p className="text-sm text-gray-400">No budget units assigned.</p>}
+          {value.allocation_mode === "percentage"
+            ? " by percentage (must total 100%)"
+            : " by amount (must total the invoice total)"}
+          .
+        </Typography>
+        <Stack spacing={1}>
+          {allocs.length === 0 && (
+            <Typography variant="body2" color="text.secondary">
+              No business units assigned.
+            </Typography>
+          )}
           {allocs.map((a, i) => {
             const taken = chosenIds(i);
             const resolved =
@@ -235,72 +292,80 @@ export function InvoiceFields({ value, onChange }: Props) {
                   ? ((a.value || 0) / total) * 100
                   : 0;
             return (
-              <div key={i} className="flex items-center gap-2">
-                <select
-                  className={baseInputCls + " min-w-0 flex-1"}
-                  value={a.budget_unit_id || ""}
-                  onChange={(e) => setAlloc(i, { budget_unit_id: Number(e.target.value) })}
+              <Stack key={i} direction="row" spacing={1} alignItems="center">
+                <TextField
+                  select
+                  size="small"
+                  value={a.business_unit_id || ""}
+                  onChange={(e) => setAlloc(i, { business_unit_id: Number(e.target.value) })}
+                  sx={{ minWidth: 0, flex: 1 }}
+                  SelectProps={{ displayEmpty: true }}
                 >
-                  <option value="">{buLoading ? "Loading…" : "Select budget unit"}</option>
-                  {(budgetUnits ?? [])
-                    .filter((c) => c.id === a.budget_unit_id || !taken.has(c.id))
+                  <MenuItem value="">{buLoading ? "Loading…" : "Select business unit"}</MenuItem>
+                  {(businessUnits ?? [])
+                    .filter((c) => c.id === a.business_unit_id || !taken.has(c.id))
                     .map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.code ? `${c.code} — ${c.name}` : c.name}
-                      </option>
+                      <MenuItem key={c.id} value={c.id}>
+                        {c.name}
+                      </MenuItem>
                     ))}
-                </select>
-                <div className="relative w-32 shrink-0">
-                  <NumberInput
+                </TextField>
+                <SuffixNumber
+                  width={128}
+                  suffix={value.allocation_mode === "percentage" ? "%" : value.currency}
+                >
+                  <Box
+                    component={NumberInput}
+                    sx={{ width: "100%" }}
                     min={0}
                     step="any"
-                    className={baseInputCls + " w-full pr-7"}
                     value={a.value}
-                    onChange={(val) => setAlloc(i, { value: val })}
+                    onChange={(val: number) => setAlloc(i, { value: val })}
                   />
-                  <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-xs text-gray-400">
-                    {value.allocation_mode === "percentage" ? "%" : value.currency}
-                  </span>
-                </div>
-                <span className="w-36 shrink-0 text-right text-xs text-gray-500">
+                </SuffixNumber>
+                <Typography
+                  variant="caption"
+                  color="text.secondary"
+                  sx={{ width: 144, flexShrink: 0, textAlign: "right" }}
+                >
                   {value.allocation_mode === "percentage"
                     ? `= ${formatMoney(resolved, value.currency)}`
                     : `= ${resolved.toFixed(1)}%`}
-                </span>
-                <button
-                  type="button"
-                  className="rounded border px-2 text-sm text-gray-500 hover:bg-gray-50"
-                  onClick={() => removeAlloc(i)}
-                >
+                </Typography>
+                <Button variant="outlined" color="inherit" size="small" onClick={() => removeAlloc(i)}>
                   Remove
-                </button>
-              </div>
+                </Button>
+              </Stack>
             );
           })}
-        </div>
+        </Stack>
         {allocs.length > 0 && (
-          <p className={`mt-2 text-right text-sm ${allocOk ? "text-gray-600" : "text-red-600"}`}>
+          <Typography
+            variant="body2"
+            sx={{ mt: 1, textAlign: "right" }}
+            color={allocOk ? "text.secondary" : "error.main"}
+          >
             Allocated:{" "}
-            <span className="font-medium">
+            <Box component="span" sx={{ fontWeight: 600 }}>
               {value.allocation_mode === "percentage"
                 ? `${allocSum.toFixed(2)}% / 100%`
                 : `${formatMoney(allocSum, value.currency)} / ${formatMoney(allocTarget, value.currency)}`}
-            </span>
-            {!allocOk && <span className="ml-2">— must add up before saving</span>}
-          </p>
+            </Box>
+            {!allocOk && <Box component="span" sx={{ ml: 1 }}>— must add up before saving</Box>}
+          </Typography>
         )}
-      </div>
+      </Box>
 
-      <div>
-        <label className={labelCls}>Note</label>
-        <textarea
-          className={inputCls}
-          rows={3}
-          value={value.note}
-          onChange={(e) => set({ note: e.target.value })}
-          placeholder="Any additional context"
-        />
-      </div>
-    </div>
+      <TextField
+        label="Note"
+        size="small"
+        fullWidth
+        multiline
+        minRows={3}
+        value={value.note}
+        onChange={(e) => set({ note: e.target.value })}
+        placeholder="Any additional context"
+      />
+    </Stack>
   );
 }

@@ -75,6 +75,22 @@ export const downloadRecRFIDocument = (prId: number, doc: Document) =>
     doc.filename,
   );
 
+// Adds (requires) a single approval card to the recommendation without touching
+// the others. Returns the refreshed purchase request.
+export const requestRecApproval = (prId: number, type: RecApprovalType) =>
+  apiFetch<PurchaseRequest>(
+    `/api/v1/purchase-requests/${prId}/recommendation/approvals/${type}/request`,
+    { method: "POST" },
+  );
+
+// Removes a single approval card from the recommendation. Returns the refreshed
+// purchase request.
+export const removeRecApproval = (prId: number, type: RecApprovalType) =>
+  apiFetch<PurchaseRequest>(
+    `/api/v1/purchase-requests/${prId}/recommendation/approvals/${type}`,
+    { method: "DELETE" },
+  );
+
 export const setRecApproval = (prId: number, type: RecApprovalType, approved: boolean) =>
   apiFetch<PurchaseRequest>(`/api/v1/purchase-requests/${prId}/recommendation/approvals/${type}`, {
     method: "POST",
@@ -109,11 +125,60 @@ export const remindBudgetApprovers = (prId: number) =>
     { method: "POST" },
   );
 
-export const addRecComment = (prId: number, approvalType: RecApprovalType, comment: string) =>
+// budgetStepId attaches a budget-card comment to a specific step (the approval
+// type must be "budget"); omit it for legal/security card comments.
+export const addRecComment = (
+  prId: number,
+  approvalType: RecApprovalType,
+  comment: string,
+  budgetStepId?: number,
+) =>
   apiFetch<RecComment>(`/api/v1/purchase-requests/${prId}/recommendation/comments`, {
     method: "POST",
-    body: { approval_type: approvalType, comment },
+    body: { approval_type: approvalType, comment, budget_step_id: budgetStepId ?? null },
   });
+
+// --- Budget approval chain (serial steps on the budget card) ---
+
+export const addBudgetStep = (prId: number, approverName: string, approverEmail: string) =>
+  apiFetch<PurchaseRequest>(`/api/v1/purchase-requests/${prId}/recommendation/budget-steps`, {
+    method: "POST",
+    body: { approver_name: approverName, approver_email: approverEmail },
+  });
+
+export const updateBudgetStep = (
+  prId: number,
+  stepId: number,
+  approverName: string,
+  approverEmail: string,
+) =>
+  apiFetch<PurchaseRequest>(
+    `/api/v1/purchase-requests/${prId}/recommendation/budget-steps/${stepId}`,
+    { method: "PUT", body: { approver_name: approverName, approver_email: approverEmail } },
+  );
+
+export const deleteBudgetStep = (prId: number, stepId: number) =>
+  apiFetch<PurchaseRequest>(
+    `/api/v1/purchase-requests/${prId}/recommendation/budget-steps/${stepId}`,
+    { method: "DELETE" },
+  );
+
+// decision is one of "approve" | "reject" | "revert".
+export const setBudgetStepDecision = (
+  prId: number,
+  stepId: number,
+  decision: "approve" | "reject" | "revert",
+) =>
+  apiFetch<PurchaseRequest>(
+    `/api/v1/purchase-requests/${prId}/recommendation/budget-steps/${stepId}/decision`,
+    { method: "POST", body: { decision } },
+  );
+
+export const remindBudgetStep = (prId: number, stepId: number) =>
+  apiFetch<void>(
+    `/api/v1/purchase-requests/${prId}/recommendation/budget-steps/${stepId}/remind`,
+    { method: "POST" },
+  );
 
 export const uploadRecCommentDocument = (prId: number, commentId: number, file: File) => {
   const fd = new FormData();

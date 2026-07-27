@@ -1,6 +1,18 @@
 import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import {
+  Alert,
+  Box,
+  Button,
+  Card,
+  CardContent,
+  CircularProgress,
+  Link as MuiLink,
+  Stack,
+  Typography,
+} from "@wso2/oxygen-ui";
+import { FileText } from "@wso2/oxygen-ui-icons-react";
 import { useQuotation } from "../hooks/useQuotations";
 import { useProcurementAccess } from "../hooks/useProcurementAccess";
 import { EntityStatusBadge } from "../components/EntityStatusBadge";
@@ -114,149 +126,191 @@ export function QuotationDetailPage() {
     uploadPdfMutation.mutate(file);
   };
 
-  if (isLoading) return <p className="text-gray-500">Loading…</p>;
-  if (error || !q) return <p className="text-red-600">Failed to load quotation.</p>;
+  if (isLoading)
+    return (
+      <Box sx={{ maxWidth: 800, mx: "auto", p: { xs: 2, md: 4 } }}>
+        <CircularProgress size={24} />
+      </Box>
+    );
+  if (error || !q)
+    return (
+      <Box sx={{ maxWidth: 800, mx: "auto", p: { xs: 2, md: 4 } }}>
+        <Alert severity="error">Failed to load quotation.</Alert>
+      </Box>
+    );
 
   return (
-    <div className="mx-auto max-w-2xl">
-      <div className="mb-4 flex items-center gap-2 text-sm text-gray-500">
-        <Link to="/quotations" className="text-indigo-600">
+    <Box sx={{ maxWidth: 800, mx: "auto", p: { xs: 2, md: 4 } }}>
+      <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 2 }}>
+        <MuiLink component={Link} to="/quotations" variant="body2">
           Quotations
-        </Link>
-        <span>/</span>
-        <span>{quoRef(q.id)}</span>
-      </div>
+        </MuiLink>
+        <Typography variant="body2" color="text.secondary">
+          /
+        </Typography>
+        <Typography variant="body2" color="text.secondary">
+          {quoRef(q.id)}
+        </Typography>
+      </Stack>
 
       <ChainStepper prId={q.purchase_request_id} current={{ kind: "quotation", id: q.id }} />
 
-      <div className="mb-4 flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-semibold text-gray-900">
+      <Stack
+        direction="row"
+        justifyContent="space-between"
+        alignItems="flex-start"
+        sx={{ mb: 2 }}
+      >
+        <Box>
+          <Typography variant="h5" sx={{ fontWeight: 600 }}>
             {q.vendor?.name ?? `Vendor #${q.vendor_id}`}
-          </h1>
-          <div className="mt-1 flex items-center gap-2">
+          </Typography>
+          <Box sx={{ mt: 1 }}>
             <EntityStatusBadge status={q.status} />
-          </div>
-        </div>
+          </Box>
+        </Box>
         {procurement && !editing && (
-          <div className="flex gap-2">
-            <button
+          <Stack direction="row" spacing={1}>
+            <Button
+              variant="outlined"
+              color="inherit"
               onClick={() => {
                 setDraft(toInput(q));
                 setEditing(true);
               }}
-              className="rounded border px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
             >
               Edit
-            </button>
+            </Button>
             {q.status !== "selected" && (
-              <button
+              <Button
+                variant="outlined"
+                color="inherit"
                 onClick={() => selectMutation.mutate()}
                 disabled={selectMutation.isPending}
-                className="rounded border px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50"
               >
                 Select
-              </button>
+              </Button>
             )}
-          </div>
+          </Stack>
         )}
-      </div>
+      </Stack>
 
-      {actionError && <p className="mb-4 text-sm text-red-600">{actionError}</p>}
+      {actionError && (
+        <Alert severity="error" sx={{ mb: 2 }}>
+          {actionError}
+        </Alert>
+      )}
 
-      <div className="rounded border bg-white p-6">
-        {editing && draft ? (
-          <>
-            <QuotationFields value={draft} onChange={setDraft} />
-            <div className="mt-6 flex gap-2">
-              <button
-                onClick={() => saveMutation.mutate()}
-                disabled={saveMutation.isPending}
-                className="rounded bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
-              >
-                {saveMutation.isPending ? "Saving…" : "Save changes"}
-              </button>
-              <button
-                onClick={() => {
-                  setEditing(false);
-                  setActionError(null);
-                }}
-                className="rounded border px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
-              >
-                Cancel
-              </button>
-            </div>
-          </>
-        ) : (
-          <dl className="space-y-4 text-sm">
-            <Field label="Total">{formatMoney(q.total_amount, q.currency)}</Field>
-            <Field label="Valid until">{q.valid_until ?? "—"}</Field>
-            <Field label="Line items">
-              {q.items.length === 0 ? (
-                "—"
-              ) : (
-                <ul className="list-disc pl-5">
-                  {q.items.map((it) => (
-                    <li key={it.id}>
-                      {it.description} —{" "}
-                      <span className="text-gray-500">
-                        qty {it.quantity} × {formatMoney(it.unit_price, q.currency)}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </Field>
-            <Field label="Notes">
-              <span className="whitespace-pre-wrap">{q.notes || "—"}</span>
-            </Field>
-          </dl>
-        )}
-      </div>
+      <Card variant="outlined">
+        <CardContent>
+          {editing && draft ? (
+            <>
+              <QuotationFields value={draft} onChange={setDraft} />
+              <Stack direction="row" spacing={1} sx={{ mt: 3 }}>
+                <Button
+                  variant="contained"
+                  onClick={() => saveMutation.mutate()}
+                  disabled={saveMutation.isPending}
+                >
+                  {saveMutation.isPending ? "Saving…" : "Save changes"}
+                </Button>
+                <Button
+                  variant="outlined"
+                  color="inherit"
+                  onClick={() => {
+                    setEditing(false);
+                    setActionError(null);
+                  }}
+                >
+                  Cancel
+                </Button>
+              </Stack>
+            </>
+          ) : (
+            <Stack spacing={2}>
+              <Field label="Total">{formatMoney(q.total_amount, q.currency)}</Field>
+              <Field label="Valid until">{q.valid_until ?? "—"}</Field>
+              <Field label="Line items">
+                {q.items.length === 0 ? (
+                  "—"
+                ) : (
+                  <Box component="ul" sx={{ listStyle: "disc", pl: 2.5, m: 0 }}>
+                    {q.items.map((it) => (
+                      <li key={it.id}>
+                        {it.description} —{" "}
+                        <Box component="span" sx={{ color: "text.secondary" }}>
+                          qty {it.quantity} × {formatMoney(it.unit_price, q.currency)}
+                        </Box>
+                      </li>
+                    ))}
+                  </Box>
+                )}
+              </Field>
+              <Field label="Notes">
+                <Box component="span" sx={{ whiteSpace: "pre-wrap" }}>
+                  {q.notes || "—"}
+                </Box>
+              </Field>
+            </Stack>
+          )}
+        </CardContent>
+      </Card>
 
       <DirectParentCard prId={q.purchase_request_id} current={{ kind: "quotation", id: q.id }} />
 
-      <div className="mt-6 rounded border bg-white p-6">
-        <div className="mb-3 flex items-center justify-between">
-          <h2 className="font-medium text-gray-900">Quotation PDF</h2>
-          {procurement && (
-            <label className="cursor-pointer text-sm text-indigo-600">
-              {q.quotation_document ? "Replace" : "+ Add PDF"}
-              <input
-                type="file"
-                accept=".pdf"
-                className="hidden"
-                onChange={(e) => {
-                  onPickPdf(e.target.files?.[0] ?? null);
-                  e.target.value = "";
-                }}
-              />
-            </label>
+      <Card variant="outlined" sx={{ mt: 3 }}>
+        <CardContent>
+          <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1.5 }}>
+            <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
+              Quotation PDF
+            </Typography>
+            {procurement && (
+              <Button variant="text" component="label">
+                {q.quotation_document ? "Replace" : "+ Add PDF"}
+                <input
+                  type="file"
+                  accept=".pdf"
+                  hidden
+                  onChange={(e) => {
+                    onPickPdf(e.target.files?.[0] ?? null);
+                    e.target.value = "";
+                  }}
+                />
+              </Button>
+            )}
+          </Stack>
+          {q.quotation_document ? (
+            <Stack direction="row" justifyContent="space-between" alignItems="center">
+              <MuiLink
+                component="button"
+                type="button"
+                variant="body2"
+                onClick={() => downloadQuotationDocument(q.id, q.quotation_document!)}
+                sx={{ display: "inline-flex", alignItems: "center", gap: 0.5 }}
+              >
+                <FileText size={16} />
+                {q.quotation_document.filename}
+              </MuiLink>
+              <Stack direction="row" spacing={1.5} alignItems="center">
+                <Typography variant="caption" color="text.secondary">
+                  {(q.quotation_document.size_bytes / 1024).toFixed(0)} KB
+                </Typography>
+                {procurement && (
+                  <Button variant="text" color="error" size="small" onClick={() => deletePdfMutation.mutate()}>
+                    Remove
+                  </Button>
+                )}
+              </Stack>
+            </Stack>
+          ) : (
+            <Typography variant="body2" color="text.secondary">
+              No quotation PDF attached.
+            </Typography>
           )}
-        </div>
-        {q.quotation_document ? (
-          <div className="flex items-center justify-between text-sm">
-            <button
-              className="text-indigo-600 hover:underline"
-              onClick={() => downloadQuotationDocument(q.id, q.quotation_document!)}
-            >
-              📄 {q.quotation_document.filename}
-            </button>
-            <div className="flex items-center gap-3 text-gray-400">
-              <span>{(q.quotation_document.size_bytes / 1024).toFixed(0)} KB</span>
-              {procurement && (
-                <button className="hover:text-red-600" onClick={() => deletePdfMutation.mutate()}>
-                  Remove
-                </button>
-              )}
-            </div>
-          </div>
-        ) : (
-          <p className="text-sm text-gray-400">No quotation PDF attached.</p>
-        )}
-      </div>
+        </CardContent>
+      </Card>
 
-      <div className="mt-6">
+      <Box sx={{ mt: 3 }}>
         <DocumentList
           documents={q.documents ?? []}
           canEdit={procurement}
@@ -266,18 +320,22 @@ export function QuotationDetailPage() {
           onDownload={(doc: Document) => downloadQuotationDocument(q.id, doc)}
           onError={setActionError}
         />
-      </div>
+      </Box>
 
       <RelatedDocuments prId={q.purchase_request_id} current={{ kind: "quotation", id: q.id }} />
-    </div>
+    </Box>
   );
 }
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div>
-      <dt className="font-medium text-gray-500">{label}</dt>
-      <dd className="mt-0.5 text-gray-900">{children}</dd>
-    </div>
+    <Box>
+      <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600 }}>
+        {label}
+      </Typography>
+      <Typography variant="body2" component="div">
+        {children}
+      </Typography>
+    </Box>
   );
 }

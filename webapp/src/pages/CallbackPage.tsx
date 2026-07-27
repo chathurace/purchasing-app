@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
+import { Box, Link as MuiLink, Typography } from "@wso2/oxygen-ui";
 import { userManager } from "../auth/userManager";
 
 export function CallbackPage() {
@@ -12,19 +13,23 @@ export function CallbackPage() {
     handled.current = true;
     userManager
       .signinRedirectCallback()
-      .then(() => navigate("/requests", { replace: true }))
+      .then(() => navigate("/", { replace: true }))
       .catch((e) => setError(e instanceof Error ? e.message : "Sign-in failed"));
   }, [navigate]);
 
   if (error) {
     return (
-      <div className="p-8">
-        <p className="text-red-600">Sign-in failed: {error}</p>
-        <a className="text-indigo-600 underline" href="/login">
+      <Box sx={{ p: 4 }}>
+        <Typography color="error">Sign-in failed: {error}</Typography>
+        <MuiLink component={Link} to="/login">
           Back to login
-        </a>
-      </div>
+        </MuiLink>
+      </Box>
     );
   }
-  return <div className="p-8 text-gray-500">Signing you in…</div>;
+  return (
+    <Box sx={{ p: 4 }}>
+      <Typography color="text.secondary">Signing you in…</Typography>
+    </Box>
+  );
 }

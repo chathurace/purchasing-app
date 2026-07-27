@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { Button, Dialog, DialogActions, DialogContent, DialogTitle } from "@wso2/oxygen-ui";
 
 interface Props {
   title: string;
@@ -11,52 +11,33 @@ interface Props {
   onCancel: () => void;
 }
 
-// ConfirmDialog is a small modal that asks the user to confirm an action. It
-// renders a full-screen overlay with a centered panel; clicking the backdrop or
-// pressing Escape cancels. The app's first reusable modal — keep it minimal.
+// ConfirmDialog is a small modal that asks the user to confirm an action.
+// Clicking the backdrop or pressing Escape cancels (unless busy). The app's
+// shared confirm modal, now built on the Oxygen/MUI Dialog.
 export function ConfirmDialog({ title, message, confirmLabel, danger, busy, onConfirm, onCancel }: Props) {
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !busy) onCancel();
-    };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [busy, onCancel]);
-
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
-      role="dialog"
-      aria-modal="true"
-      onClick={() => !busy && onCancel()}
+    <Dialog
+      open
+      onClose={() => !busy && onCancel()}
+      aria-labelledby="confirm-dialog-title"
+      maxWidth="xs"
+      fullWidth
     >
-      <div
-        className="w-full max-w-md rounded-lg bg-white p-6 shadow-xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <h3 className="text-base font-semibold text-gray-900">{title}</h3>
-        <div className="mt-2 text-sm text-gray-600">{message}</div>
-        <div className="mt-6 flex justify-end gap-2">
-          <button
-            type="button"
-            className="rounded border px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50"
-            onClick={onCancel}
-            disabled={busy}
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            className={`rounded px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50 ${
-              danger ? "bg-red-600 hover:bg-red-700" : "bg-indigo-600 hover:bg-indigo-700"
-            }`}
-            onClick={onConfirm}
-            disabled={busy}
-          >
-            {busy ? "Working…" : confirmLabel}
-          </button>
-        </div>
-      </div>
-    </div>
+      <DialogTitle id="confirm-dialog-title">{title}</DialogTitle>
+      <DialogContent sx={{ color: "text.secondary" }}>{message}</DialogContent>
+      <DialogActions sx={{ px: 3, pb: 2 }}>
+        <Button variant="text" color="inherit" onClick={onCancel} disabled={busy}>
+          Cancel
+        </Button>
+        <Button
+          variant="contained"
+          color={danger ? "error" : "primary"}
+          onClick={onConfirm}
+          disabled={busy}
+        >
+          {busy ? "Working…" : confirmLabel}
+        </Button>
+      </DialogActions>
+    </Dialog>
   );
 }

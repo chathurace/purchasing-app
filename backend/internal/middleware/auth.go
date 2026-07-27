@@ -276,11 +276,11 @@ func HasTeamAdmin(ctx context.Context) bool {
 	return HasRole(ctx, model.RoleProcurementAdmin) || HasRole(ctx, model.RoleAdmin)
 }
 
-// HasBudgetUnitAdmin reports whether the caller may manage master data —
-// budget units (create, edit, deactivate) and the requisition-form config
+// HasBusinessUnitAdmin reports whether the caller may manage master data —
+// business units (create, edit, deactivate) and the requisition-form config
 // options — from their dedicated admin pages. Only procurement_admin and admin
-// qualify; the active-budget-unit lookup used to populate a purchase request's
+// qualify; the active-business-unit lookup used to populate a purchase request's
 // dropdown is open to any authenticated user.
-func HasBudgetUnitAdmin(ctx context.Context) bool {
+func HasBusinessUnitAdmin(ctx context.Context) bool {
 	return HasRole(ctx, model.RoleProcurementAdmin) || HasRole(ctx, model.RoleAdmin)
 }

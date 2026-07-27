@@ -1,4 +1,5 @@
 import { useId } from "react";
+import { TextField } from "@wso2/oxygen-ui";
 import { REQ_CURRENCIES } from "../types/api";
 
 interface Props {
@@ -28,13 +29,13 @@ export function CurrencyInput({
   const listId = useId();
   return (
     <>
-      <input
-        list={listId}
+      <TextField
+        size="small"
         className={className}
         value={value}
-        maxLength={maxLength}
-        onChange={(e) => onChange(e.target.value.toUpperCase())}
         placeholder={placeholder}
+        onChange={(e) => onChange(e.target.value.toUpperCase())}
+        inputProps={{ list: listId, maxLength }}
       />
       <datalist id={listId}>
         {options.map((c) => (

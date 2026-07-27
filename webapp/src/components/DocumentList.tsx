@@ -1,4 +1,6 @@
 import { useRef } from "react";
+import { Box, Button, Card, CardContent, Divider, Link as MuiLink, Stack, Typography } from "@wso2/oxygen-ui";
+import { Plus } from "@wso2/oxygen-ui-icons-react";
 import type { Document } from "../types/api";
 
 interface Props {
@@ -47,43 +49,60 @@ export function DocumentList({
   };
 
   return (
-    <div className="rounded border bg-white p-6">
-      <div className="mb-3 flex items-center justify-between">
-        <h2 className="font-medium text-gray-900">{title}</h2>
-        {canEdit && (
-          <label className="cursor-pointer text-sm text-indigo-600">
-            + Add document
-            <input
-              ref={fileRef}
-              type="file"
-              accept={accept}
-              className="hidden"
-              onChange={(e) => onPick(e.target.files?.[0] ?? null)}
-            />
-          </label>
+    <Card variant="outlined">
+      <CardContent>
+        <Box sx={{ mb: 1.5, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <Typography variant="h6" sx={{ fontWeight: 600 }}>
+            {title}
+          </Typography>
+          {canEdit && (
+            <Button component="label" variant="text" size="small" startIcon={<Plus size={16} />}>
+              Add document
+              <input
+                ref={fileRef}
+                type="file"
+                accept={accept}
+                hidden
+                onChange={(e) => onPick(e.target.files?.[0] ?? null)}
+              />
+            </Button>
+          )}
+        </Box>
+        {documents.length === 0 ? (
+          <Typography variant="body2" color="text.secondary">
+            No documents attached.
+          </Typography>
+        ) : (
+          <Stack divider={<Divider />}>
+            {documents.map((doc) => (
+              <Box
+                key={doc.id}
+                sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", py: 1 }}
+              >
+                <MuiLink
+                  component="button"
+                  type="button"
+                  variant="body2"
+                  onClick={() => onDownload(doc)}
+                  sx={{ textAlign: "left" }}
+                >
+                  {doc.filename}
+                </MuiLink>
+                <Stack direction="row" spacing={1.5} alignItems="center">
+                  <Typography variant="caption" color="text.secondary">
+                    {(doc.size_bytes / 1024).toFixed(0)} KB
+                  </Typography>
+                  {canEdit && (
+                    <Button variant="text" size="small" color="error" onClick={() => onDelete(doc.id)}>
+                      Remove
+                    </Button>
+                  )}
+                </Stack>
+              </Box>
+            ))}
+          </Stack>
         )}
-      </div>
-      {documents.length === 0 ? (
-        <p className="text-sm text-gray-400">No documents attached.</p>
-      ) : (
-        <ul className="divide-y">
-          {documents.map((doc) => (
-            <li key={doc.id} className="flex items-center justify-between py-2 text-sm">
-              <button className="text-indigo-600 hover:underline" onClick={() => onDownload(doc)}>
-                {doc.filename}
-              </button>
-              <div className="flex items-center gap-3 text-gray-400">
-                <span>{(doc.size_bytes / 1024).toFixed(0)} KB</span>
-                {canEdit && (
-                  <button className="hover:text-red-600" onClick={() => onDelete(doc.id)}>
-                    Remove
-                  </button>
-                )}
-              </div>
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
+      </CardContent>
+    </Card>
   );
 }

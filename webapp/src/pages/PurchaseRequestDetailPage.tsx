@@ -1,8 +1,29 @@
 import { useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import {
+  Alert,
+  Box,
+  Button,
+  Card,
+  CardContent,
+  Chip,
+  CircularProgress,
+  Divider,
+  Link as MuiLink,
+  Stack,
+  TextField,
+  Typography,
+} from "@wso2/oxygen-ui";
+import {
+  ChevronDown,
+  ChevronRight,
+  FileText,
+  Paperclip,
+  Plus,
+} from "@wso2/oxygen-ui-icons-react";
 import { usePurchaseRequest } from "../hooks/usePurchaseRequests";
-import { useBudgetUnitLookup, useBudgetUnitApprovers } from "../hooks/useBudgetUnits";
+import { useBusinessUnitLookup } from "../hooks/useBusinessUnits";
 import { useMe } from "../hooks/useMe";
 import { useProcurementAccess } from "../hooks/useProcurementAccess";
 import { useQuotationsForPR, useQuotation } from "../hooks/useQuotations";
@@ -31,7 +52,6 @@ import { ApiError } from "../api/client";
 import { EDITABLE_STATUSES, formatMoney, prReference, quoRef } from "../types/api";
 import type {
   Document,
-  Me,
   PurchaseRequest,
   PurchaseRequestInput,
   Quotation,
@@ -40,7 +60,7 @@ import type {
 function toInput(pr: PurchaseRequest): PurchaseRequestInput {
   return {
     title: pr.title,
-    budget_unit_id: pr.budget_unit_id,
+    business_unit_id: pr.business_unit_id,
     comments: pr.comments,
     items: [],
     links: [],
@@ -112,8 +132,18 @@ export function PurchaseRequestDetailPage() {
     onError: (e) => setActionError(e instanceof ApiError ? e.message : "Delete failed"),
   });
 
-  if (isLoading) return <p className="text-gray-500">Loading…</p>;
-  if (error || !pr) return <p className="text-red-600">Failed to load request.</p>;
+  if (isLoading)
+    return (
+      <Box sx={{ maxWidth: 900, mx: "auto", p: { xs: 2, md: 4 } }}>
+        <CircularProgress size={24} />
+      </Box>
+    );
+  if (error || !pr)
+    return (
+      <Box sx={{ maxWidth: 900, mx: "auto", p: { xs: 2, md: 4 } }}>
+        <Alert severity="error">Failed to load request.</Alert>
+      </Box>
+    );
 
   const onPickFile = (file: File | null) => {
     if (!file) return;
@@ -127,51 +157,66 @@ export function PurchaseRequestDetailPage() {
   };
 
   return (
-    <div className="mx-auto max-w-3xl">
-      <div className="mb-4 flex items-center gap-2 text-sm text-slate-400">
-        <Link to="/requests" className="text-indigo-600 hover:underline">
-          Requests
-        </Link>
-        <span>/</span>
-        <span className="text-slate-500">{prReference(pr)}</span>
-      </div>
+    <Box sx={{ maxWidth: 900, mx: "auto", p: { xs: 2, md: 4 } }}>
+      <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 2 }}>
+        <MuiLink component={Link} to={procurement ? "/requests" : "/my-requests"} variant="body2">
+          {procurement ? "Purchase requests" : "My requests"}
+        </MuiLink>
+        <Typography variant="body2" color="text.secondary">
+          /
+        </Typography>
+        <Typography variant="body2" color="text.secondary">
+          {prReference(pr)}
+        </Typography>
+      </Stack>
 
       <ChainStepper prId={pr.id} current={{ kind: "pr", id: pr.id }} />
 
-      <div className="mb-4 flex items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight text-slate-900">
+      <Stack
+        direction="row"
+        justifyContent="space-between"
+        alignItems="flex-start"
+        gap={2}
+        sx={{ mb: 2 }}
+      >
+        <Box>
+          <Typography variant="h5" sx={{ fontWeight: 600 }}>
             {pr.title || prReference(pr)}
-          </h1>
-          <div className="mt-2">
+          </Typography>
+          <Box sx={{ mt: 1 }}>
             <StatusBadge status={pr.status} />
-          </div>
-        </div>
+          </Box>
+        </Box>
         {canEdit &&
           (editing ? (
-            <button
+            <Button
+              variant="outlined"
+              color="inherit"
               onClick={() => {
                 setEditing(false);
                 setActionError(null);
               }}
-              className="btn-secondary"
             >
               Cancel editing
-            </button>
+            </Button>
           ) : (
-            <button onClick={startEditing} className="btn-secondary">
+            <Button variant="outlined" color="inherit" onClick={startEditing}>
               Edit details
-            </button>
+            </Button>
           ))}
-      </div>
+      </Stack>
 
       {!canEdit && (
-        <p className="mb-4 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600">
+        <Alert severity="info" sx={{ mb: 2 }}>
           This request is read-only in its current state.
-        </p>
+        </Alert>
       )}
 
-      {actionError && !editing && <p className="mb-4 text-sm text-red-600">{actionError}</p>}
+      {actionError && !editing && (
+        <Alert severity="error" sx={{ mb: 2 }}>
+          {actionError}
+        </Alert>
+      )}
 
       {editing && draft ? (
         <RequisitionForm
@@ -183,44 +228,52 @@ export function PurchaseRequestDetailPage() {
           error={actionError}
         />
       ) : (
-        <div className="app-card p-6">
-          <ReadOnlyView pr={pr} />
-        </div>
+        <Card variant="outlined">
+          <CardContent>
+            <ReadOnlyView pr={pr} />
+          </CardContent>
+        </Card>
       )}
 
       {/* Documents */}
-      <div className="app-card mt-6 p-6">
-        <div className="mb-3 flex items-center justify-between">
-          <h2 className="font-semibold text-slate-900">Documents</h2>
-          {canEdit && (
-            <label className="cursor-pointer text-sm font-medium text-indigo-600 hover:text-indigo-700">
-              + Add document
-              <input
-                ref={fileRef}
-                type="file"
-                accept=".pdf,.docx"
-                className="hidden"
-                onChange={(e) => onPickFile(e.target.files?.[0] ?? null)}
-              />
-            </label>
+      <Card variant="outlined" sx={{ mt: 3 }}>
+        <CardContent>
+          <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1.5 }}>
+            <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
+              Documents
+            </Typography>
+            {canEdit && (
+              <Button variant="text" component="label" startIcon={<Plus size={16} />}>
+                Add document
+                <input
+                  ref={fileRef}
+                  type="file"
+                  accept=".pdf,.docx"
+                  hidden
+                  onChange={(e) => onPickFile(e.target.files?.[0] ?? null)}
+                />
+              </Button>
+            )}
+          </Stack>
+          {pr.documents.length === 0 ? (
+            <Typography variant="body2" color="text.secondary">
+              No documents attached.
+            </Typography>
+          ) : (
+            <Stack divider={<Divider />}>
+              {pr.documents.map((doc) => (
+                <DocumentRow
+                  key={doc.id}
+                  prId={pr.id}
+                  doc={doc}
+                  canEdit={canEdit}
+                  onDelete={() => deleteMutation.mutate(doc.id)}
+                />
+              ))}
+            </Stack>
           )}
-        </div>
-        {pr.documents.length === 0 ? (
-          <p className="text-sm text-gray-400">No documents attached.</p>
-        ) : (
-          <ul className="divide-y">
-            {pr.documents.map((doc) => (
-              <DocumentRow
-                key={doc.id}
-                prId={pr.id}
-                doc={doc}
-                canEdit={canEdit}
-                onDelete={() => deleteMutation.mutate(doc.id)}
-              />
-            ))}
-          </ul>
-        )}
-      </div>
+        </CardContent>
+      </Card>
 
       <TeamLeadApprovalCard pr={pr} me={me} />
 
@@ -231,7 +284,7 @@ export function PurchaseRequestDetailPage() {
       <RecommendationSection pr={pr} />
 
       <RelatedDocuments prId={pr.id} current={{ kind: "pr", id: pr.id }} />
-    </div>
+    </Box>
   );
 }
 
@@ -242,29 +295,49 @@ export function PurchaseRequestDetailPage() {
 function QuotationRow({ q }: { q: Quotation }) {
   const [open, setOpen] = useState(false);
   return (
-    <li className="py-2 text-sm">
-      <div className="flex items-start justify-between gap-3">
-        <button
+    <Box component="li" sx={{ py: 1, listStyle: "none" }}>
+      <Stack direction="row" justifyContent="space-between" alignItems="flex-start" gap={1.5}>
+        <Box
+          component="button"
           type="button"
           onClick={() => setOpen((v) => !v)}
-          className="flex min-w-0 items-start gap-2 text-left"
           aria-expanded={open}
+          sx={{
+            display: "flex",
+            minWidth: 0,
+            alignItems: "flex-start",
+            gap: 1,
+            textAlign: "left",
+            border: 0,
+            background: "none",
+            p: 0,
+            cursor: "pointer",
+            color: "inherit",
+          }}
         >
-          <span className="mt-0.5 select-none text-gray-400">{open ? "▾" : "▸"}</span>
-          <span className="min-w-0">
-            <span className="font-medium text-indigo-600">
+          <Box component="span" sx={{ mt: 0.25, color: "text.secondary", flexShrink: 0 }}>
+            {open ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+          </Box>
+          <Box sx={{ minWidth: 0 }}>
+            <Typography variant="body2" color="primary.main" sx={{ fontWeight: 600 }}>
               {quoRef(q.id)} — {q.vendor?.name ?? `Vendor #${q.vendor_id}`}
-            </span>
-            {q.notes && <span className="mt-0.5 block truncate text-gray-500">{q.notes}</span>}
-            {q.total_amount > 0 && (
-              <span className="mt-0.5 block text-gray-400">{formatMoney(q.total_amount, q.currency)}</span>
+            </Typography>
+            {q.notes && (
+              <Typography variant="body2" color="text.secondary" noWrap>
+                {q.notes}
+              </Typography>
             )}
-          </span>
-        </button>
+            {q.total_amount > 0 && (
+              <Typography variant="caption" color="text.secondary" sx={{ display: "block" }}>
+                {formatMoney(q.total_amount, q.currency)}
+              </Typography>
+            )}
+          </Box>
+        </Box>
         <EntityStatusBadge status={q.status} />
-      </div>
+      </Stack>
       {open && <QuotationExpanded quotationId={q.id} />}
-    </li>
+    </Box>
   );
 }
 
@@ -274,72 +347,114 @@ function QuotationRow({ q }: { q: Quotation }) {
 function QuotationExpanded({ quotationId }: { quotationId: number }) {
   const { data: q, isLoading } = useQuotation(quotationId);
   if (isLoading || !q) {
-    return <p className="ml-6 mt-2 text-xs text-gray-400">Loading…</p>;
+    return (
+      <Typography variant="caption" color="text.secondary" sx={{ ml: 3, mt: 1, display: "block" }}>
+        Loading…
+      </Typography>
+    );
   }
   const others = q.documents ?? [];
   return (
-    <div className="ml-6 mt-2 space-y-3 rounded-md border bg-gray-50 p-3 text-xs">
-      <dl className="grid grid-cols-2 gap-x-4 gap-y-1">
-        <div>
-          <dt className="font-medium text-gray-500">Total</dt>
-          <dd className="text-gray-900">{formatMoney(q.total_amount, q.currency)}</dd>
-        </div>
-        <div>
-          <dt className="font-medium text-gray-500">Valid until</dt>
-          <dd className="text-gray-900">{q.valid_until ?? "—"}</dd>
-        </div>
-      </dl>
+    <Box
+      sx={{
+        ml: 3,
+        mt: 1,
+        p: 1.5,
+        border: 1,
+        borderColor: "divider",
+        borderRadius: 2,
+        bgcolor: "background.default",
+      }}
+    >
+      <Stack spacing={1.5}>
+        <Box
+          sx={{
+            display: "grid",
+            gridTemplateColumns: "1fr 1fr",
+            columnGap: 2,
+            rowGap: 0.5,
+          }}
+        >
+          <Box>
+            <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600 }}>
+              Total
+            </Typography>
+            <Typography variant="body2">{formatMoney(q.total_amount, q.currency)}</Typography>
+          </Box>
+          <Box>
+            <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600 }}>
+              Valid until
+            </Typography>
+            <Typography variant="body2">{q.valid_until ?? "—"}</Typography>
+          </Box>
+        </Box>
 
-      {q.notes && <p className="whitespace-pre-wrap text-gray-600">{q.notes}</p>}
-
-      {q.items.length > 0 && (
-        <ul className="list-disc pl-4 text-gray-600">
-          {q.items.map((it) => (
-            <li key={it.id}>
-              {it.description} — qty {it.quantity} × {formatMoney(it.unit_price, q.currency)}
-            </li>
-          ))}
-        </ul>
-      )}
-
-      <div>
-        <p className="font-medium text-gray-500">Quotation PDF</p>
-        {q.quotation_document ? (
-          <button
-            type="button"
-            onClick={() => downloadQuotationDocument(q.id, q.quotation_document!)}
-            className="text-indigo-600 hover:underline"
-          >
-            📄 {q.quotation_document.filename}
-          </button>
-        ) : (
-          <p className="text-gray-400">None attached.</p>
+        {q.notes && (
+          <Typography variant="body2" color="text.secondary" sx={{ whiteSpace: "pre-wrap" }}>
+            {q.notes}
+          </Typography>
         )}
-      </div>
 
-      {others.length > 0 && (
-        <div>
-          <p className="font-medium text-gray-500">Other documents</p>
-          <ul className="space-y-0.5">
-            {others.map((doc) => (
-              <li key={doc.id}>
-                <button
-                  type="button"
-                  onClick={() => downloadQuotationDocument(q.id, doc)}
-                  className="text-indigo-600 hover:underline"
-                >
-                  📎 {doc.filename}
-                </button>
-              </li>
+        {q.items.length > 0 && (
+          <Box component="ul" sx={{ listStyle: "disc", pl: 2, m: 0, color: "text.secondary" }}>
+            {q.items.map((it) => (
+              <Typography component="li" variant="body2" key={it.id}>
+                {it.description} — qty {it.quantity} × {formatMoney(it.unit_price, q.currency)}
+              </Typography>
             ))}
-          </ul>
-        </div>
-      )}
+          </Box>
+        )}
 
-      <Link to={`/quotations/${q.id}`} className="inline-block text-indigo-600 hover:underline">
-        Open quotation →
-      </Link>
-    </div>
+        <Box>
+          <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600, display: "block" }}>
+            Quotation PDF
+          </Typography>
+          {q.quotation_document ? (
+            <MuiLink
+              component="button"
+              type="button"
+              variant="body2"
+              onClick={() => downloadQuotationDocument(q.id, q.quotation_document!)}
+              sx={{ display: "inline-flex", alignItems: "center", gap: 0.5 }}
+            >
+              <FileText size={14} />
+              {q.quotation_document.filename}
+            </MuiLink>
+          ) : (
+            <Typography variant="body2" color="text.secondary">
+              None attached.
+            </Typography>
+          )}
+        </Box>
+
+        {others.length > 0 && (
+          <Box>
+            <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600, display: "block" }}>
+              Other documents
+            </Typography>
+            <Stack spacing={0.25}>
+              {others.map((doc) => (
+                <MuiLink
+                  key={doc.id}
+                  component="button"
+                  type="button"
+                  variant="body2"
+                  onClick={() => downloadQuotationDocument(q.id, doc)}
+                  sx={{ display: "inline-flex", alignItems: "center", gap: 0.5, alignSelf: "flex-start" }}
+                >
+                  <Paperclip size={14} />
+                  {doc.filename}
+                </MuiLink>
+              ))}
+            </Stack>
+          </Box>
+        )}
+
+        <MuiLink component={Link} to={`/quotations/${q.id}`} variant="body2" sx={{ alignSelf: "flex-start" }}>
+          Open quotation →
+        </MuiLink>
+      </Stack>
+    </Box>
   );
 }
 
@@ -405,8 +520,6 @@ function ProcurementSection({ pr }: { pr: PurchaseRequest }) {
     onError: (e) => setError(e instanceof ApiError ? e.message : "Failed to reject request"),
   });
 
-  const inputCls = "w-full rounded border px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none";
-
   const onPickFile = (f: File | null) => {
     if (!f) {
       setFile(null);
@@ -422,103 +535,160 @@ function ProcurementSection({ pr }: { pr: PurchaseRequest }) {
   };
 
   return (
-    <div className="app-card mt-6 p-6">
-      <div className="mb-3 flex items-center justify-between">
-        <h2 className="font-semibold text-slate-900">Quotations</h2>
-        {!closed && !showReject && (
-          <button
-            onClick={() => setShowReject(true)}
-            className="text-sm text-red-600 hover:underline"
-          >
-            Reject request
-          </button>
+    <Card variant="outlined" sx={{ mt: 3 }}>
+      <CardContent>
+        <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1.5 }}>
+          <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
+            Quotations
+          </Typography>
+          {!closed && !showReject && (
+            <Button variant="text" color="error" size="small" onClick={() => setShowReject(true)}>
+              Reject request
+            </Button>
+          )}
+        </Stack>
+
+        {error && (
+          <Alert severity="error" sx={{ mb: 1.5 }}>
+            {error}
+          </Alert>
         )}
-      </div>
 
-      {error && <p className="mb-3 text-sm text-red-600">{error}</p>}
-
-      {showReject && (
-        <div className="mb-4 space-y-2 rounded border border-red-200 bg-red-50 p-3">
-          <label className="block text-sm font-medium text-gray-700">Rejection comment</label>
-          <textarea
-            className={inputCls}
-            rows={2}
-            value={rejectComment}
-            onChange={(e) => setRejectComment(e.target.value)}
-            placeholder="Why is this request being rejected?"
-          />
-          <div className="flex gap-2">
-            <button
-              disabled={rejectMutation.isPending || rejectComment.trim() === ""}
-              onClick={() => rejectMutation.mutate()}
-              className="rounded bg-red-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
-            >
-              {rejectMutation.isPending ? "Rejecting…" : "Confirm rejection"}
-            </button>
-            <button
-              onClick={() => {
-                setShowReject(false);
-                setError(null);
-              }}
-              className="rounded border px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50"
-            >
-              Cancel
-            </button>
-          </div>
-        </div>
-      )}
-
-      {quotations && quotations.length > 0 ? (
-        <ul className="divide-y">
-          {quotations.map((q) => (
-            <QuotationRow key={q.id} q={q} />
-          ))}
-        </ul>
-      ) : (
-        <p className="text-sm text-gray-400">No quotations yet.</p>
-      )}
-
-      {!closed && (
-        <div className="mt-6 space-y-3 rounded-lg border-2 border-indigo-300 bg-indigo-50/60 p-5 shadow-sm ring-1 ring-indigo-100">
-          <div className="flex items-center gap-2">
-            <span className="flex h-7 w-7 items-center justify-center rounded-full bg-indigo-600 text-sm font-bold text-white">
-              +
-            </span>
-            <div>
-              <h3 className="text-base font-semibold text-indigo-900">Add a quotation</h3>
-              <p className="text-xs text-indigo-700/80">
-                Record a vendor's quote against this request and attach its PDF.
-              </p>
-            </div>
-          </div>
-          <VendorSelect value={vendorId} onChange={setVendorId} />
-          <textarea
-            className={`${inputCls} bg-white`}
-            rows={2}
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            placeholder="Description (optional)"
-          />
-          <div>
-            <label className="mb-1 block text-sm font-medium text-gray-700">Quotation PDF (optional)</label>
-            <input
-              ref={fileRef}
-              type="file"
-              accept=".pdf"
-              className="text-sm"
-              onChange={(e) => onPickFile(e.target.files?.[0] ?? null)}
-            />
-          </div>
-          <button
-            disabled={createMutation.isPending || !vendorId}
-            onClick={() => createMutation.mutate()}
-            className="w-full rounded-md bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-700 disabled:opacity-50"
+        {showReject && (
+          <Box
+            sx={{
+              mb: 2,
+              p: 2,
+              border: 1,
+              borderColor: "error.main",
+              borderRadius: 2,
+              bgcolor: "action.hover",
+            }}
           >
-            {createMutation.isPending ? "Adding…" : "Add quotation"}
-          </button>
-        </div>
-      )}
-    </div>
+            <Stack spacing={1.5}>
+              <TextField
+                label="Rejection comment"
+                size="small"
+                fullWidth
+                multiline
+                minRows={2}
+                value={rejectComment}
+                onChange={(e) => setRejectComment(e.target.value)}
+                placeholder="Why is this request being rejected?"
+              />
+              <Stack direction="row" spacing={1}>
+                <Button
+                  variant="contained"
+                  color="error"
+                  size="small"
+                  disabled={rejectMutation.isPending || rejectComment.trim() === ""}
+                  onClick={() => rejectMutation.mutate()}
+                >
+                  {rejectMutation.isPending ? "Rejecting…" : "Confirm rejection"}
+                </Button>
+                <Button
+                  variant="outlined"
+                  color="inherit"
+                  size="small"
+                  onClick={() => {
+                    setShowReject(false);
+                    setError(null);
+                  }}
+                >
+                  Cancel
+                </Button>
+              </Stack>
+            </Stack>
+          </Box>
+        )}
+
+        {quotations && quotations.length > 0 ? (
+          <Stack component="ul" divider={<Divider />} sx={{ listStyle: "none", p: 0, m: 0 }}>
+            {quotations.map((q) => (
+              <QuotationRow key={q.id} q={q} />
+            ))}
+          </Stack>
+        ) : (
+          <Typography variant="body2" color="text.secondary">
+            No quotations yet.
+          </Typography>
+        )}
+
+        {!closed && (
+          <Box
+            sx={{
+              mt: 3,
+              p: 2.5,
+              border: 1,
+              borderColor: "primary.main",
+              borderRadius: 2,
+              bgcolor: "action.hover",
+            }}
+          >
+            <Stack spacing={1.5}>
+              <Stack direction="row" spacing={1} alignItems="center">
+                <Box
+                  sx={{
+                    width: 28,
+                    height: 28,
+                    borderRadius: "50%",
+                    bgcolor: "primary.main",
+                    color: "primary.contrastText",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    flexShrink: 0,
+                  }}
+                >
+                  <Plus size={16} />
+                </Box>
+                <Box>
+                  <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
+                    Add a quotation
+                  </Typography>
+                  <Typography variant="caption" color="text.secondary">
+                    Record a vendor's quote against this request and attach its PDF.
+                  </Typography>
+                </Box>
+              </Stack>
+              <VendorSelect value={vendorId} onChange={setVendorId} />
+              <TextField
+                size="small"
+                fullWidth
+                multiline
+                minRows={2}
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                placeholder="Description (optional)"
+              />
+              <Box>
+                <Typography variant="body2" sx={{ fontWeight: 500, mb: 0.5 }}>
+                  Quotation PDF (optional)
+                </Typography>
+                <Button variant="outlined" color="inherit" size="small" component="label">
+                  {file ? file.name : "Choose PDF"}
+                  <input
+                    ref={fileRef}
+                    type="file"
+                    accept=".pdf"
+                    hidden
+                    onChange={(e) => onPickFile(e.target.files?.[0] ?? null)}
+                  />
+                </Button>
+              </Box>
+              <Button
+                variant="contained"
+                fullWidth
+                disabled={createMutation.isPending || !vendorId}
+                onClick={() => createMutation.mutate()}
+              >
+                {createMutation.isPending ? "Adding…" : "Add quotation"}
+              </Button>
+            </Stack>
+          </Box>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
@@ -528,50 +698,50 @@ function yesNo(v?: string): string {
 
 function ReadOnlyView({ pr }: { pr: PurchaseRequest }) {
   const d = pr.details ?? {};
-  const { data: budgetUnits } = useBudgetUnitLookup();
-  const bu = (budgetUnits ?? []).find((c) => c.id === pr.budget_unit_id);
-  const buLabel = bu
-    ? bu.code
-      ? `${bu.code} — ${bu.name}`
-      : bu.name
-    : pr.budget_unit_id
-      ? `#${pr.budget_unit_id}`
-      : "";
-  const { data: budgetApprovers } = useBudgetUnitApprovers(
-    pr.budget_unit_id,
-    pr.estimated_value > 0 ? pr.estimated_value : null,
-    pr.currency,
-  );
-  const approverText = (budgetApprovers ?? []).map((u) => u.name || u.email).join(", ");
+  const { data: businessUnits } = useBusinessUnitLookup();
+  const bu = (businessUnits ?? []).find((c) => c.id === pr.business_unit_id);
+  const buLabel = bu ? bu.name : pr.business_unit_id ? `#${pr.business_unit_id}` : "";
   return (
-    <div className="space-y-3 text-sm">
+    <Stack spacing={1.5}>
       <Section title="Requester" defaultOpen>
         <Row label="Reference" value={prReference(pr)} />
         <Row label="Requester" value={d.requester_name || pr.requester?.email || `#${pr.requester_id}`} />
         <Row label="Email" value={d.requester_email || pr.requester?.email} />
         <Row label="Date" value={d.date} />
-        <Row label="Budget unit" value={buLabel} />
+        <Row label="Business unit" value={buLabel} />
         <Row label="WSO2 entity" value={pr.entity} />
         <Row label="Business justification" value={d.business_justification} pre />
       </Section>
 
       <Section title="Purchase">
-        <Row label="Type" value={pr.category === "IT" ? "IT solution" : pr.category === "NON-IT" ? "Non-IT solution" : ""} />
+        <Row
+          label="Type"
+          value={pr.category === "IT" ? "IT solution" : pr.category === "NON-IT" ? "Non-IT solution" : pr.category === "EVENTS" ? "Marketing & Events" : ""}
+        />
         {pr.category === "IT" && (
           <>
             <Row label="IT category" value={d.it_category} />
             <Row label="Product / solution" value={d.it_product} />
             <Row label="Description" value={d.it_description} pre />
             <Row label="Plan / tier" value={d.it_plan} />
-            <Row label="Expected users" value={d.it_users} />
-            <Row label="Administrators" value={d.it_admins} />
-            <Row label="Day-to-day usage" value={d.it_usage} />
+            <Row label="Users" value={[d.it_user_count, (d.it_user_names ?? []).filter(Boolean).join(", ")].filter(Boolean).join(" — ") || d.it_users} />
+            <Row label="Administrators" value={[d.it_admin_count, (d.it_admin_names ?? []).filter(Boolean).join(", ")].filter(Boolean).join(" — ") || d.it_admins} />
+            <Row label="Expected usage period" value={d.it_usage} />
             <Row label="Stores sensitive data" value={yesNo(d.sec_sensitive)} />
             <Row label="Captures external PII" value={yesNo(d.sec_external_pii)} />
             {d.sec_external_pii === "yes" && <Row label="External PII detail" value={d.sec_external_pii_detail} />}
             <Row label="Captures employee PII" value={yesNo(d.sec_employee_pii)} />
+            {d.sec_employee_pii === "yes" && <Row label="Employee PII detail" value={d.sec_employee_pii_detail} />}
             <Row label="Integrates with internal systems" value={yesNo(d.sec_integrates)} />
-            {d.sec_integrates === "yes" && <Row label="Integration detail" value={d.sec_integration_detail} pre />}
+            {d.sec_integrates === "yes" && (
+              <>
+                <Row label="Integration systems" value={d.sec_integration_systems} />
+                <Row label="Integration type" value={d.sec_integration_kind} />
+                <Row label="Vendor documentation" value={yesNo(d.sec_vendor_docs)} />
+                {d.sec_vendor_docs === "yes" && <Row label="Documentation link" value={d.sec_vendor_docs_link} />}
+                <Row label="Integration detail" value={d.sec_integration_detail} pre />
+              </>
+            )}
           </>
         )}
         {pr.category === "NON-IT" && (
@@ -581,6 +751,9 @@ function ReadOnlyView({ pr }: { pr: PurchaseRequest }) {
             <Row label="Additional specs / links" value={d.nit_specs} pre />
           </>
         )}
+        {pr.category === "EVENTS" && (
+          <Row label="Status" value="Marketing & Events requirement form is under development — Procurement will follow up directly." pre />
+        )}
       </Section>
 
       <Section title="Vendor & budget">
@@ -588,6 +761,7 @@ function ReadOnlyView({ pr }: { pr: PurchaseRequest }) {
         <Row label="Website" value={d.supplier_website} />
         <Row label="Contact" value={d.supplier_contact} />
         <Row label="Contact email" value={d.supplier_email} />
+        <Row label="Contact number" value={d.supplier_phone} />
         <Row
           label="Existing vendor"
           value={d.supplier_existing === "yes" ? "Yes — registered" : d.supplier_existing === "no" ? "No — new vendor (RFI)" : ""}
@@ -603,11 +777,6 @@ function ReadOnlyView({ pr }: { pr: PurchaseRequest }) {
               : ""
           }
         />
-        <Row
-          label="Designated approver"
-          value={approverText}
-          hint="Designated by the budget unit + estimated value; reconfirmed at the recommendation stage."
-        />
         <Row label="Budget category" value={d.budget_category} />
         <Row label="Product" value={d.budget_product} />
         <Row label="Region" value={d.budget_region} />
@@ -616,22 +785,39 @@ function ReadOnlyView({ pr }: { pr: PurchaseRequest }) {
       </Section>
 
       {pr.status === "rejected" && pr.rejection_reason && (
-        <div className="rounded border border-red-200 bg-red-50 px-3 py-2">
-          <div className="text-xs font-semibold uppercase tracking-wide text-red-700">Rejection reason</div>
-          <p className="mt-0.5 whitespace-pre-wrap text-red-700">{pr.rejection_reason}</p>
-        </div>
+        <Alert severity="error">
+          <Typography variant="caption" sx={{ fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", display: "block" }}>
+            Rejection reason
+          </Typography>
+          <Typography variant="body2" sx={{ whiteSpace: "pre-wrap" }}>
+            {pr.rejection_reason}
+          </Typography>
+        </Alert>
       )}
-    </div>
+    </Stack>
   );
 }
 
 // Section is an expandable group of read-only rows.
 function Section({ title, defaultOpen, children }: { title: string; defaultOpen?: boolean; children: React.ReactNode }) {
   return (
-    <details open={defaultOpen} className="rounded border">
-      <summary className="cursor-pointer select-none px-4 py-2.5 font-medium text-gray-900">{title}</summary>
-      <dl className="space-y-2 border-t px-4 py-3">{children}</dl>
-    </details>
+    <Box component="details" open={defaultOpen} sx={{ border: 1, borderColor: "divider", borderRadius: 2 }}>
+      <Box
+        component="summary"
+        sx={{
+          cursor: "pointer",
+          userSelect: "none",
+          px: 2,
+          py: 1.25,
+          fontWeight: 500,
+        }}
+      >
+        {title}
+      </Box>
+      <Stack component="dl" spacing={1} sx={{ borderTop: 1, borderColor: "divider", px: 2, py: 1.5, m: 0 }}>
+        {children}
+      </Stack>
+    </Box>
   );
 }
 
@@ -639,13 +825,19 @@ function Section({ title, defaultOpen, children }: { title: string; defaultOpen?
 function Row({ label, value, pre, hint }: { label: string; value?: string; pre?: boolean; hint?: string }) {
   if (!value) return null;
   return (
-    <div className="sm:flex sm:gap-4">
-      <dt className="w-52 shrink-0 text-gray-500">{label}</dt>
-      <dd className={`text-gray-900 ${pre ? "whitespace-pre-wrap" : ""}`}>
+    <Box sx={{ display: { sm: "flex" }, gap: 2 }}>
+      <Typography component="dt" variant="body2" color="text.secondary" sx={{ width: 208, flexShrink: 0 }}>
+        {label}
+      </Typography>
+      <Typography component="dd" variant="body2" sx={{ m: 0, whiteSpace: pre ? "pre-wrap" : "normal" }}>
         {value}
-        {hint && <span className="mt-0.5 block text-xs italic text-gray-400">{hint}</span>}
-      </dd>
-    </div>
+        {hint && (
+          <Box component="span" sx={{ display: "block", mt: 0.25, fontStyle: "italic", fontSize: 12, color: "text.secondary" }}>
+            {hint}
+          </Box>
+        )}
+      </Typography>
+    </Box>
   );
 }
 
@@ -661,21 +853,26 @@ function DocumentRow({
   onDelete: () => void;
 }) {
   return (
-    <li className="flex items-center justify-between py-2 text-sm">
-      <button
-        className="text-indigo-600 hover:underline"
+    <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ py: 1 }}>
+      <MuiLink
+        component="button"
+        type="button"
+        variant="body2"
         onClick={() => downloadDocument(prId, doc)}
+        sx={{ textAlign: "left" }}
       >
         {doc.filename}
-      </button>
-      <div className="flex items-center gap-3 text-gray-400">
-        <span>{(doc.size_bytes / 1024).toFixed(0)} KB</span>
+      </MuiLink>
+      <Stack direction="row" spacing={1.5} alignItems="center">
+        <Typography variant="caption" color="text.secondary">
+          {(doc.size_bytes / 1024).toFixed(0)} KB
+        </Typography>
         {canEdit && (
-          <button className="hover:text-red-600" onClick={onDelete}>
+          <Button variant="text" color="error" size="small" onClick={onDelete}>
             Remove
-          </button>
+          </Button>
         )}
-      </div>
-    </li>
+      </Stack>
+    </Stack>
   );
 }

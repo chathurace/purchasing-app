@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/cs/purchasing-app/internal/directory"
 	"github.com/cs/purchasing-app/internal/email"
 	"github.com/cs/purchasing-app/internal/middleware"
 	"github.com/cs/purchasing-app/internal/model"
@@ -19,6 +20,7 @@ type QuotationsHandler struct {
 	Repo       *repository.Repository
 	Storage    storage.Store
 	Mailer     email.Mailer
+	Directory  *directory.Service
 	AppBaseURL string
 	Log        zerolog.Logger
 }
@@ -143,7 +145,7 @@ func (h *QuotationsHandler) notifyQuotationAdded(r *http.Request, pr *repository
 	subject := fmt.Sprintf("Quotation added: %s", title)
 	body := fmt.Sprintf(
 		"Hi,\n\n%s added a quotation to purchase request %s — \"%s\".\n\nView it here:\n%s\n",
-		actorName(r), prDisplayRef(pr), title, prURLWith(h.AppBaseURL, pr))
+		actorName(r, h.Directory), prDisplayRef(pr), title, prURLWith(h.AppBaseURL, pr))
 	notifyPRActivity(r.Context(), h.Repo, h.Mailer, h.Log, pr, actorEmail(r), subject, body)
 }
 
@@ -382,7 +384,7 @@ func (h *QuotationsHandler) loadViewable(w http.ResponseWriter, r *http.Request)
 	}
 	user := middleware.UserFromCtx(ctx)
 	if user != nil {
-		ok, err := h.Repo.IsApproverForPR(ctx, q.PurchaseRequestID, user.ID,
+		ok, err := h.Repo.IsApproverForPR(ctx, q.PurchaseRequestID, user.ID, user.Email,
 			middleware.HasRole(ctx, model.RoleLegal), middleware.HasRole(ctx, model.RoleSecurity))
 		if err != nil {
 			reqLog(r).Error().Err(err).Msg("check quotation approver access")

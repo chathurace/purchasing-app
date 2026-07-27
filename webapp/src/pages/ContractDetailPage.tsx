@@ -1,5 +1,15 @@
 import { Link, useParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
+import {
+  Alert,
+  Box,
+  Card,
+  CardContent,
+  CircularProgress,
+  Link as MuiLink,
+  Stack,
+  Typography,
+} from "@wso2/oxygen-ui";
 import { useContract } from "../hooks/useContracts";
 import { useProcurementAccess } from "../hooks/useProcurementAccess";
 import { EntityStatusBadge } from "../components/EntityStatusBadge";
@@ -23,35 +33,61 @@ export function ContractDetailPage() {
     qc.invalidateQueries({ queryKey: ["purchase-requests"] });
   };
 
-  if (isLoading) return <p className="text-slate-500">Loading…</p>;
-  if (error || !c) return <p className="text-red-600">Failed to load contract.</p>;
+  if (isLoading)
+    return (
+      <Box sx={{ maxWidth: 800, mx: "auto", p: { xs: 2, md: 4 } }}>
+        <CircularProgress size={24} />
+      </Box>
+    );
+  if (error || !c)
+    return (
+      <Box sx={{ maxWidth: 800, mx: "auto", p: { xs: 2, md: 4 } }}>
+        <Alert severity="error">Failed to load contract.</Alert>
+      </Box>
+    );
 
   return (
-    <div className="mx-auto max-w-2xl">
-      <div className="mb-4 flex items-center gap-2 text-sm text-slate-400">
-        <Link to="/contracts" className="text-indigo-600 hover:underline">
+    <Box sx={{ maxWidth: 800, mx: "auto", p: { xs: 2, md: 4 } }}>
+      <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 2 }}>
+        <MuiLink component={Link} to="/contracts" variant="body2">
           Contracts
-        </Link>
-        <span>/</span>
-        <span className="text-slate-500">{conRef(c.id)}</span>
-      </div>
+        </MuiLink>
+        <Typography variant="body2" color="text.secondary">
+          /
+        </Typography>
+        <Typography variant="body2" color="text.secondary">
+          {conRef(c.id)}
+        </Typography>
+      </Stack>
 
       <ChainStepper prId={c.purchase_request_id} current={{ kind: "contract", id: c.id }} />
 
-      <div className="mb-4">
-        <h1 className="text-2xl font-semibold tracking-tight text-slate-900">{c.title || conRef(c.id)}</h1>
-        <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-slate-500">
+      <Box sx={{ mb: 2 }}>
+        <Typography variant="h5" sx={{ fontWeight: 600 }}>
+          {c.title || conRef(c.id)}
+        </Typography>
+        <Stack direction="row" spacing={1.5} alignItems="center" flexWrap="wrap" sx={{ mt: 1 }}>
           <EntityStatusBadge status={c.status} />
-          <span>{c.vendor?.name ?? `Vendor #${c.vendor_id}`}</span>
-          <span aria-hidden>·</span>
-          <span>{formatMoney(c.total_amount, c.currency)}</span>
-        </div>
-      </div>
+          <Typography variant="body2" color="text.secondary">
+            {c.vendor?.name ?? `Vendor #${c.vendor_id}`}
+          </Typography>
+          <Typography variant="body2" color="text.secondary" aria-hidden>
+            ·
+          </Typography>
+          <Typography variant="body2" color="text.secondary">
+            {formatMoney(c.total_amount, c.currency)}
+          </Typography>
+        </Stack>
+      </Box>
 
-      <div className="app-card p-6">
-        <h2 className="mb-4 font-semibold text-slate-900">Contract</h2>
-        <ContractContent contract={c} canEdit={procurement} invalidate={invalidate} />
-      </div>
+      <Card variant="outlined">
+        <CardContent>
+          <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 2 }}>
+            Contract
+          </Typography>
+          <ContractContent contract={c} canEdit={procurement} invalidate={invalidate} />
+        </CardContent>
+      </Card>
 
       <DirectParentCard prId={c.purchase_request_id} current={{ kind: "contract", id: c.id }} />
 
@@ -60,6 +96,6 @@ export function ContractDetailPage() {
       {procurement && <ContractFulfillment contract={c} />}
 
       <RelatedDocuments prId={c.purchase_request_id} current={{ kind: "contract", id: c.id }} />
-    </div>
+    </Box>
   );
 }

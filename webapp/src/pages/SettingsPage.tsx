@@ -1,5 +1,19 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import {
+  Alert,
+  Box,
+  Button,
+  Card,
+  CardContent,
+  Chip,
+  CircularProgress,
+  IconButton,
+  Stack,
+  TextField,
+  Typography,
+} from "@wso2/oxygen-ui";
+import { ChevronUp, ChevronDown } from "@wso2/oxygen-ui-icons-react";
 import { ApiError } from "../api/client";
 import {
   createConfigOption,
@@ -9,17 +23,17 @@ import {
   type ConfigOption,
 } from "../api/config";
 import { useConfigLookup, useConfigOptionsAdmin } from "../hooks/useConfigOptions";
-import { useCanManageBudgetUnits } from "../hooks/useCanManageBudgetUnits";
+import { useCanManageBusinessUnits } from "../hooks/useCanManageBusinessUnits";
 import { useIsAdmin } from "../hooks/useIsAdmin";
 import { StorageSettings } from "../components/StorageSettings";
 import { TeamsSection } from "../components/TeamsSection";
 
 // SettingsPage lets admin / procurement_admin manage the values that populate the
-// requisition-form dropdowns. Access mirrors the Budget units page
-// (middleware.HasBudgetUnitAdmin enforces the same rule server-side).
+// requisition-form dropdowns. Access mirrors the Business units page
+// (middleware.HasBusinessUnitAdmin enforces the same rule server-side).
 export function SettingsPage() {
   const isAdmin = useIsAdmin();
-  const canManage = useCanManageBudgetUnits();
+  const canManage = useCanManageBusinessUnits();
   const { data: config } = useConfigLookup(canManage);
   const { data: options, isLoading, error } = useConfigOptionsAdmin();
   const qc = useQueryClient();
@@ -64,47 +78,57 @@ export function SettingsPage() {
 
   if (!canManage) {
     return (
-      <div className="rounded border border-dashed bg-white p-8 text-center text-gray-500">
-        You need the admin or procurement_admin role to manage settings.
-      </div>
+      <Box sx={{ maxWidth: 1200, mx: "auto", p: { xs: 2, md: 4 } }}>
+        <Card variant="outlined" sx={{ borderStyle: "dashed" }}>
+          <CardContent sx={{ p: 4, textAlign: "center" }}>
+            <Typography color="text.secondary">
+              You need the admin or procurement_admin role to manage settings.
+            </Typography>
+          </CardContent>
+        </Card>
+      </Box>
     );
   }
 
   const lists: ConfigList[] = config?.keys ?? [];
 
   return (
-    <div>
-      <h1 className="mb-1 text-xl font-semibold text-gray-900">Settings</h1>
-      <p className="mb-6 text-sm text-gray-500">
+    <Box sx={{ maxWidth: 1200, mx: "auto", p: { xs: 2, md: 4 } }}>
+      <Typography variant="h5" sx={{ fontWeight: 600 }}>
+        Settings
+      </Typography>
+      <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5, mb: 3 }}>
         Manage the values that appear in the new-request form dropdowns. Deactivating a value keeps
         it on existing requests but hides it from new ones; deleting removes it entirely.
-      </p>
+      </Typography>
 
       {isAdmin && (
-        <div className="mb-8">
+        <Box sx={{ mb: 4 }}>
           <StorageSettings />
-        </div>
+        </Box>
       )}
 
-      <div className="mb-8">
+      <Box sx={{ mb: 4 }}>
         <TeamsSection />
-      </div>
-      <h2 className="mb-1 text-lg font-semibold text-gray-900">Dropdown values</h2>
-      <p className="mb-4 text-sm text-gray-500">
-        Values that appear in the new-request form dropdowns.
-      </p>
+      </Box>
 
+      <Typography variant="h6" sx={{ fontWeight: 600 }}>
+        Dropdown values
+      </Typography>
+      <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5, mb: 2 }}>
+        Values that appear in the new-request form dropdowns.
+      </Typography>
 
       {actionError && (
-        <div className="mb-4 rounded border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-700">
+        <Alert severity="error" sx={{ mb: 2 }}>
           {actionError}
-        </div>
+        </Alert>
       )}
 
-      {isLoading && <p className="text-gray-500">Loading…</p>}
-      {error && <p className="text-red-600">Failed to load settings.</p>}
+      {isLoading && <CircularProgress size={24} />}
+      {error && <Alert severity="error">Failed to load settings.</Alert>}
 
-      <div className="space-y-4">
+      <Stack spacing={2}>
         {lists.map((list) => (
           <ListSection
             key={list.key}
@@ -134,8 +158,8 @@ export function SettingsPage() {
             onDelete={(o) => remove.mutate(o.id)}
           />
         ))}
-      </div>
-    </div>
+      </Stack>
+    </Box>
   );
 }
 
@@ -170,41 +194,72 @@ function ListSection({
   };
 
   return (
-    <section className="rounded border bg-white">
-      <div className="flex items-center justify-between border-b px-4 py-2.5">
-        <h2 className="text-sm font-semibold text-gray-900">{list.label}</h2>
-        <span className="text-xs text-gray-400">{options.length} value{options.length === 1 ? "" : "s"}</span>
-      </div>
+    <Card variant="outlined">
+      <Box
+        sx={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          px: 2,
+          py: 1.25,
+          borderBottom: 1,
+          borderColor: "divider",
+        }}
+      >
+        <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
+          {list.label}
+        </Typography>
+        <Typography variant="caption" color="text.secondary">
+          {options.length} value{options.length === 1 ? "" : "s"}
+        </Typography>
+      </Box>
 
-      <ul className="divide-y">
+      <Box>
         {options.length === 0 && (
-          <li className="px-4 py-3 text-sm text-gray-400">No values yet.</li>
+          <Box sx={{ px: 2, py: 1.5 }}>
+            <Typography variant="body2" color="text.secondary">
+              No values yet.
+            </Typography>
+          </Box>
         )}
         {options.map((o, i) => (
-          <li key={o.id} className={`flex items-center gap-2 px-4 py-2 ${o.is_active ? "" : "bg-gray-50"}`}>
-            <div className="flex flex-col">
-              <button
-                type="button"
+          <Box
+            key={o.id}
+            sx={{
+              display: "flex",
+              alignItems: "center",
+              gap: 1,
+              px: 2,
+              py: 1,
+              borderTop: i === 0 ? 0 : 1,
+              borderColor: "divider",
+              bgcolor: o.is_active ? "transparent" : "action.hover",
+            }}
+          >
+            <Stack sx={{ alignItems: "center" }}>
+              <IconButton
+                size="small"
                 onClick={() => onMove(o, "up")}
                 disabled={i === 0}
-                className="text-gray-400 hover:text-gray-700 disabled:opacity-30"
                 title="Move up"
+                sx={{ p: 0.25 }}
               >
-                ▲
-              </button>
-              <button
-                type="button"
+                <ChevronUp size={14} />
+              </IconButton>
+              <IconButton
+                size="small"
                 onClick={() => onMove(o, "down")}
                 disabled={i === options.length - 1}
-                className="text-gray-400 hover:text-gray-700 disabled:opacity-30"
                 title="Move down"
+                sx={{ p: 0.25 }}
               >
-                ▼
-              </button>
-            </div>
+                <ChevronDown size={14} />
+              </IconButton>
+            </Stack>
 
             {editId === o.id ? (
-              <input
+              <TextField
+                size="small"
                 autoFocus
                 value={editValue}
                 onChange={(e) => setEditValue(e.target.value)}
@@ -214,93 +269,113 @@ function ListSection({
                     setEditId(null);
                   } else if (e.key === "Escape") setEditId(null);
                 }}
-                className="flex-1 rounded border px-2 py-1 text-sm"
+                sx={{ flex: 1 }}
               />
             ) : (
-              <span className={`flex-1 text-sm ${o.is_active ? "text-gray-900" : "text-gray-400 line-through"}`}>
+              <Typography
+                variant="body2"
+                sx={{
+                  flex: 1,
+                  color: o.is_active ? "text.primary" : "text.disabled",
+                  textDecoration: o.is_active ? "none" : "line-through",
+                }}
+              >
                 {o.value}
-              </span>
+              </Typography>
             )}
 
             {!o.is_active && editId !== o.id && (
-              <span className="rounded bg-gray-200 px-2 py-0.5 text-[11px] font-medium text-gray-600">
-                Hidden
-              </span>
+              <Chip size="small" label="Hidden" />
             )}
 
-            <div className="flex items-center gap-1 text-xs">
+            <Stack direction="row" spacing={0.5} sx={{ alignItems: "center" }}>
               {editId === o.id ? (
                 <>
-                  <button
-                    type="button"
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    color="inherit"
                     onClick={() => {
                       if (editValue.trim()) onRename(o, editValue.trim());
                       setEditId(null);
                     }}
-                    className="rounded border px-2 py-1 text-gray-700 hover:bg-gray-50"
                   >
                     Save
-                  </button>
-                  <button
-                    type="button"
+                  </Button>
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    color="inherit"
                     onClick={() => setEditId(null)}
-                    className="rounded border px-2 py-1 text-gray-700 hover:bg-gray-50"
                   >
                     Cancel
-                  </button>
+                  </Button>
                 </>
               ) : (
                 <>
-                  <button
-                    type="button"
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    color="inherit"
                     onClick={() => {
                       setEditId(o.id);
                       setEditValue(o.value);
                     }}
-                    className="rounded border px-2 py-1 text-gray-700 hover:bg-gray-50"
                   >
                     Rename
-                  </button>
-                  <button
-                    type="button"
+                  </Button>
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    color="inherit"
                     onClick={() => onToggle(o)}
-                    className="rounded border px-2 py-1 text-gray-700 hover:bg-gray-50"
                   >
                     {o.is_active ? "Deactivate" : "Reactivate"}
-                  </button>
-                  <button
-                    type="button"
+                  </Button>
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    color="error"
                     onClick={() => onDelete(o)}
-                    className="rounded border px-2 py-1 text-red-600 hover:bg-red-50"
                   >
                     Delete
-                  </button>
+                  </Button>
                 </>
               )}
-            </div>
-          </li>
+            </Stack>
+          </Box>
         ))}
-      </ul>
+      </Box>
 
-      <div className="flex items-center gap-2 border-t px-4 py-2.5">
-        <input
+      <Box
+        sx={{
+          display: "flex",
+          alignItems: "center",
+          gap: 1,
+          px: 2,
+          py: 1.25,
+          borderTop: 1,
+          borderColor: "divider",
+        }}
+      >
+        <TextField
+          size="small"
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Enter") submitAdd();
           }}
           placeholder={`Add a ${list.label.toLowerCase()} value`}
-          className="flex-1 rounded border px-3 py-1.5 text-sm"
+          sx={{ flex: 1 }}
         />
-        <button
-          type="button"
+        <Button
+          variant="contained"
           onClick={submitAdd}
           disabled={adding || draft.trim() === ""}
-          className="rounded bg-indigo-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
         >
           Add
-        </button>
-      </div>
-    </section>
+        </Button>
+      </Box>
+    </Card>
   );
 }

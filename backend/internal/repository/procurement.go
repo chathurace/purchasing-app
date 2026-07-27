@@ -184,169 +184,86 @@ func (r *Repository) GetVendorUsage(ctx context.Context, id int64) (VendorUsage,
 }
 
 // =====================================================================
-// Budget units (formerly cost centers)
+// Business units (formerly budget units / cost centers)
 // =====================================================================
 
-// BudgetUnitBracket is one ordered value range of a budget unit and the
-// approver(s) qualified to sign off a budget card that resolves to it. MinValue
-// is inclusive; MaxValue is inclusive and nil means unbounded (any value). All
-// Approvers of the resolved bracket are qualified — there is no "first" pick.
-type BudgetUnitBracket struct {
-	ID        int64          `json:"id"`
-	Position  int            `json:"position"`
-	Currency  string         `json:"currency"`
-	MinValue  float64        `json:"min_value"`
-	MaxValue  *float64       `json:"max_value"`
+type BusinessUnit struct {
+	ID          int64     `json:"id"`
+	Name        string    `json:"name"`
+	Description string    `json:"description"`
+	IsActive    bool      `json:"is_active"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+	// Approvers is the flat, ordered set of qualified budget approvers — any of
+	// them may be picked as a PR's budget approver.
 	Approvers []*UserSummary `json:"approvers"`
 }
 
-type BudgetUnit struct {
-	ID          int64   `json:"id"`
-	Code        string  `json:"code"`
-	Name        string  `json:"name"`
-	Description string  `json:"description"`
-	Budget      float64 `json:"budget"`
-	Currency    string  `json:"currency"`
-	IsActive    bool    `json:"is_active"`
-	// DefaultApproverID is the catch-all budget approver, used when a PR matches
-	// no bracket (no value, no currency match, or out of every range).
-	DefaultApproverID *int64              `json:"default_approver_id"`
-	DefaultApprover   *UserSummary        `json:"default_approver,omitempty"`
-	CreatedAt         time.Time           `json:"created_at"`
-	UpdatedAt         time.Time           `json:"updated_at"`
-	Brackets          []BudgetUnitBracket `json:"brackets"`
-}
-
-// BudgetUnitBracketInput is one bracket on a create/update; brackets are ordered
-// by their position in the slice. A bracket matches on its own Currency + range.
-type BudgetUnitBracketInput struct {
-	Currency    string
-	MinValue    float64
-	MaxValue    *float64
+// BusinessUnitInput is the payload for creating/updating a business unit.
+// ApproverIDs is the flat approver set (ordered by slice position); at least one
+// is required.
+type BusinessUnitInput struct {
+	Name        string
+	Description string
+	IsActive    bool
 	ApproverIDs []int64
 }
 
-type BudgetUnitInput struct {
-	Code              string
-	Name              string
-	Description       string
-	Budget            float64
-	Currency          string
-	IsActive          bool
-	DefaultApproverID *int64
-	Brackets          []BudgetUnitBracketInput
+// BusinessUnitSummary is the lightweight shape returned by the lookup endpoint
+// (used to populate the business-unit dropdown on a purchase request).
+type BusinessUnitSummary struct {
+	ID   int64  `json:"id"`
+	Name string `json:"name"`
 }
 
-// BudgetUnitSummary is the lightweight shape returned by the lookup endpoint
-// (used to populate the budget-unit dropdown on a purchase request). Currency is
-// included so the client can label the estimated-value input.
-type BudgetUnitSummary struct {
-	ID       int64  `json:"id"`
-	Code     string `json:"code"`
-	Name     string `json:"name"`
-	Currency string `json:"currency"`
-}
-
-// BudgetUnitUsage counts the records that reference a budget unit, used to show
-// a "where used" summary before deactivating.
-type BudgetUnitUsage struct {
+// BusinessUnitUsage counts the records that reference a business unit, used to
+// show a "where used" summary before deactivating.
+type BusinessUnitUsage struct {
 	PurchaseRequests int `json:"purchase_requests"`
 }
 
-const budgetUnitCols = `id, code, name, description,
-	budget, currency, is_active, default_approver_id, created_at, updated_at`
+const businessUnitCols = `id, name, description, is_active, created_at, updated_at`
 
-func scanBudgetUnit(row pgx.Row, c *BudgetUnit) error {
-	return row.Scan(&c.ID, &c.Code, &c.Name, &c.Description,
-		&c.Budget, &c.Currency, &c.IsActive, &c.DefaultApproverID, &c.CreatedAt, &c.UpdatedAt)
+func scanBusinessUnit(row pgx.Row, c *BusinessUnit) error {
+	return row.Scan(&c.ID, &c.Name, &c.Description, &c.IsActive, &c.CreatedAt, &c.UpdatedAt)
 }
 
-// populateDefaultApprover fills the default-approver UserSummary from its id.
-func (r *Repository) populateDefaultApprover(ctx context.Context, c *BudgetUnit) error {
-	if c.DefaultApproverID == nil {
-		return nil
-	}
-	var email, name pgtype.Text
-	var id int64
-	err := r.pool.QueryRow(ctx, `SELECT id, email, name FROM users WHERE id = $1`, *c.DefaultApproverID).
-		Scan(&id, &email, &name)
-	if err == nil {
-		c.DefaultApprover = &UserSummary{ID: id, Email: email.String, Name: name.String}
-	} else if !errors.Is(err, pgx.ErrNoRows) {
+// populateApprovers fills the ordered approver list on a business unit.
+func (r *Repository) populateApprovers(ctx context.Context, c *BusinessUnit) error {
+	approvers, err := r.BusinessUnitApprovers(ctx, c.ID)
+	if err != nil {
 		return err
 	}
+	c.Approvers = approvers
 	return nil
 }
 
-// listBracketApprovers returns the approvers of one bracket, ordered.
-func (r *Repository) listBracketApprovers(ctx context.Context, bracketID int64) ([]*UserSummary, error) {
+// BusinessUnitApprovers returns the ordered approver list of a business unit —
+// used to populate the budget-approver dropdown on the requisition form.
+func (r *Repository) BusinessUnitApprovers(ctx context.Context, id int64) ([]*UserSummary, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT u.id, u.email, u.name
-		FROM budget_unit_bracket_approvers ba
+		FROM business_unit_approvers ba
 		JOIN users u ON u.id = ba.user_id
-		WHERE ba.bracket_id = $1
-		ORDER BY ba.position, u.id`, bracketID)
+		WHERE ba.business_unit_id = $1
+		ORDER BY ba.position, u.id`, id)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	out := []*UserSummary{}
-	for rows.Next() {
-		u := &UserSummary{}
-		var email, name pgtype.Text
-		if err := rows.Scan(&u.ID, &email, &name); err != nil {
-			return nil, err
-		}
-		u.Email = email.String
-		u.Name = name.String
-		out = append(out, u)
-	}
-	return out, rows.Err()
+	return scanUserSummaries(rows)
 }
 
-// populateBrackets fills the ordered brackets (with their approvers) on a BU.
-func (r *Repository) populateBrackets(ctx context.Context, c *BudgetUnit) error {
-	rows, err := r.pool.Query(ctx, `
-		SELECT id, position, currency, min_value, max_value
-		FROM budget_unit_brackets
-		WHERE budget_unit_id = $1
-		ORDER BY position, id`, c.ID)
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-	brackets := []BudgetUnitBracket{}
-	for rows.Next() {
-		b := BudgetUnitBracket{Approvers: []*UserSummary{}}
-		if err := rows.Scan(&b.ID, &b.Position, &b.Currency, &b.MinValue, &b.MaxValue); err != nil {
-			return err
-		}
-		brackets = append(brackets, b)
-	}
-	if err := rows.Err(); err != nil {
-		return err
-	}
-	for i := range brackets {
-		approvers, err := r.listBracketApprovers(ctx, brackets[i].ID)
-		if err != nil {
-			return err
-		}
-		brackets[i].Approvers = approvers
-	}
-	c.Brackets = brackets
-	return nil
-}
-
-func (r *Repository) ListBudgetUnits(ctx context.Context) ([]*BudgetUnit, error) {
-	rows, err := r.pool.Query(ctx, `SELECT `+budgetUnitCols+` FROM budget_units ORDER BY name`)
+func (r *Repository) ListBusinessUnits(ctx context.Context) ([]*BusinessUnit, error) {
+	rows, err := r.pool.Query(ctx, `SELECT `+businessUnitCols+` FROM business_units ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	out := []*BudgetUnit{}
+	out := []*BusinessUnit{}
 	for rows.Next() {
-		c := &BudgetUnit{}
-		if err := scanBudgetUnit(rows, c); err != nil {
+		c := &BusinessUnit{}
+		if err := scanBusinessUnit(rows, c); err != nil {
 			return nil, err
 		}
 		out = append(out, c)
@@ -355,31 +272,28 @@ func (r *Repository) ListBudgetUnits(ctx context.Context) ([]*BudgetUnit, error)
 		return nil, err
 	}
 	for _, c := range out {
-		if err := r.populateBrackets(ctx, c); err != nil {
-			return nil, err
-		}
-		if err := r.populateDefaultApprover(ctx, c); err != nil {
+		if err := r.populateApprovers(ctx, c); err != nil {
 			return nil, err
 		}
 	}
 	return out, nil
 }
 
-// ListActiveBudgetUnits returns active budget units as summaries, for the PR
+// ListActiveBusinessUnits returns active business units as summaries, for the PR
 // dropdown. Readable by any authenticated user.
-func (r *Repository) ListActiveBudgetUnits(ctx context.Context) ([]*BudgetUnitSummary, error) {
+func (r *Repository) ListActiveBusinessUnits(ctx context.Context) ([]*BusinessUnitSummary, error) {
 	rows, err := r.pool.Query(ctx, `
-		SELECT id, code, name, currency
-		FROM budget_units
+		SELECT id, name
+		FROM business_units
 		WHERE is_active ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	out := []*BudgetUnitSummary{}
+	out := []*BusinessUnitSummary{}
 	for rows.Next() {
-		c := &BudgetUnitSummary{}
-		if err := rows.Scan(&c.ID, &c.Code, &c.Name, &c.Currency); err != nil {
+		c := &BusinessUnitSummary{}
+		if err := rows.Scan(&c.ID, &c.Name); err != nil {
 			return nil, err
 		}
 		out = append(out, c)
@@ -387,46 +301,34 @@ func (r *Repository) ListActiveBudgetUnits(ctx context.Context) ([]*BudgetUnitSu
 	return out, rows.Err()
 }
 
-func (r *Repository) GetBudgetUnit(ctx context.Context, id int64) (*BudgetUnit, error) {
-	c := &BudgetUnit{}
-	if err := scanBudgetUnit(r.pool.QueryRow(ctx, `SELECT `+budgetUnitCols+` FROM budget_units WHERE id = $1`, id), c); err != nil {
+func (r *Repository) GetBusinessUnit(ctx context.Context, id int64) (*BusinessUnit, error) {
+	c := &BusinessUnit{}
+	if err := scanBusinessUnit(r.pool.QueryRow(ctx, `SELECT `+businessUnitCols+` FROM business_units WHERE id = $1`, id), c); err != nil {
 		return nil, err
 	}
-	if err := r.populateBrackets(ctx, c); err != nil {
-		return nil, err
-	}
-	if err := r.populateDefaultApprover(ctx, c); err != nil {
+	if err := r.populateApprovers(ctx, c); err != nil {
 		return nil, err
 	}
 	return c, nil
 }
 
-// replaceBrackets deletes and re-inserts the brackets (and their approvers) for
-// a budget unit, preserving slice order as the bracket position.
-func replaceBrackets(ctx context.Context, tx pgx.Tx, budgetUnitID int64, brackets []BudgetUnitBracketInput) error {
-	if _, err := tx.Exec(ctx, `DELETE FROM budget_unit_brackets WHERE budget_unit_id = $1`, budgetUnitID); err != nil {
+// replaceApprovers deletes and re-inserts the approver list for a business unit,
+// preserving slice order as the approver position.
+func replaceApprovers(ctx context.Context, tx pgx.Tx, businessUnitID int64, approverIDs []int64) error {
+	if _, err := tx.Exec(ctx, `DELETE FROM business_unit_approvers WHERE business_unit_id = $1`, businessUnitID); err != nil {
 		return err
 	}
-	for pos, b := range brackets {
-		var bracketID int64
-		if err := tx.QueryRow(ctx, `
-			INSERT INTO budget_unit_brackets (budget_unit_id, position, currency, min_value, max_value)
-			VALUES ($1, $2, $3, $4, $5) RETURNING id`,
-			budgetUnitID, pos, b.Currency, b.MinValue, b.MaxValue).Scan(&bracketID); err != nil {
+	for pos, uid := range approverIDs {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO business_unit_approvers (business_unit_id, user_id, position)
+			VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`, businessUnitID, uid, pos); err != nil {
 			return err
-		}
-		for apos, uid := range b.ApproverIDs {
-			if _, err := tx.Exec(ctx, `
-				INSERT INTO budget_unit_bracket_approvers (bracket_id, user_id, position)
-				VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`, bracketID, uid, apos); err != nil {
-				return err
-			}
 		}
 	}
 	return nil
 }
 
-func (r *Repository) CreateBudgetUnit(ctx context.Context, in BudgetUnitInput, createdBy int64) (*BudgetUnit, error) {
+func (r *Repository) CreateBusinessUnit(ctx context.Context, in BusinessUnitInput, createdBy int64) (*BusinessUnit, error) {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return nil, err
@@ -435,22 +337,22 @@ func (r *Repository) CreateBudgetUnit(ctx context.Context, in BudgetUnitInput, c
 
 	var id int64
 	if err := tx.QueryRow(ctx, `
-		INSERT INTO budget_units (code, name, description, budget, currency, is_active, default_approver_id, created_by)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		INSERT INTO business_units (name, description, is_active, created_by)
+		VALUES ($1, $2, $3, $4)
 		RETURNING id`,
-		in.Code, in.Name, in.Description, in.Budget, in.Currency, in.IsActive, in.DefaultApproverID, createdBy).Scan(&id); err != nil {
+		in.Name, in.Description, in.IsActive, createdBy).Scan(&id); err != nil {
 		return nil, err
 	}
-	if err := replaceBrackets(ctx, tx, id, in.Brackets); err != nil {
+	if err := replaceApprovers(ctx, tx, id, in.ApproverIDs); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
-	return r.GetBudgetUnit(ctx, id)
+	return r.GetBusinessUnit(ctx, id)
 }
 
-func (r *Repository) UpdateBudgetUnit(ctx context.Context, id int64, in BudgetUnitInput) error {
+func (r *Repository) UpdateBusinessUnit(ctx context.Context, id int64, in BusinessUnitInput) error {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return err
@@ -458,25 +360,24 @@ func (r *Repository) UpdateBudgetUnit(ctx context.Context, id int64, in BudgetUn
 	defer tx.Rollback(ctx)
 
 	if _, err := tx.Exec(ctx, `
-		UPDATE budget_units
-		SET code = $2, name = $3, description = $4,
-			budget = $5, currency = $6, is_active = $7, default_approver_id = $8, updated_at = NOW()
+		UPDATE business_units
+		SET name = $2, description = $3, is_active = $4, updated_at = NOW()
 		WHERE id = $1`,
-		id, in.Code, in.Name, in.Description, in.Budget, in.Currency, in.IsActive, in.DefaultApproverID); err != nil {
+		id, in.Name, in.Description, in.IsActive); err != nil {
 		return err
 	}
-	if err := replaceBrackets(ctx, tx, id, in.Brackets); err != nil {
+	if err := replaceApprovers(ctx, tx, id, in.ApproverIDs); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
 }
 
-// GetBudgetUnitUsage returns the number of purchase requests that reference the
-// budget unit.
-func (r *Repository) GetBudgetUnitUsage(ctx context.Context, id int64) (BudgetUnitUsage, error) {
-	var u BudgetUnitUsage
+// GetBusinessUnitUsage returns the number of purchase requests that reference the
+// business unit.
+func (r *Repository) GetBusinessUnitUsage(ctx context.Context, id int64) (BusinessUnitUsage, error) {
+	var u BusinessUnitUsage
 	err := r.pool.QueryRow(ctx, `
-		SELECT (SELECT COUNT(*) FROM purchase_requests WHERE budget_unit_id = $1)`, id).
+		SELECT (SELECT COUNT(*) FROM purchase_requests WHERE business_unit_id = $1)`, id).
 		Scan(&u.PurchaseRequests)
 	return u, err
 }
@@ -488,35 +389,36 @@ type CurrencyTotal struct {
 	Amount   float64 `json:"amount"`
 }
 
-// BudgetUnitInvoiceCategory summarises one invoice status bucket for a budget
-// unit: how many invoices allocate to it and the allocated totals per currency.
-type BudgetUnitInvoiceCategory struct {
+// BusinessUnitInvoiceCategory summarises one invoice status bucket for a
+// business unit: how many invoices allocate to it and the allocated totals per
+// currency.
+type BusinessUnitInvoiceCategory struct {
 	Count  int             `json:"count"`
 	Totals []CurrencyTotal `json:"totals"`
 }
 
-// BudgetUnitInvoiceSummary buckets the invoices allocated to a budget unit by
-// status (pending = received), each with the budget unit's allocated share.
-type BudgetUnitInvoiceSummary struct {
-	Pending  BudgetUnitInvoiceCategory `json:"pending"`
-	Approved BudgetUnitInvoiceCategory `json:"approved"`
-	Paid     BudgetUnitInvoiceCategory `json:"paid"`
+// BusinessUnitInvoiceSummary buckets the invoices allocated to a business unit by
+// status (pending = received), each with the business unit's allocated share.
+type BusinessUnitInvoiceSummary struct {
+	Pending  BusinessUnitInvoiceCategory `json:"pending"`
+	Approved BusinessUnitInvoiceCategory `json:"approved"`
+	Paid     BusinessUnitInvoiceCategory `json:"paid"`
 }
 
-// GetBudgetUnitInvoiceSummary returns the invoices allocated to a budget unit,
-// bucketed by status, with this budget unit's allocated share totalled per
-// currency. The share is the resolved allocation amount in the invoice's
+// GetBusinessUnitInvoiceSummary returns the invoices allocated to a business
+// unit, bucketed by status, with this business unit's allocated share totalled
+// per currency. The share is the resolved allocation amount in the invoice's
 // currency (percentage of the invoice total, or the absolute amount).
-func (r *Repository) GetBudgetUnitInvoiceSummary(ctx context.Context, id int64) (BudgetUnitInvoiceSummary, error) {
+func (r *Repository) GetBusinessUnitInvoiceSummary(ctx context.Context, id int64) (BusinessUnitInvoiceSummary, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT i.status, i.currency,
 		       CASE WHEN i.allocation_mode = 'amount' THEN a.value
 		            ELSE i.total_amount * a.value / 100 END AS allocated
 		FROM invoice_cost_allocations a
 		JOIN invoices i ON i.id = a.invoice_id
-		WHERE a.budget_unit_id = $1`, id)
+		WHERE a.business_unit_id = $1`, id)
 	if err != nil {
-		return BudgetUnitInvoiceSummary{}, err
+		return BusinessUnitInvoiceSummary{}, err
 	}
 	defer rows.Close()
 
@@ -529,7 +431,7 @@ func (r *Repository) GetBudgetUnitInvoiceSummary(ctx context.Context, id int64) 
 		var status, currency string
 		var allocated float64
 		if err := rows.Scan(&status, &currency, &allocated); err != nil {
-			return BudgetUnitInvoiceSummary{}, err
+			return BusinessUnitInvoiceSummary{}, err
 		}
 		if _, ok := totals[status]; !ok {
 			continue // unknown status; ignore defensively
@@ -538,23 +440,23 @@ func (r *Repository) GetBudgetUnitInvoiceSummary(ctx context.Context, id int64) 
 		totals[status][currency] += allocated
 	}
 	if err := rows.Err(); err != nil {
-		return BudgetUnitInvoiceSummary{}, err
+		return BusinessUnitInvoiceSummary{}, err
 	}
-	return BudgetUnitInvoiceSummary{
+	return BusinessUnitInvoiceSummary{
 		Pending:  buildInvoiceCategory(counts[model.InvoiceReceived], totals[model.InvoiceReceived]),
 		Approved: buildInvoiceCategory(counts[model.InvoiceApproved], totals[model.InvoiceApproved]),
 		Paid:     buildInvoiceCategory(counts[model.InvoicePaid], totals[model.InvoicePaid]),
 	}, nil
 }
 
-func buildInvoiceCategory(count int, byCurrency map[string]float64) BudgetUnitInvoiceCategory {
+func buildInvoiceCategory(count int, byCurrency map[string]float64) BusinessUnitInvoiceCategory {
 	totals := make([]CurrencyTotal, 0, len(byCurrency))
 	for currency, amount := range byCurrency {
 		totals = append(totals, CurrencyTotal{Currency: currency, Amount: amount})
 	}
 	// Stable order by currency so the response is deterministic.
 	sort.Slice(totals, func(i, j int) bool { return totals[i].Currency < totals[j].Currency })
-	return BudgetUnitInvoiceCategory{Count: count, Totals: totals}
+	return BusinessUnitInvoiceCategory{Count: count, Totals: totals}
 }
 
 // =====================================================================
@@ -941,9 +843,9 @@ type Contract struct {
 	// PDF is exposed separately as SignedDocument.
 	Documents      []Document `json:"documents,omitempty"`
 	SignedDocument *Document  `json:"signed_document,omitempty"`
-	// BudgetUnit is the budget unit of the owning purchase request (if any),
+	// BusinessUnit is the business unit of the owning purchase request (if any),
 	// used to default an invoice's cost allocation. Populated on detail reads.
-	BudgetUnit *BudgetUnitSummary `json:"budget_unit,omitempty"`
+	BusinessUnit *BusinessUnitSummary `json:"business_unit,omitempty"`
 	// InvoicedTotal is the sum of this contract's invoice totals (any status), in
 	// the contract's own currency. Populated on detail reads to drive the
 	// over-billing warning. Not summed across differing currencies.
@@ -1066,16 +968,16 @@ func (r *Repository) GetContract(ctx context.Context, id int64) (*Contract, erro
 	if c.InvoicedTotal, err = r.contractInvoicedTotal(ctx, id, c.Currency); err != nil {
 		return nil, err
 	}
-	// Resolve the owning PR's budget unit (if set), used to default an invoice's
-	// cost allocation. A missing budget unit is not an error.
+	// Resolve the owning PR's business unit (if set), used to default an invoice's
+	// cost allocation. A missing business unit is not an error.
 	var buID pgtype.Int8
-	var buCode, buName, buCurrency pgtype.Text
+	var buName pgtype.Text
 	if err := r.pool.QueryRow(ctx, `
-		SELECT bu.id, bu.code, bu.name, bu.currency
+		SELECT bu.id, bu.name
 		FROM purchase_requests pr
-		JOIN budget_units bu ON bu.id = pr.budget_unit_id
-		WHERE pr.id = $1`, c.PurchaseRequestID).Scan(&buID, &buCode, &buName, &buCurrency); err == nil {
-		c.BudgetUnit = &BudgetUnitSummary{ID: buID.Int64, Code: buCode.String, Name: buName.String, Currency: buCurrency.String}
+		JOIN business_units bu ON bu.id = pr.business_unit_id
+		WHERE pr.id = $1`, c.PurchaseRequestID).Scan(&buID, &buName); err == nil {
+		c.BusinessUnit = &BusinessUnitSummary{ID: buID.Int64, Name: buName.String}
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return nil, err
 	}

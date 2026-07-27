@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/cs/purchasing-app/internal/crypto"
+	"github.com/cs/purchasing-app/internal/directory"
 	"github.com/cs/purchasing-app/internal/email"
 	"github.com/cs/purchasing-app/internal/middleware"
 	"github.com/cs/purchasing-app/internal/repository"
@@ -23,6 +24,7 @@ type Deps struct {
 	GDriveAPIKey   string
 	GDriveAppID    string
 	Auth           *middleware.AuthMiddleware
+	Directory      *directory.Service
 	Mailer         email.Mailer
 	AppBaseURL     string
 	AllowedOrigins []string
@@ -36,16 +38,18 @@ func NewRouter(d Deps) http.Handler {
 	r.Use(chimiddleware.Recoverer)         // inside RequestLogger: a recovered panic still gets a 500 access line
 	r.Use(middleware.CORS(d.AllowedOrigins))
 
-	users := &UsersHandler{Repo: d.Repo, Log: d.Log}
-	prs := &PurchaseRequestsHandler{Repo: d.Repo, Storage: d.Storage, Mailer: d.Mailer, AppBaseURL: d.AppBaseURL, Log: d.Log}
+	users := &UsersHandler{Repo: d.Repo, Dir: d.Directory, Log: d.Log}
+	home := &HomeHandler{Repo: d.Repo, Log: d.Log}
+	prs := &PurchaseRequestsHandler{Repo: d.Repo, Storage: d.Storage, Mailer: d.Mailer, Directory: d.Directory, AppBaseURL: d.AppBaseURL, Log: d.Log}
 	vendors := &VendorsHandler{Repo: d.Repo, Log: d.Log}
-	budgetUnits := &BudgetUnitsHandler{Repo: d.Repo, Log: d.Log}
-	quotes := &QuotationsHandler{Repo: d.Repo, Storage: d.Storage, Mailer: d.Mailer, AppBaseURL: d.AppBaseURL, Log: d.Log}
+	businessUnits := &BusinessUnitsHandler{Repo: d.Repo, Log: d.Log}
+	quotes := &QuotationsHandler{Repo: d.Repo, Storage: d.Storage, Mailer: d.Mailer, Directory: d.Directory, AppBaseURL: d.AppBaseURL, Log: d.Log}
 	contracts := &ContractsHandler{Repo: d.Repo, Storage: d.Storage, Log: d.Log}
 	grns := &GRNsHandler{Repo: d.Repo, Storage: d.Storage, Log: d.Log}
 	invoices := &InvoicesHandler{Repo: d.Repo, Storage: d.Storage, Log: d.Log}
 	configOptions := &ConfigOptionsHandler{Repo: d.Repo, Log: d.Log}
 	teams := &TeamsHandler{Repo: d.Repo, Log: d.Log}
+	events := &EventsHandler{Repo: d.Repo, Log: d.Log}
 	storageH := &StorageHandler{
 		Repo:     d.Repo,
 		Manager:  d.StorageManager,
@@ -62,9 +66,21 @@ func NewRouter(d Deps) http.Handler {
 
 			r.Get("/me", users.Me)
 
+			// Role-based home dashboard: count tiles + recent-activity feeds,
+			// scoped to the caller's roles (read-only aggregation).
+			r.Get("/home", home.Get)
+
 			// Lightweight active-user directory for the approver picker (any
 			// authenticated user; returns id/email/name only).
 			r.Get("/users/lookup", users.Lookup)
+
+			// Org user directory for name/email autocomplete, sourced from the
+			// connected identity server via SCIM (falls back to DB users when SCIM
+			// is disabled). Any authenticated user; returns email/name only.
+			r.Get("/users/directory", users.Directory)
+			// Resolve a directory person to a provisioned app user (get-or-create
+			// by email) so id-based pickers can use them. procurement_admin/admin.
+			r.Post("/users/ensure", users.Ensure)
 
 			// User management (admin only — enforced in the handlers)
 			r.Get("/users", users.List)
@@ -125,9 +141,20 @@ func NewRouter(d Deps) http.Handler {
 			r.Get("/purchase-requests/{id}/recommendation/rfi/documents/{docID}/download", prs.DownloadRecRFIDocument)
 			r.Delete("/purchase-requests/{id}/recommendation/rfi/documents/{docID}", prs.DeleteRecRFIDocument)
 			r.Post("/purchase-requests/{id}/recommendation/approvals/{type}", prs.SetRecApproval)
+			// Request (add) or remove a single approval card without touching the others.
+			r.Post("/purchase-requests/{id}/recommendation/approvals/{type}/request", prs.RequestRecApproval)
+			r.Delete("/purchase-requests/{id}/recommendation/approvals/{type}", prs.RemoveRecApproval)
 			r.Put("/purchase-requests/{id}/recommendation/approvals/{type}/assignee", prs.SetRecAssignee)
 			r.Post("/purchase-requests/{id}/recommendation/approvals/{type}/assignee/remind", prs.RemindRecAssignee)
 			r.Post("/purchase-requests/{id}/recommendation/approvals/budget/remind", prs.RemindBudgetApprovers)
+			// Serial budget approval chain: procurement manages the additional steps;
+			// each step's named approver (or the budget-unit approver for the base)
+			// records the approve/reject/revert decision.
+			r.Post("/purchase-requests/{id}/recommendation/budget-steps", prs.AddBudgetStep)
+			r.Put("/purchase-requests/{id}/recommendation/budget-steps/{stepID}", prs.UpdateBudgetStep)
+			r.Delete("/purchase-requests/{id}/recommendation/budget-steps/{stepID}", prs.DeleteBudgetStep)
+			r.Post("/purchase-requests/{id}/recommendation/budget-steps/{stepID}/decision", prs.SetBudgetStepDecision)
+			r.Post("/purchase-requests/{id}/recommendation/budget-steps/{stepID}/remind", prs.RemindBudgetStep)
 			r.Post("/purchase-requests/{id}/recommendation/comments", prs.AddRecComment)
 			r.Post("/purchase-requests/{id}/recommendation/comments/{commentID}/documents", prs.UploadRecCommentDocument)
 			r.Get("/purchase-requests/{id}/recommendation/comments/{commentID}/documents/{docID}/download", prs.DownloadRecCommentDocument)
@@ -143,17 +170,17 @@ func NewRouter(d Deps) http.Handler {
 			r.Put("/vendors/{id}", vendors.Update)
 			r.Get("/vendors/{id}/usage", vendors.Usage)
 
-			// Budget units (management is admin/procurement_admin; the lookup and
-			// approver preview are open to any authenticated user for the PR
-			// form). Register /lookup before /{id} so it is not captured as an id.
-			r.Get("/budget-units/lookup", budgetUnits.Lookup)
-			r.Get("/budget-units", budgetUnits.List)
-			r.Post("/budget-units", budgetUnits.Create)
-			r.Get("/budget-units/{id}", budgetUnits.Get)
-			r.Put("/budget-units/{id}", budgetUnits.Update)
-			r.Get("/budget-units/{id}/usage", budgetUnits.Usage)
-			r.Get("/budget-units/{id}/invoices", budgetUnits.Invoices)
-			r.Get("/budget-units/{id}/approvers", budgetUnits.Approvers)
+			// Business units (management is admin/procurement_admin; the lookup and
+			// approver list are open to any authenticated user for the PR form).
+			// Register /lookup before /{id} so it is not captured as an id.
+			r.Get("/business-units/lookup", businessUnits.Lookup)
+			r.Get("/business-units", businessUnits.List)
+			r.Post("/business-units", businessUnits.Create)
+			r.Get("/business-units/{id}", businessUnits.Get)
+			r.Put("/business-units/{id}", businessUnits.Update)
+			r.Get("/business-units/{id}/usage", businessUnits.Usage)
+			r.Get("/business-units/{id}/invoices", businessUnits.Invoices)
+			r.Get("/business-units/{id}/approvers", businessUnits.Approvers)
 
 			// Configurable dropdown lists. The lookup is open to any authenticated
 			// user (populates the requisition-form dropdowns); managing the lists
@@ -172,6 +199,13 @@ func NewRouter(d Deps) http.Handler {
 			r.Put("/teams/{key}/email", teams.UpdateEmail)
 			r.Post("/teams/{key}/members", teams.AddMember)
 			r.Delete("/teams/{key}/members/{userID}", teams.RemoveMember)
+
+			// Audit/process events view (admin/procurement_admin — enforced in the
+			// handlers). Read-only over the two append-only logs; the action lists
+			// back the filter dropdowns.
+			r.Get("/events/process", events.ListProcess)
+			r.Get("/events/audit", events.ListAudit)
+			r.Get("/events/actions", events.Actions)
 
 			// File storage configuration (admin only — enforced in the handlers).
 			r.Get("/storage/status", storageH.Status)

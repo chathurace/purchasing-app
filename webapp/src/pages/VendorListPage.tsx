@@ -1,6 +1,25 @@
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import {
+  Alert,
+  Box,
+  Button,
+  Chip,
+  CircularProgress,
+  Link as MuiLink,
+  MenuItem,
+  Paper,
+  Stack,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
+  TextField,
+  Typography,
+} from "@wso2/oxygen-ui";
 import { useVendors } from "../hooks/useVendors";
 import { useCanManageVendors } from "../hooks/useCanManageVendors";
 import { createVendor } from "../api/vendors";
@@ -49,131 +68,142 @@ export function VendorListPage() {
 
   if (!canManage) {
     return (
-      <div className="rounded border border-dashed bg-white p-8 text-center text-gray-500">
-        You need the admin or procurement_admin role to manage vendors.
-      </div>
+      <Box sx={{ maxWidth: 1200, mx: "auto", p: { xs: 2, md: 4 } }}>
+        <Alert severity="info">You need the admin or procurement_admin role to manage vendors.</Alert>
+      </Box>
     );
   }
 
   return (
-    <div>
-      <div className="mb-1 flex items-center justify-between">
-        <h1 className="text-xl font-semibold text-gray-900">Vendors</h1>
-        <button
-          type="button"
+    <Box sx={{ maxWidth: 1200, mx: "auto", p: { xs: 2, md: 4 } }}>
+      <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <Typography variant="h5" sx={{ fontWeight: 600 }}>
+          Vendors
+        </Typography>
+        <Button
+          variant="contained"
           onClick={() => {
             setAdding((a) => !a);
             setFormError(null);
             setDraft(emptyVendor);
           }}
-          className="rounded bg-indigo-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-indigo-700"
         >
-          {adding ? "Cancel" : "+ New vendor"}
-        </button>
-      </div>
-      <p className="mb-6 text-sm text-gray-500">
+          {adding ? "Cancel" : "New vendor"}
+        </Button>
+      </Box>
+      <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5, mb: 3 }}>
         Manage the vendor master used across quotations, contracts, GRNs and invoices. Deactivate a
         vendor to retire it without losing history — inactive vendors can no longer be selected on
         new records.
-      </p>
+      </Typography>
 
       {adding && (
-        <form
+        <Paper
+          component="form"
+          variant="outlined"
+          sx={{ mb: 3, p: 2 }}
           onSubmit={(e) => {
             e.preventDefault();
             create.mutate();
           }}
-          className="mb-6 rounded border bg-white p-4"
         >
           <VendorFields value={draft} onChange={setDraft} />
-          {formError && <p className="mt-2 text-sm text-red-600">{formError}</p>}
-          <div className="mt-4">
-            <button
+          {formError && (
+            <Alert severity="error" sx={{ mt: 2 }}>
+              {formError}
+            </Alert>
+          )}
+          <Box sx={{ mt: 2 }}>
+            <Button
               type="submit"
+              variant="contained"
               disabled={create.isPending || draft.name.trim() === ""}
-              className="rounded bg-indigo-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
             >
               {create.isPending ? "Adding…" : "Add vendor"}
-            </button>
-          </div>
-        </form>
+            </Button>
+          </Box>
+        </Paper>
       )}
 
-      <div className="mb-4 flex flex-wrap items-center gap-3">
-        <input
+      <Box sx={{ mb: 2, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 1.5 }}>
+        <TextField
+          size="small"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder="Search by name, contact or email…"
-          className="w-72 rounded border px-3 py-1.5 text-sm"
+          sx={{ width: 288 }}
         />
-        <select
+        <TextField
+          select
+          size="small"
           value={statusFilter}
           onChange={(e) => setStatusFilter(e.target.value as StatusFilter)}
-          className="rounded border px-2 py-1.5 text-sm text-gray-700"
+          sx={{ minWidth: 120 }}
         >
-          <option value="active">Active</option>
-          <option value="inactive">Inactive</option>
-          <option value="all">All</option>
-        </select>
-      </div>
+          <MenuItem value="active">Active</MenuItem>
+          <MenuItem value="inactive">Inactive</MenuItem>
+          <MenuItem value="all">All</MenuItem>
+        </TextField>
+      </Box>
 
-      {isLoading && <p className="text-gray-500">Loading…</p>}
-      {error && <p className="text-red-600">Failed to load vendors.</p>}
+      {isLoading && <CircularProgress size={24} />}
+      {error && <Alert severity="error">Failed to load vendors.</Alert>}
 
       {vendors && (
-        <div className="overflow-hidden rounded border bg-white">
-          <table className="w-full text-sm">
-            <thead className="border-b bg-gray-50 text-left text-gray-500">
-              <tr>
-                <th className="px-4 py-2 font-medium">Vendor</th>
-                <th className="px-4 py-2 font-medium">Contact</th>
-                <th className="px-4 py-2 font-medium">Status</th>
-              </tr>
-            </thead>
-            <tbody>
+        <TableContainer component={Paper} variant="outlined">
+          <Table size="small">
+            <TableHead>
+              <TableRow>
+                <TableCell>Vendor</TableCell>
+                <TableCell>Contact</TableCell>
+                <TableCell>Status</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
               {filtered.length === 0 && (
-                <tr>
-                  <td colSpan={3} className="px-4 py-6 text-center text-gray-400">
+                <TableRow>
+                  <TableCell colSpan={3} align="center" sx={{ py: 4, color: "text.disabled" }}>
                     No vendors match.
-                  </td>
-                </tr>
+                  </TableCell>
+                </TableRow>
               )}
               {filtered.map((v) => (
-                <tr key={v.id} className={`border-b last:border-0 ${v.is_active ? "" : "bg-gray-50"}`}>
-                  <td className="px-4 py-3 align-top">
-                    <Link to={`/vendors/${v.id}`} className="font-medium text-indigo-600">
+                <TableRow key={v.id} sx={v.is_active ? undefined : { bgcolor: "action.hover" }}>
+                  <TableCell sx={{ verticalAlign: "top" }}>
+                    <MuiLink component={Link} to={`/vendors/${v.id}`} sx={{ fontWeight: 500 }}>
                       {v.name}
-                    </Link>
-                    <div className="text-xs text-gray-400">{vendorRef(v.id)}</div>
-                  </td>
-                  <td className="px-4 py-3 align-top text-gray-700">
-                    <div>{v.contact_name || "—"}</div>
-                    {v.email && <div className="text-gray-500">{v.email}</div>}
-                  </td>
-                  <td className="px-4 py-3 align-top">
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      {v.is_active ? (
-                        <span className="rounded bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700">
-                          Active
-                        </span>
-                      ) : (
-                        <span className="rounded bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700">
-                          Inactive
-                        </span>
-                      )}
+                    </MuiLink>
+                    <Typography variant="caption" color="text.disabled" display="block">
+                      {vendorRef(v.id)}
+                    </Typography>
+                  </TableCell>
+                  <TableCell sx={{ verticalAlign: "top" }}>
+                    <Typography variant="body2">{v.contact_name || "—"}</Typography>
+                    {v.email && (
+                      <Typography variant="body2" color="text.secondary">
+                        {v.email}
+                      </Typography>
+                    )}
+                  </TableCell>
+                  <TableCell sx={{ verticalAlign: "top" }}>
+                    <Stack direction="row" spacing={0.75} flexWrap="wrap" alignItems="center">
+                      <Chip
+                        size="small"
+                        variant="outlined"
+                        color={v.is_active ? "success" : "error"}
+                        label={v.is_active ? "Active" : "Inactive"}
+                      />
                       {v.registered && (
-                        <span className="rounded bg-indigo-100 px-2 py-0.5 text-xs font-medium text-indigo-700">
-                          Registered
-                        </span>
+                        <Chip size="small" variant="outlined" color="primary" label="Registered" />
                       )}
-                    </div>
-                  </td>
-                </tr>
+                    </Stack>
+                  </TableCell>
+                </TableRow>
               ))}
-            </tbody>
-          </table>
-        </div>
+            </TableBody>
+          </Table>
+        </TableContainer>
       )}
-    </div>
+    </Box>
   );
 }

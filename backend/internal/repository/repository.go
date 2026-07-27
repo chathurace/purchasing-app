@@ -246,6 +246,38 @@ func (r *Repository) CreateInvitedUser(ctx context.Context, email, name string) 
 	return u, nil
 }
 
+// GetOrCreateUserByEmail returns the user matching email (case-insensitive),
+// creating a pending invite (see CreateInvitedUser) when none exists. Used when a
+// directory person picked for an id-based field (business-unit approver, team
+// member) is not yet a provisioned app user; the row is claimed on their first
+// login, exactly like an admin invite.
+func (r *Repository) GetOrCreateUserByEmail(ctx context.Context, email, name string) (*User, error) {
+	email = strings.ToLower(strings.TrimSpace(email))
+	u, err := r.getUserByEmail(ctx, email)
+	if err == nil {
+		return u, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return nil, err
+	}
+	created, err := r.CreateInvitedUser(ctx, email, strings.TrimSpace(name))
+	if err != nil {
+		// Lost a race with a concurrent create — re-read the existing row.
+		if errors.Is(err, ErrEmailExists) {
+			return r.getUserByEmail(ctx, email)
+		}
+		return nil, err
+	}
+	return created, nil
+}
+
+func (r *Repository) getUserByEmail(ctx context.Context, lowerEmail string) (*User, error) {
+	row := r.pool.QueryRow(ctx, `
+		SELECT id, sub, email, name, is_active, created_at, updated_at
+		FROM users WHERE lower(email) = $1`, lowerEmail)
+	return scanUser(row)
+}
+
 // ErrUserAlreadyLoggedIn is returned when an admin tries to edit a user who has
 // already claimed their account (has an OIDC sub). Their email is the login-match
 // key at that point and is owned by the IdP, so it is no longer editable here.
@@ -391,7 +423,7 @@ type PurchaseRequest struct {
 	Reference       *string `json:"reference"`
 	Title           string  `json:"title"`
 	RequesterID     int64   `json:"requester_id"`
-	BudgetUnitID    *int64  `json:"budget_unit_id"`
+	BusinessUnitID  *int64  `json:"business_unit_id"`
 	Comments        string  `json:"comments"`
 	Status          string  `json:"status"`
 	RejectionReason string  `json:"rejection_reason"`
@@ -426,14 +458,14 @@ type PurchaseRequest struct {
 	Collaborators []UserSummary `json:"collaborators,omitempty"`
 	// MyCanAssign / MyCanManageCollaborators / MyCanWork are per-caller display
 	// flags (detail reads only), set by the handler — see the flag helpers there.
-	MyCanAssign              bool      `json:"my_can_assign"`
-	MyCanManageCollaborators bool      `json:"my_can_manage_collaborators"`
-	MyCanWork                bool      `json:"my_can_work"`
-	CreatedAt                time.Time `json:"created_at"`
-	UpdatedAt            time.Time  `json:"updated_at"`
-	Items                []Item     `json:"items"`
-	Links                []Link     `json:"links"`
-	Documents            []Document `json:"documents"`
+	MyCanAssign              bool       `json:"my_can_assign"`
+	MyCanManageCollaborators bool       `json:"my_can_manage_collaborators"`
+	MyCanWork                bool       `json:"my_can_work"`
+	CreatedAt                time.Time  `json:"created_at"`
+	UpdatedAt                time.Time  `json:"updated_at"`
+	Items                    []Item     `json:"items"`
+	Links                    []Link     `json:"links"`
+	Documents                []Document `json:"documents"`
 	// Requester is populated on detail/list reads for display.
 	Requester *UserSummary `json:"requester,omitempty"`
 	// Approvals is the full per-approver decision list (detail reads only).
@@ -465,12 +497,12 @@ type UserSummary struct {
 // PurchaseRequestInput carries the writable fields for create/update.
 type PurchaseRequestInput struct {
 	Title string
-	// BudgetUnitID links the request to a managed budget unit (nullable). The
-	// budget approver is derived from it plus an estimated value + currency.
-	BudgetUnitID *int64
-	Comments     string
-	Items        []Item
-	Links        []Link
+	// BusinessUnitID links the request to a managed business unit (nullable). The
+	// budget approver is picked from that unit's approver list.
+	BusinessUnitID *int64
+	Comments       string
+	Items          []Item
+	Links          []Link
 	// ApproverIDs are the users asked to approve the request. Honored only on
 	// create — approvers are managed afterwards through dedicated endpoints so an
 	// edit never discards recorded decisions.
@@ -525,13 +557,13 @@ func (r *Repository) CreatePurchaseRequest(ctx context.Context, requesterID int6
 	var id int64
 	if err := tx.QueryRow(ctx, `
 		INSERT INTO purchase_requests
-			(title, requester_id, budget_unit_id, comments,
+			(title, requester_id, business_unit_id, comments,
 			 team, entity, category, estimated_value, currency,
 			 budget_approver_name, budget_approver_email, details, reference, team_lead_email)
 		VALUES ($1, $2, $3, $4,
 			 $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13, $14)
 		RETURNING id`,
-		in.Title, requesterID, in.BudgetUnitID, in.Comments,
+		in.Title, requesterID, in.BusinessUnitID, in.Comments,
 		in.Team, in.Entity, in.Category, in.EstimatedValue, in.Currency,
 		in.BudgetApproverName, in.BudgetApproverEmail, detailsOrEmpty(in.Details), reference,
 		normEmail(in.TeamLeadEmail)).Scan(&id); err != nil {
@@ -578,7 +610,7 @@ func (r *Repository) UpdatePurchaseRequest(ctx context.Context, id int64, in Pur
 	if _, err := tx.Exec(ctx, `
 		UPDATE purchase_requests
 		SET title = $2,
-			budget_unit_id = $3, comments = $4,
+			business_unit_id = $3, comments = $4,
 			team = $5, entity = $6, category = $7, estimated_value = $8, currency = $9,
 			budget_approver_name = $10, budget_approver_email = $11, details = $12::jsonb,
 			team_lead_status = CASE WHEN team_lead_status = 'rejected' OR team_lead_email <> $13
@@ -592,7 +624,7 @@ func (r *Repository) UpdatePurchaseRequest(ctx context.Context, id int64, in Pur
 			team_lead_email = $13,
 			updated_at = NOW()
 		WHERE id = $1`,
-		id, in.Title, in.BudgetUnitID, in.Comments,
+		id, in.Title, in.BusinessUnitID, in.Comments,
 		in.Team, in.Entity, in.Category, in.EstimatedValue, in.Currency,
 		in.BudgetApproverName, in.BudgetApproverEmail, detailsOrEmpty(in.Details),
 		normEmail(in.TeamLeadEmail)); err != nil {
@@ -645,11 +677,37 @@ const (
 	PRScopeApprovals PRListScope = "approvals"
 )
 
+// PRListFilter holds the optional server-side filters applied by the
+// Purchase-requests page controls. Zero-value fields (empty string / nil) mean
+// "no filter on that field"; they are ANDed on top of the caller's scope
+// visibility, so a filter can never widen what the caller may see.
+type PRListFilter struct {
+	// Status is an exact PR status match (e.g. "submitted"); "" = any status.
+	Status string
+	// BusinessUnitID matches pr.business_unit_id when non-nil.
+	BusinessUnitID *int64
+	// VendorID matches the PR's recommended vendor (pr_recommendations.vendor_id)
+	// when non-nil.
+	VendorID *int64
+	// RequesterID matches pr.requester_id when non-nil.
+	RequesterID *int64
+	// AssigneeID matches pr.assignee_id when non-nil.
+	AssigneeID *int64
+}
+
 // approvablePredicate is a SQL boolean fragment, true when the caller is an
 // approver on the purchase request aliased `pr`: a named pr_approvals approver, a
-// legal/security recommendation-card actor, or the budget owner of the PR's cost
-// center. It binds $1 (caller user id), $2 (hasLegal), $3 (hasSecurity); callers
-// MUST supply those three args in that order.
+// legal/security recommendation-card actor, the budget owner of the PR's budget
+// unit, or a named budget-chain step approver (email match). It binds $1 (caller
+// user id), $2 (hasLegal), $3 (hasSecurity), $4 (caller email, lowercased);
+// callers MUST supply those four args in that order.
+// budgetEmailMatch is a SQL boolean fragment, true when the lowercased caller
+// email ($4) is a member of the PR's free-text, comma-separated
+// budget_approver_email list (case-insensitive; empty segments ignored). This is
+// the approver the requester picked from the business unit's approver list.
+const budgetEmailMatch = `($4 <> '' AND $4 = ANY (
+	SELECT lower(trim(e)) FROM unnest(string_to_array(pr.budget_approver_email, ',')) AS e WHERE trim(e) <> ''))`
+
 const approvablePredicate = `(
 	EXISTS (SELECT 1 FROM pr_approvals a WHERE a.purchase_request_id = pr.id AND a.approver_id = $1)
 	OR EXISTS (
@@ -658,10 +716,12 @@ const approvablePredicate = `(
 		WHERE rec.purchase_request_id = pr.id AND (
 			(ra.approval_type = 'legal'    AND $2)
 			OR (ra.approval_type = 'security' AND $3)
-			OR (ra.approval_type = 'budget' AND pr.budget_unit_id IS NOT NULL AND EXISTS (
-				SELECT 1 FROM resolve_budget_approvers(pr.budget_unit_id, rec.estimated_value, rec.currency) rba
-				WHERE rba.user_id = $1))
-		)))`
+			OR (ra.approval_type = 'budget' AND ` + budgetEmailMatch + `)
+		))
+	OR EXISTS (
+		SELECT 1 FROM pr_recommendation_budget_steps s
+		JOIN pr_recommendations recs ON recs.id = s.recommendation_id
+		WHERE recs.purchase_request_id = pr.id AND s.approver_email <> '' AND lower(s.approver_email) = $4))`
 
 // teamLeadMatch is a SQL boolean fragment, true when the caller is the named team
 // lead of the PR aliased `pr` — a case-insensitive match of the PR's team lead
@@ -686,12 +746,18 @@ const myApprovalStateExpr = `
 			WHERE rec.purchase_request_id = pr.id AND ra.approved_by IS NULL AND (
 				(ra.approval_type = 'legal'    AND $2)
 				OR (ra.approval_type = 'security' AND $3)
-				OR (ra.approval_type = 'budget' AND pr.budget_unit_id IS NOT NULL AND EXISTS (
-					SELECT 1 FROM resolve_budget_approvers(pr.budget_unit_id, rec.estimated_value, rec.currency) rba
-					WHERE rba.user_id = $1))))
+				OR (ra.approval_type = 'budget' AND ` + budgetEmailMatch + `)))
+		  OR EXISTS (
+			SELECT 1 FROM pr_recommendation_budget_steps s
+			JOIN pr_recommendations recs ON recs.id = s.recommendation_id
+			WHERE recs.purchase_request_id = pr.id AND lower(s.approver_email) = $4 AND s.decision = 'pending')
 		THEN 'pending'
 		WHEN (` + teamLeadMatch + ` AND pr.team_lead_status = 'rejected')
 		  OR EXISTS (SELECT 1 FROM pr_approvals a WHERE a.purchase_request_id = pr.id AND a.approver_id = $1 AND a.status = 'rejected')
+		  OR EXISTS (
+			SELECT 1 FROM pr_recommendation_budget_steps s
+			JOIN pr_recommendations recs ON recs.id = s.recommendation_id
+			WHERE recs.purchase_request_id = pr.id AND lower(s.approver_email) = $4 AND s.decision = 'rejected')
 		THEN 'rejected'
 		ELSE 'approved'
 	END`
@@ -705,9 +771,9 @@ const myApprovalStateExpr = `
 // Visibility gate: a PR is broadly visible only once its team lead has approved
 // it. Before that only the requester, the team lead (email match), and admins may
 // see it — procurement/named-approvers/recommendation-card actors are excluded.
-func (r *Repository) ListPurchaseRequests(ctx context.Context, callerID int64, callerEmail string, seesAll, isAdmin, hasLegal, hasSecurity bool, scope PRListScope) ([]*PurchaseRequest, error) {
+func (r *Repository) ListPurchaseRequests(ctx context.Context, callerID int64, callerEmail string, seesAll, isAdmin, hasLegal, hasSecurity bool, scope PRListScope, filter PRListFilter) ([]*PurchaseRequest, error) {
 	query := `
-		SELECT pr.id, pr.reference, pr.title, pr.requester_id, pr.budget_unit_id, pr.comments, pr.status,
+		SELECT pr.id, pr.reference, pr.title, pr.requester_id, pr.business_unit_id, pr.comments, pr.status,
 		       pr.rejection_reason, pr.created_at, pr.updated_at, u.email, u.name,
 		       pr.team, pr.entity, pr.category, pr.estimated_value, pr.currency,
 		       pr.team_lead_email, pr.team_lead_status,
@@ -724,26 +790,57 @@ func (r *Repository) ListPurchaseRequests(ctx context.Context, callerID int64, c
 		LEFT JOIN users au ON au.id = pr.assignee_id`
 	// $1/$2/$3/$4 are always bound because myApprovalStateExpr references all four.
 	args := []any{callerID, hasLegal, hasSecurity, normEmail(callerEmail)}
+
+	// wheres accumulates the caller's scope visibility plus any page filters; they
+	// are ANDed, so filters only ever narrow what the caller may already see.
+	var wheres []string
 	switch scope {
 	case PRScopeMine:
-		query += ` WHERE pr.requester_id = $1`
+		wheres = append(wheres, `pr.requester_id = $1`)
 	case PRScopeApprovals:
 		// Team lead sees their own queue at any status; other card actors only
 		// after the team lead has approved (before that the PR is hidden).
-		query += ` WHERE pr.requester_id <> $1 AND (` + teamLeadMatch +
-			` OR (pr.team_lead_status = 'approved' AND ` + approvablePredicate + `))`
+		wheres = append(wheres, `pr.requester_id <> $1 AND (`+teamLeadMatch+
+			` OR (pr.team_lead_status = 'approved' AND `+approvablePredicate+`))`)
 	default:
 		switch {
 		case isAdmin:
-			// Admins see every PR at any status — no WHERE.
+			// Admins see every PR at any status — no scope restriction.
 		case seesAll:
 			// Procurement (non-admin): own + team-lead-of + any team-lead-approved PR.
-			query += ` WHERE (pr.requester_id = $1 OR ` + teamLeadMatch +
-				` OR pr.team_lead_status = 'approved')`
+			wheres = append(wheres, `(pr.requester_id = $1 OR `+teamLeadMatch+
+				` OR pr.team_lead_status = 'approved')`)
 		default:
-			query += ` WHERE (pr.requester_id = $1 OR ` + teamLeadMatch +
-				` OR (pr.team_lead_status = 'approved' AND ` + approvablePredicate + `))`
+			wheres = append(wheres, `(pr.requester_id = $1 OR `+teamLeadMatch+
+				` OR (pr.team_lead_status = 'approved' AND `+approvablePredicate+`))`)
 		}
+	}
+
+	// Optional server-side filters (Purchase-requests page controls).
+	if filter.Status != "" {
+		args = append(args, filter.Status)
+		wheres = append(wheres, fmt.Sprintf(`pr.status = $%d`, len(args)))
+	}
+	if filter.BusinessUnitID != nil {
+		args = append(args, *filter.BusinessUnitID)
+		wheres = append(wheres, fmt.Sprintf(`pr.business_unit_id = $%d`, len(args)))
+	}
+	if filter.RequesterID != nil {
+		args = append(args, *filter.RequesterID)
+		wheres = append(wheres, fmt.Sprintf(`pr.requester_id = $%d`, len(args)))
+	}
+	if filter.AssigneeID != nil {
+		args = append(args, *filter.AssigneeID)
+		wheres = append(wheres, fmt.Sprintf(`pr.assignee_id = $%d`, len(args)))
+	}
+	if filter.VendorID != nil {
+		args = append(args, *filter.VendorID)
+		wheres = append(wheres, fmt.Sprintf(
+			`EXISTS (SELECT 1 FROM pr_recommendations rec WHERE rec.purchase_request_id = pr.id AND rec.vendor_id = $%d)`, len(args)))
+	}
+
+	if len(wheres) > 0 {
+		query += ` WHERE ` + strings.Join(wheres, ` AND `)
 	}
 	query += ` ORDER BY pr.created_at DESC`
 
@@ -759,7 +856,7 @@ func (r *Repository) ListPurchaseRequests(ctx context.Context, callerID int64, c
 		var email, name, myStatus, myState, reference pgtype.Text
 		var assigneeID pgtype.Int8
 		var assigneeEmail, assigneeName pgtype.Text
-		if err := rows.Scan(&pr.ID, &reference, &pr.Title, &pr.RequesterID, &pr.BudgetUnitID, &pr.Comments,
+		if err := rows.Scan(&pr.ID, &reference, &pr.Title, &pr.RequesterID, &pr.BusinessUnitID, &pr.Comments,
 			&pr.Status, &pr.RejectionReason, &pr.CreatedAt, &pr.UpdatedAt, &email, &name,
 			&pr.Team, &pr.Entity, &pr.Category, &pr.EstimatedValue, &pr.Currency,
 			&pr.TeamLeadEmail, &pr.TeamLeadStatus,
@@ -792,13 +889,13 @@ func (r *Repository) ListPurchaseRequests(ctx context.Context, callerID int64, c
 // IsApproverForPR reports whether the caller is an approver on a single PR — the
 // per-PR form of approvablePredicate. Used to gate read access to a PR's
 // quotations and contracts.
-func (r *Repository) IsApproverForPR(ctx context.Context, prID, callerID int64, hasLegal, hasSecurity bool) (bool, error) {
+func (r *Repository) IsApproverForPR(ctx context.Context, prID, callerID int64, callerEmail string, hasLegal, hasSecurity bool) (bool, error) {
 	var ok bool
 	err := r.pool.QueryRow(ctx, `
 		SELECT EXISTS (
 			SELECT 1 FROM purchase_requests pr
-			WHERE pr.id = $4 AND `+approvablePredicate+`)`,
-		callerID, hasLegal, hasSecurity, prID).Scan(&ok)
+			WHERE pr.id = $5 AND `+approvablePredicate+`)`,
+		callerID, hasLegal, hasSecurity, normEmail(callerEmail), prID).Scan(&ok)
 	return ok, err
 }
 
@@ -1001,7 +1098,7 @@ func (r *Repository) GetPurchaseRequest(ctx context.Context, id int64) (*Purchas
 	var assignedAt pgtype.Timestamptz
 	var assigneeEmail, assigneeName pgtype.Text
 	err := r.pool.QueryRow(ctx, `
-		SELECT pr.id, pr.reference, pr.title, pr.requester_id, pr.budget_unit_id, pr.comments, pr.status,
+		SELECT pr.id, pr.reference, pr.title, pr.requester_id, pr.business_unit_id, pr.comments, pr.status,
 		       pr.rejection_reason, pr.created_at, pr.updated_at, u.email, u.name,
 		       pr.team, pr.entity, pr.category, pr.estimated_value, pr.currency,
 		       pr.budget_approver_name, pr.budget_approver_email, pr.details,
@@ -1011,7 +1108,7 @@ func (r *Repository) GetPurchaseRequest(ctx context.Context, id int64) (*Purchas
 		FROM purchase_requests pr
 		JOIN users u ON u.id = pr.requester_id
 		LEFT JOIN users au ON au.id = pr.assignee_id
-		WHERE pr.id = $1`, id).Scan(&pr.ID, &reference, &pr.Title, &pr.RequesterID, &pr.BudgetUnitID,
+		WHERE pr.id = $1`, id).Scan(&pr.ID, &reference, &pr.Title, &pr.RequesterID, &pr.BusinessUnitID,
 		&pr.Comments, &pr.Status, &pr.RejectionReason, &pr.CreatedAt, &pr.UpdatedAt, &email, &name,
 		&pr.Team, &pr.Entity, &pr.Category, &pr.EstimatedValue, &pr.Currency,
 		&pr.BudgetApproverName, &pr.BudgetApproverEmail, &details,

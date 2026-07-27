@@ -1,0 +1,699 @@
+/*
+ * ProQ requisition-form styles, ported from resources/ProQ-new-requisition.html.
+ * Everything is scoped under `.proq-req` so the ornate ProQ visual language does
+ * not leak into the rest of the (Tailwind) app. The mockup's own top-nav and
+ * success pane are intentionally omitted — the app has its own Layout chrome and
+ * navigates to the PR detail page on submit.
+ */
+
+.proq-req {
+  --ink: #0a0a0a;
+  --proq-blue: #ff7300;
+  --proq-blue-deep: #d96200;
+  --sky-tint: #fff1e6;
+  --slate: #5b6472;
+  --line: #e6e9ef;
+  --bg: #f6f8fb;
+  --white: #ffffff;
+  --ok: #0e9f6e;
+  --danger: #dc2626;
+  --danger-bg: #fdecec;
+  font-family: "Inter", -apple-system, sans-serif;
+  color: var(--ink);
+}
+.proq-req * {
+  box-sizing: border-box;
+}
+
+/* ============ PAGE HERO (rounded banner, adapted to sit inside the app layout) ============ */
+/* Light, pastel-orange banner keyed to the ProQ accent (#ff7300). Text is dark
+   (ink/slate) since the background is now pale. */
+.proq-req .page-hero {
+  background: linear-gradient(135deg, #fff6ee 0%, #ffe2c9 100%);
+  position: relative;
+  overflow: hidden;
+  border-radius: 16px;
+  border: 1px solid #ffd9bd;
+  box-shadow: 0 4px 20px rgba(217, 98, 0, 0.1);
+}
+.proq-req .page-hero::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(rgba(217, 98, 0, 0.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(217, 98, 0, 0.05) 1px, transparent 1px);
+  background-size: 40px 40px;
+  pointer-events: none;
+}
+.proq-req .page-hero::after {
+  content: "";
+  position: absolute;
+  width: 460px;
+  height: 460px;
+  border-radius: 50%;
+  /* Soft orange bloom for a little warmth/depth on the pale bg. */
+  background: radial-gradient(circle, rgba(255, 115, 0, 0.16) 0%, transparent 65%);
+  bottom: -280px;
+  left: -140px;
+  pointer-events: none;
+}
+.proq-req .page-hero-inner {
+  padding: 0 28px;
+  position: relative;
+  z-index: 1;
+}
+.proq-req .page-hero-top {
+  padding-top: 28px;
+  padding-bottom: 20px;
+}
+.proq-req .page-hero-bottom {
+  padding-top: 20px;
+  padding-bottom: 28px;
+}
+.proq-req .crumb {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 11.5px;
+  letter-spacing: 1.8px;
+  text-transform: uppercase;
+  color: var(--proq-blue-deep);
+  margin-bottom: 8px;
+}
+.proq-req .crumb a {
+  color: var(--proq-blue-deep);
+  text-decoration: none;
+}
+.proq-req .crumb a:hover {
+  text-decoration: underline;
+}
+.proq-req .page-hero-inner h1 {
+  font-family: "Space Grotesk", sans-serif;
+  font-weight: 700;
+  font-size: 28px;
+  letter-spacing: -0.7px;
+  color: var(--ink);
+  margin: 0;
+}
+.proq-req .page-hero-inner .sub {
+  margin-top: 6px;
+  font-size: 14px;
+  color: var(--slate);
+  max-width: 640px;
+  line-height: 1.6;
+}
+.proq-req .hero-divider {
+  height: 1px;
+  width: 100%;
+  background: rgba(217, 98, 0, 0.2);
+  position: relative;
+  z-index: 1;
+}
+
+/* ============ STEPPER — oval pills ============ */
+.proq-req .stepper {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  row-gap: 18px;
+  position: relative;
+  z-index: 1;
+}
+.proq-req .step-tab {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 10px 16px;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--slate);
+  background: rgba(255, 255, 255, 0.7);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  cursor: pointer;
+  position: relative;
+  font-family: "Inter", sans-serif;
+  white-space: nowrap;
+  transition: background 0.2s ease, color 0.15s, border-color 0.2s ease;
+}
+.proq-req .step-tab::after {
+  content: "";
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  bottom: -7px;
+  height: 1.5px;
+  background: var(--proq-blue);
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+.proq-req .step-tab.reached::after {
+  opacity: 1;
+}
+.proq-req .step-tab .n {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 11.5px;
+  font-weight: 600;
+  background: rgba(10, 10, 10, 0.06);
+  color: var(--slate);
+  flex: none;
+  transition: all 0.15s;
+}
+.proq-req .step-tab.done {
+  color: var(--ink);
+  background: rgba(255, 115, 0, 0.1);
+  border-color: rgba(255, 115, 0, 0.4);
+}
+.proq-req .step-tab.done .n {
+  background: var(--ok);
+  color: #fff;
+}
+.proq-req .step-tab.current {
+  color: var(--ink);
+  background: rgba(255, 115, 0, 0.14);
+  border-color: var(--proq-blue);
+}
+.proq-req .step-tab.current .n {
+  background: var(--proq-blue);
+  color: #fff;
+  box-shadow: 0 0 10px rgba(255, 115, 0, 0.55);
+}
+.proq-req .step-tab:not(.done):not(.current):hover {
+  background: #ffffff;
+  border-color: rgba(255, 115, 0, 0.3);
+}
+.proq-req .step-tab.done:hover {
+  background: rgba(255, 115, 0, 0.18);
+}
+
+/* ============ CARD / FORM ============ */
+.proq-req .form-card {
+  background: var(--white);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  box-shadow: 0 1px 3px rgba(10, 10, 10, 0.05);
+  padding: 30px 34px 26px;
+  margin-top: 22px;
+}
+.proq-req .pane-title {
+  font-family: "Space Grotesk", sans-serif;
+  font-weight: 600;
+  font-size: 21px;
+  letter-spacing: -0.4px;
+  padding-bottom: 8px;
+  margin-bottom: 6px;
+  border-bottom: 3px solid var(--proq-blue);
+  display: inline-block;
+}
+.proq-req .pane-sub {
+  font-size: 14px;
+  color: var(--slate);
+  margin-bottom: 26px;
+  line-height: 1.6;
+}
+
+.proq-req .grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 18px 22px;
+}
+.proq-req .grid-3 {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 18px 22px;
+}
+.proq-req .field {
+  margin-bottom: 18px;
+}
+.proq-req .field label {
+  display: block;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 1.4px;
+  text-transform: uppercase;
+  color: var(--slate);
+  margin-bottom: 8px;
+}
+.proq-req .field label b {
+  color: var(--proq-blue);
+  font-weight: 500;
+}
+.proq-req .field input[type="text"],
+.proq-req .field input[type="email"],
+.proq-req .field input[type="date"],
+.proq-req .field input[type="number"],
+.proq-req .field select,
+.proq-req .field textarea,
+.proq-req .name-row input[type="text"] {
+  width: 100%;
+  font-family: "Inter", sans-serif;
+  font-size: 14.5px;
+  color: var(--ink);
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--white);
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.proq-req .field textarea {
+  min-height: 96px;
+  resize: vertical;
+  line-height: 1.55;
+}
+.proq-req .field input:focus,
+.proq-req .field select:focus,
+.proq-req .field textarea:focus,
+.proq-req .name-row input:focus {
+  border-color: var(--proq-blue);
+  box-shadow: 0 0 0 3px rgba(255, 115, 0, 0.14);
+}
+.proq-req .field input::placeholder,
+.proq-req .field textarea::placeholder,
+.proq-req .name-row input::placeholder {
+  color: #9aa2ae;
+}
+.proq-req .field .help {
+  margin-top: 7px;
+  font-size: 12.5px;
+  color: #8b93a1;
+  font-style: italic;
+  line-height: 1.5;
+}
+.proq-req .field input[type="file"] {
+  width: 100%;
+  font-family: "Inter", sans-serif;
+  font-size: 13.5px;
+  color: var(--slate);
+  padding: 10px 0 4px;
+  border: none;
+  background: transparent;
+}
+
+/* dynamic name lists */
+.proq-req .name-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.proq-req .name-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.proq-req .name-row input {
+  flex: 1;
+}
+.proq-req .name-remove {
+  flex: none;
+  width: 38px;
+  height: 38px;
+  border-radius: 9px;
+  border: 1px solid var(--line);
+  background: var(--white);
+  color: var(--slate);
+  font-size: 17px;
+  line-height: 1;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.proq-req .name-remove:hover {
+  border-color: var(--danger);
+  color: var(--danger);
+  background: var(--danger-bg);
+}
+.proq-req .name-add {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: "Inter", sans-serif;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--proq-blue);
+  background: var(--sky-tint);
+  border: 1px dashed rgba(255, 115, 0, 0.45);
+  border-radius: 9px;
+  padding: 9px 15px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.proq-req .name-add:hover {
+  background: #ffe6d1;
+}
+
+/* nested conditional follow-up */
+.proq-req .followup {
+  margin: -6px 0 18px;
+  padding: 16px 18px 4px;
+  border-left: 3px solid rgba(255, 115, 0, 0.4);
+  background: #fff9f4;
+  border-radius: 0 10px 10px 0;
+}
+
+/* under-development placeholder */
+.proq-req .dev-note {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  background: var(--sky-tint);
+  border: 1.5px dashed rgba(255, 115, 0, 0.45);
+  border-radius: 14px;
+  padding: 20px 22px;
+  font-size: 14.5px;
+  line-height: 1.65;
+  color: var(--ink);
+}
+.proq-req .dev-note .icon {
+  font-size: 22px;
+  line-height: 1;
+  flex: none;
+}
+.proq-req .dev-note strong {
+  font-weight: 600;
+}
+
+/* reassurance / process note */
+.proq-req .info-note {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  background: var(--sky-tint);
+  border-left: 4px solid var(--proq-blue);
+  border-radius: 0 12px 12px 0;
+  padding: 16px 20px;
+  margin: 4px 0 24px;
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: var(--ink);
+}
+.proq-req .info-note .icon {
+  font-size: 19px;
+  line-height: 1.3;
+  flex: none;
+}
+
+/* section band */
+.proq-req .section-band {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 1.8px;
+  text-transform: uppercase;
+  color: var(--ink);
+  background: var(--sky-tint);
+  border-left: 4px solid var(--proq-blue);
+  border-radius: 0 10px 10px 0;
+  padding: 12px 16px;
+  margin: 26px 0 20px;
+}
+
+/* purchase type cards */
+.proq-req .type-cards {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+  margin-bottom: 6px;
+}
+.proq-req .type-card {
+  text-align: left;
+  border: 1.5px solid var(--line);
+  border-radius: 14px;
+  background: var(--white);
+  padding: 20px 22px;
+  cursor: pointer;
+  font-family: "Inter", sans-serif;
+  transition: all 0.15s;
+  position: relative;
+}
+.proq-req .type-card:hover {
+  border-color: #c9cfda;
+}
+.proq-req .type-card h3 {
+  font-family: "Space Grotesk", sans-serif;
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.2px;
+  margin-bottom: 5px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+.proq-req .type-card p {
+  font-size: 13.5px;
+  color: var(--slate);
+}
+.proq-req .type-card .tick {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 1.5px solid var(--line);
+  display: grid;
+  place-items: center;
+  font-size: 12px;
+  color: transparent;
+  transition: all 0.15s;
+}
+.proq-req .type-card.selected {
+  border-color: var(--proq-blue);
+  background: var(--ink);
+  box-shadow: 0 10px 28px rgba(255, 115, 0, 0.32), 0 0 0 3px rgba(255, 115, 0, 0.22);
+}
+.proq-req .type-card.selected h3 {
+  color: #ffffff;
+}
+.proq-req .type-card.selected p {
+  color: rgba(255, 255, 255, 0.72);
+}
+.proq-req .type-card.selected .tick {
+  background: var(--proq-blue);
+  border-color: var(--proq-blue);
+  color: #fff;
+}
+.proq-req .type-hint {
+  font-size: 13px;
+  color: #9aa2ae;
+  margin: 10px 2px 4px;
+}
+
+/* yes/no toggles */
+.proq-req .yn {
+  display: flex;
+  gap: 10px;
+  max-width: 340px;
+}
+.proq-req .yn button {
+  flex: 1;
+  padding: 11px 10px;
+  font-family: "Inter", sans-serif;
+  font-size: 14px;
+  font-weight: 600;
+  border: 1.5px solid var(--line);
+  border-radius: 10px;
+  background: var(--white);
+  color: var(--slate);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.proq-req .yn button:hover {
+  border-color: #c9cfda;
+}
+.proq-req .yn button.on-yes {
+  border-color: var(--proq-blue);
+  background: var(--sky-tint);
+  color: var(--proq-blue);
+}
+.proq-req .yn button.on-no {
+  border-color: var(--ink);
+  background: #f2f3f6;
+  color: var(--ink);
+}
+
+/* validation */
+.proq-req .error-msg {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--danger);
+  background: var(--danger-bg);
+  border-radius: 10px;
+  padding: 12px 16px;
+  font-size: 13.5px;
+  font-weight: 500;
+  margin-top: 20px;
+}
+
+/* footer actions */
+.proq-req .form-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 28px;
+  padding-top: 22px;
+  border-top: 1px solid var(--line);
+}
+.proq-req .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-family: "Inter", sans-serif;
+  font-size: 14.5px;
+  font-weight: 600;
+  padding: 12px 22px;
+  border-radius: 11px;
+  border: none;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.proq-req .btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.proq-req .btn-primary {
+  background: var(--proq-blue);
+  color: #fff;
+  box-shadow: 0 5px 16px rgba(255, 115, 0, 0.28);
+}
+.proq-req .btn-primary:hover:not(:disabled) {
+  background: var(--proq-blue-deep);
+  transform: translateY(-1px);
+}
+.proq-req .btn-ghost {
+  background: var(--white);
+  color: var(--ink);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+.proq-req .btn-ghost:hover:not(:disabled) {
+  box-shadow: inset 0 0 0 1px #c9cfda;
+}
+.proq-req .btn-submit {
+  background: linear-gradient(135deg, #ff7300, #d96200);
+  color: #fff;
+  font-weight: 700;
+  padding: 13px 26px;
+  box-shadow: 0 8px 22px rgba(255, 115, 0, 0.4);
+}
+.proq-req .btn-submit:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 11px 26px rgba(255, 115, 0, 0.48);
+}
+
+/* review step */
+.proq-req .review-block {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  margin-bottom: 16px;
+  overflow: hidden;
+}
+.proq-req .review-block header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: #fafbfd;
+  padding: 13px 18px;
+  border-bottom: 1px solid var(--line);
+}
+.proq-req .review-block header h4 {
+  font-family: "Space Grotesk", sans-serif;
+  font-size: 15px;
+  font-weight: 600;
+  margin: 0;
+}
+.proq-req .review-block header button {
+  font-family: "Inter", sans-serif;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--proq-blue);
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+.proq-req .review-block header button:hover {
+  text-decoration: underline;
+}
+.proq-req .review-rows {
+  padding: 8px 18px 14px;
+}
+.proq-req .review-row {
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  gap: 14px;
+  padding: 8px 0;
+  font-size: 13.5px;
+  border-bottom: 1px dashed #f0f2f6;
+}
+.proq-req .review-row:last-child {
+  border-bottom: none;
+}
+.proq-req .review-row .k {
+  color: var(--slate);
+}
+.proq-req .review-row .v {
+  font-weight: 500;
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+.proq-req .review-row .v:empty::before {
+  content: "—";
+  color: #c2c8d2;
+  font-weight: 400;
+}
+
+/* declaration checkbox */
+.proq-req .declaration {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fafbfd;
+  padding: 16px 18px;
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: var(--ink);
+  margin-top: 8px;
+}
+.proq-req .declaration input {
+  margin-top: 3px;
+  accent-color: var(--proq-blue);
+}
+
+@media (max-width: 760px) {
+  .proq-req .grid-2,
+  .proq-req .grid-3 {
+    grid-template-columns: 1fr;
+  }
+  .proq-req .type-cards {
+    grid-template-columns: 1fr;
+  }
+  .proq-req .form-card {
+    padding: 24px 18px;
+  }
+  .proq-req .stepper {
+    row-gap: 12px;
+    gap: 8px;
+  }
+  .proq-req .step-tab {
+    padding: 9px 13px;
+    font-size: 12.5px;
+  }
+  .proq-req .review-row {
+    grid-template-columns: 1fr;
+    gap: 2px;
+  }
+  .proq-req .page-hero-inner {
+    padding-left: 18px;
+    padding-right: 18px;
+  }
+}

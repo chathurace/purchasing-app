@@ -1,5 +1,13 @@
 import { useCallback, useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  Alert,
+  Box,
+  Button,
+  Card,
+  CardContent,
+  Typography,
+} from "@wso2/oxygen-ui";
 import { ApiError } from "../api/client";
 import {
   connectStorage,
@@ -165,75 +173,97 @@ export function StorageSettings() {
   const connected = !!p?.connected;
 
   return (
-    <section className="rounded border bg-white p-5">
-      <h2 className="text-lg font-semibold text-gray-900">File storage (Google Drive)</h2>
-      <p className="mt-1 text-sm text-gray-500">
-        Documents (quotations, contracts, invoices…) are stored in a Google Drive folder. Connect a
-        Google account and choose the folder — changes take effect immediately.
-      </p>
+    <Card component="section" variant="outlined">
+      <CardContent>
+        <Typography variant="h6">File storage (Google Drive)</Typography>
+        <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+          Documents (quotations, contracts, invoices…) are stored in a Google Drive folder. Connect a
+          Google account and choose the folder — changes take effect immediately.
+        </Typography>
 
-      {err && (
-        <div className="mt-3 rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{err}</div>
-      )}
-
-      {resp && !prereqsOk && (
-        <div className="mt-3 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-          Storage can't be configured from here until the deployment sets{" "}
-          {!resp.oauth_client_configured && <code>storage.gdrive.oauth.client_id/client_secret/api_key</code>}
-          {!resp.oauth_client_configured && !resp.secret_key_configured && " and "}
-          {!resp.secret_key_configured && <code>security.secret_key</code>} in <code>config.yaml</code>.
-        </div>
-      )}
-
-      {/* Status card */}
-      <dl className="mt-4 grid grid-cols-[max-content_1fr] gap-x-6 gap-y-1 text-sm">
-        <dt className="text-gray-500">Status</dt>
-        <dd>
-          {st?.configured && st?.healthy ? (
-            <span className="font-medium text-green-700">● Connected &amp; healthy</span>
-          ) : st?.last_error ? (
-            <span className="font-medium text-red-700">● Not working</span>
-          ) : (
-            <span className="font-medium text-gray-500">● Not configured</span>
-          )}
-        </dd>
-        <dt className="text-gray-500">Account</dt>
-        <dd className="text-gray-800">{p?.account_email || st?.account_email || "—"}</dd>
-        <dt className="text-gray-500">Folder</dt>
-        <dd className="text-gray-800">
-          {st?.base_folder_name || st?.base_folder_id || "—"}
-        </dd>
-        {st?.last_error && (
-          <>
-            <dt className="text-gray-500">Detail</dt>
-            <dd className="text-red-700">{st.last_error}</dd>
-          </>
+        {err && (
+          <Alert severity="error" sx={{ mt: 1.5 }}>
+            {err}
+          </Alert>
         )}
-      </dl>
 
-      <div className="mt-4 flex flex-wrap gap-3">
-        <button
-          type="button"
-          onClick={connect}
-          disabled={!canConnect}
-          className="rounded bg-gray-900 px-3 py-2 text-sm font-medium text-white disabled:opacity-40"
-        >
-          {busy === "connect" ? "Connecting…" : connected ? "Reconnect account" : "Connect Google account"}
-        </button>
-        <button
-          type="button"
-          onClick={chooseFolder}
-          disabled={!canConnect || !connected}
-          className="rounded border border-gray-300 px-3 py-2 text-sm font-medium text-gray-800 disabled:opacity-40"
-        >
-          {busy === "folder" ? "Opening…" : "Choose folder"}
-        </button>
-      </div>
+        {resp && !prereqsOk && (
+          <Alert severity="warning" sx={{ mt: 1.5 }}>
+            Storage can't be configured from here until the deployment sets{" "}
+            {!resp.oauth_client_configured && <code>storage.gdrive.oauth.client_id/client_secret/api_key</code>}
+            {!resp.oauth_client_configured && !resp.secret_key_configured && " and "}
+            {!resp.secret_key_configured && <code>security.secret_key</code>} in <code>config.yaml</code>.
+          </Alert>
+        )}
 
-      <p className="mt-4 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-        <strong>Note:</strong> changing the folder or account does not move existing files. Documents
-        stored in a previous folder will no longer be downloadable through the app.
-      </p>
-    </section>
+        {/* Status card */}
+        <Box
+          component="dl"
+          sx={{
+            mt: 2,
+            display: "grid",
+            gridTemplateColumns: "max-content 1fr",
+            columnGap: 3,
+            rowGap: 0.5,
+            m: 0,
+          }}
+        >
+          <Typography component="dt" variant="body2" color="text.secondary">
+            Status
+          </Typography>
+          <Box component="dd" sx={{ m: 0 }}>
+            {st?.configured && st?.healthy ? (
+              <Typography component="span" variant="body2" sx={{ fontWeight: 600 }} color="success.main">
+                ● Connected &amp; healthy
+              </Typography>
+            ) : st?.last_error ? (
+              <Typography component="span" variant="body2" sx={{ fontWeight: 600 }} color="error.main">
+                ● Not working
+              </Typography>
+            ) : (
+              <Typography component="span" variant="body2" sx={{ fontWeight: 600 }} color="text.secondary">
+                ● Not configured
+              </Typography>
+            )}
+          </Box>
+          <Typography component="dt" variant="body2" color="text.secondary">
+            Account
+          </Typography>
+          <Typography component="dd" variant="body2" sx={{ m: 0 }}>
+            {p?.account_email || st?.account_email || "—"}
+          </Typography>
+          <Typography component="dt" variant="body2" color="text.secondary">
+            Folder
+          </Typography>
+          <Typography component="dd" variant="body2" sx={{ m: 0 }}>
+            {st?.base_folder_name || st?.base_folder_id || "—"}
+          </Typography>
+          {st?.last_error && (
+            <>
+              <Typography component="dt" variant="body2" color="text.secondary">
+                Detail
+              </Typography>
+              <Typography component="dd" variant="body2" color="error.main" sx={{ m: 0 }}>
+                {st.last_error}
+              </Typography>
+            </>
+          )}
+        </Box>
+
+        <Box sx={{ mt: 2, display: "flex", flexWrap: "wrap", gap: 1.5 }}>
+          <Button variant="contained" onClick={connect} disabled={!canConnect}>
+            {busy === "connect" ? "Connecting…" : connected ? "Reconnect account" : "Connect Google account"}
+          </Button>
+          <Button variant="outlined" color="inherit" onClick={chooseFolder} disabled={!canConnect || !connected}>
+            {busy === "folder" ? "Opening…" : "Choose folder"}
+          </Button>
+        </Box>
+
+        <Alert severity="warning" sx={{ mt: 2 }}>
+          <strong>Note:</strong> changing the folder or account does not move existing files. Documents
+          stored in a previous folder will no longer be downloadable through the app.
+        </Alert>
+      </CardContent>
+    </Card>
   );
 }

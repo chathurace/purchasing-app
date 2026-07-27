@@ -64,6 +64,34 @@ type RecApproval struct {
 	CanComment bool `json:"can_comment"`
 	CanApprove bool `json:"can_approve"`
 	CanAssign  bool `json:"can_assign"`
+	// BudgetSteps is the ordered serial chain of budget approval steps — populated
+	// only for the budget card. Step 1 (IsBase) is the budget-unit governed base
+	// approval; any further steps name their own approver (email-matched). Nil/empty
+	// for legal/security cards. The card's Approved/ApprovedBy/ApprovedAt above are a
+	// projection of this chain (approved iff every step is approved).
+	BudgetSteps []BudgetStep `json:"budget_steps,omitempty"`
+}
+
+// BudgetStep is one step in a recommendation's serial budget approval chain. The
+// base step (position 1) is governed by the PR's budget unit (its approver fields
+// are blank — any qualified budget approver acts on it); additional steps name a
+// specific approver by email. Steps are decided one after the other.
+type BudgetStep struct {
+	ID            int64        `json:"id"`
+	Position      int          `json:"position"`
+	IsBase        bool         `json:"is_base"`
+	ApproverName  string       `json:"approver_name"`
+	ApproverEmail string       `json:"approver_email"`
+	Decision      string       `json:"decision"` // pending | approved | rejected
+	DecidedBy     *int64       `json:"decided_by"`
+	Decider       *UserSummary `json:"decider,omitempty"`
+	DecidedAt     *time.Time   `json:"decided_at"`
+	Comments      []RecComment `json:"comments"`
+	// CanDecide / CanManage are per-caller capability flags computed in the handler
+	// layer: CanDecide = this caller may approve/reject/reverse this step right now
+	// (serial + identity gated); CanManage = procurement may edit/remove this step.
+	CanDecide bool `json:"can_decide"`
+	CanManage bool `json:"can_manage"`
 }
 
 // RecComment is one comment on an approval card, with optional document attachments.
@@ -110,11 +138,27 @@ func (r *Repository) CreateRecommendation(ctx context.Context, prID int64, in Re
 			VALUES ($1, $2) ON CONFLICT DO NOTHING`, id, t); err != nil {
 			return nil, err
 		}
+		if t == model.RecApprovalBudget {
+			if err := ensureBaseBudgetStepTx(ctx, tx, id); err != nil {
+				return nil, err
+			}
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
 	return r.GetRecommendation(ctx, prID)
+}
+
+// ensureBaseBudgetStepTx inserts the base budget step (position 1) for a
+// recommendation if it has none yet. The base step is budget-unit governed, so it
+// carries no named approver.
+func ensureBaseBudgetStepTx(ctx context.Context, tx pgx.Tx, recID int64) error {
+	_, err := tx.Exec(ctx, `
+		INSERT INTO pr_recommendation_budget_steps (recommendation_id, position)
+		SELECT $1, 1
+		WHERE NOT EXISTS (SELECT 1 FROM pr_recommendation_budget_steps WHERE recommendation_id = $1)`, recID)
+	return err
 }
 
 // UpdateRecommendation replaces the vendor, description and required approval set
@@ -188,6 +232,12 @@ func (r *Repository) UpdateRecommendation(ctx context.Context, prID int64, in Re
 		if _, err := tx.Exec(ctx, `DELETE FROM pr_recommendation_approvals WHERE recommendation_id = $1 AND approval_type = $2`, recID, t); err != nil {
 			return nil, err
 		}
+		// Budget steps don't cascade off the approval row, so drop them explicitly.
+		if t == model.RecApprovalBudget {
+			if _, err := tx.Exec(ctx, `DELETE FROM pr_recommendation_budget_steps WHERE recommendation_id = $1`, recID); err != nil {
+				return nil, err
+			}
+		}
 	}
 
 	// Upsert each wanted card, resetting it to pending.
@@ -198,6 +248,19 @@ func (r *Repository) UpdateRecommendation(ctx context.Context, prID int64, in Re
 			ON CONFLICT (recommendation_id, approval_type)
 			DO UPDATE SET approved_by = NULL, approved_at = NULL`, recID, t); err != nil {
 			return nil, err
+		}
+		// The budget chain re-opens on edit: reset every step to pending (keeping the
+		// steps and their named approvers) and make sure a base step exists.
+		if t == model.RecApprovalBudget {
+			if err := ensureBaseBudgetStepTx(ctx, tx, recID); err != nil {
+				return nil, err
+			}
+			if _, err := tx.Exec(ctx, `
+				UPDATE pr_recommendation_budget_steps
+				SET decision = 'pending', decided_by = NULL, decided_at = NULL, updated_at = NOW()
+				WHERE recommendation_id = $1`, recID); err != nil {
+				return nil, err
+			}
 		}
 	}
 
@@ -222,6 +285,100 @@ func commentIDsForType(ctx context.Context, tx pgx.Tx, recID int64, approvalType
 		ids = append(ids, id)
 	}
 	return ids, rows.Err()
+}
+
+// AddRecApprovalCard adds (requires) a single approval card to a PR's
+// recommendation without disturbing the others. For the budget card it also seeds
+// the base budget step. ErrInvalidState if the card is already required,
+// pgx.ErrNoRows if the PR has no recommendation.
+func (r *Repository) AddRecApprovalCard(ctx context.Context, prID int64, approvalType string) error {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	recID, err := recIDForPRTx(ctx, tx, prID)
+	if err != nil {
+		return err
+	}
+	tag, err := tx.Exec(ctx, `
+		INSERT INTO pr_recommendation_approvals (recommendation_id, approval_type)
+		VALUES ($1, $2) ON CONFLICT DO NOTHING`, recID, approvalType)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrInvalidState // already required
+	}
+	if approvalType == model.RecApprovalBudget {
+		if err := ensureBaseBudgetStepTx(ctx, tx, recID); err != nil {
+			return err
+		}
+	}
+	return tx.Commit(ctx)
+}
+
+// RemoveRecApprovalCard removes a single approval card from a PR's recommendation
+// (its comments' documents' stored paths are returned for the handler to unlink);
+// for the budget card its steps are removed too. A recommendation must keep at
+// least one card, so removing the last one is refused. ErrInvalidState if the card
+// is the last remaining one, pgx.ErrNoRows if the card is not required / the PR has
+// no recommendation.
+func (r *Repository) RemoveRecApprovalCard(ctx context.Context, prID int64, approvalType string) ([]string, error) {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+
+	recID, err := recIDForPRTx(ctx, tx, prID)
+	if err != nil {
+		return nil, err
+	}
+	var present bool
+	var total int
+	if err := tx.QueryRow(ctx, `
+		SELECT EXISTS(SELECT 1 FROM pr_recommendation_approvals WHERE recommendation_id = $1 AND approval_type = $2),
+		       (SELECT count(*) FROM pr_recommendation_approvals WHERE recommendation_id = $1)`,
+		recID, approvalType).Scan(&present, &total); err != nil {
+		return nil, err
+	}
+	if !present {
+		return nil, pgx.ErrNoRows
+	}
+	if total <= 1 {
+		return nil, ErrInvalidState // a recommendation must keep at least one card
+	}
+
+	cids, err := commentIDsForType(ctx, tx, recID, approvalType)
+	if err != nil {
+		return nil, err
+	}
+	var paths []string
+	for _, cid := range cids {
+		p, err := deleteOwnedDocsTx(ctx, tx, ownerRecommendationComment, cid)
+		if err != nil {
+			return nil, err
+		}
+		paths = append(paths, p...)
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM pr_recommendation_comments WHERE recommendation_id = $1 AND approval_type = $2`, recID, approvalType); err != nil {
+		return nil, err
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM pr_recommendation_approvals WHERE recommendation_id = $1 AND approval_type = $2`, recID, approvalType); err != nil {
+		return nil, err
+	}
+	// Budget steps don't cascade off the approval row.
+	if approvalType == model.RecApprovalBudget {
+		if _, err := tx.Exec(ctx, `DELETE FROM pr_recommendation_budget_steps WHERE recommendation_id = $1`, recID); err != nil {
+			return nil, err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return paths, nil
 }
 
 // DeleteRecommendation removes a PR's recommendation (cards + comments cascade),
@@ -350,12 +507,13 @@ func (r *Repository) GetRecommendation(ctx context.Context, prID int64) (*Recomm
 		return nil, err
 	}
 
-	// Comments, grouped onto their card.
+	// Comments, grouped onto their card. Budget comments hang off a step (loaded
+	// below with the chain), so exclude them here.
 	crows, err := r.pool.Query(ctx, `
 		SELECT c.id, c.approval_type, c.author_id, c.comment, c.created_at, u.email, u.name
 		FROM pr_recommendation_comments c
 		JOIN users u ON u.id = c.author_id
-		WHERE c.recommendation_id = $1
+		WHERE c.recommendation_id = $1 AND c.budget_step_id IS NULL
 		ORDER BY c.created_at, c.id`, rec.ID)
 	if err != nil {
 		return nil, err
@@ -394,7 +552,104 @@ func (r *Repository) GetRecommendation(ctx context.Context, prID int64) (*Recomm
 			rec.Approvals[i].Comments = append(rec.Approvals[i].Comments, pc.c)
 		}
 	}
+
+	// The budget card carries the serial approval chain.
+	if i, ok := idxByType[model.RecApprovalBudget]; ok {
+		steps, err := r.budgetStepsForRec(ctx, rec.ID)
+		if err != nil {
+			return nil, err
+		}
+		rec.Approvals[i].BudgetSteps = steps
+	}
 	return rec, nil
+}
+
+// budgetStepsForRec loads a recommendation's ordered budget approval steps, each
+// with its decider identity and comment thread (with documents). CanDecide /
+// CanManage are left false — the handler fills them per caller.
+func (r *Repository) budgetStepsForRec(ctx context.Context, recID int64) ([]BudgetStep, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT s.id, s.position, s.approver_name, s.approver_email, s.decision,
+		       s.decided_by, s.decided_at, u.email, u.name
+		FROM pr_recommendation_budget_steps s
+		LEFT JOIN users u ON u.id = s.decided_by
+		WHERE s.recommendation_id = $1
+		ORDER BY s.position`, recID)
+	if err != nil {
+		return nil, err
+	}
+	var steps []BudgetStep
+	idxByID := map[int64]int{}
+	for rows.Next() {
+		var s BudgetStep
+		var decidedBy pgtype.Int8
+		var decidedAt pgtype.Timestamptz
+		var email, name pgtype.Text
+		if err := rows.Scan(&s.ID, &s.Position, &s.ApproverName, &s.ApproverEmail, &s.Decision,
+			&decidedBy, &decidedAt, &email, &name); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		s.IsBase = s.Position == 1
+		if decidedBy.Valid {
+			s.DecidedBy = &decidedBy.Int64
+			s.Decider = &UserSummary{ID: decidedBy.Int64, Email: email.String, Name: name.String}
+		}
+		if decidedAt.Valid {
+			t := decidedAt.Time
+			s.DecidedAt = &t
+		}
+		s.Comments = []RecComment{}
+		steps = append(steps, s)
+		idxByID[s.ID] = len(steps) - 1
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	// Per-step comments (with documents), grouped onto their step.
+	crows, err := r.pool.Query(ctx, `
+		SELECT c.id, c.budget_step_id, c.author_id, c.comment, c.created_at, u.email, u.name
+		FROM pr_recommendation_comments c
+		JOIN users u ON u.id = c.author_id
+		WHERE c.recommendation_id = $1 AND c.budget_step_id IS NOT NULL
+		ORDER BY c.created_at, c.id`, recID)
+	if err != nil {
+		return nil, err
+	}
+	type pendingComment struct {
+		stepID int64
+		c      RecComment
+	}
+	var pending []pendingComment
+	for crows.Next() {
+		var stepID int64
+		var c RecComment
+		var email, name pgtype.Text
+		if err := crows.Scan(&c.ID, &stepID, &c.AuthorID, &c.Comment, &c.CreatedAt, &email, &name); err != nil {
+			crows.Close()
+			return nil, err
+		}
+		c.Author = &UserSummary{ID: c.AuthorID, Email: email.String, Name: name.String}
+		c.Documents = []Document{}
+		pending = append(pending, pendingComment{stepID, c})
+	}
+	crows.Close()
+	if err := crows.Err(); err != nil {
+		return nil, err
+	}
+	for _, pc := range pending {
+		docs, err := r.ListOwnedDocuments(ctx, ownerRecommendationComment, pc.c.ID)
+		if err != nil {
+			return nil, err
+		}
+		pc.c.Documents = docs
+		if i, ok := idxByID[pc.stepID]; ok {
+			steps[i].Comments = append(steps[i].Comments, pc.c)
+		}
+	}
+	return steps, nil
 }
 
 // CreateRecommendationContract drafts the contract attached to a PR's
@@ -615,9 +870,225 @@ func (r *Repository) SetRecAssignee(ctx context.Context, prID int64, approvalTyp
 	return nil
 }
 
-// AddRecComment appends a comment to an approval card. Returns ErrInvalidState if
-// the card is not a required one.
-func (r *Repository) AddRecComment(ctx context.Context, prID int64, approvalType string, authorID int64, comment string) (*RecComment, error) {
+// =====================================================================
+// Budget approval chain (serial steps on the budget card)
+// =====================================================================
+
+// AddBudgetStep appends a new named budget approval step to a PR's recommendation
+// (position = current max + 1). Requires the recommendation to have a budget card.
+// The new step is pending, so the projected budget card falls back to unapproved.
+// Returns the created step (id, position) for the handler to notify/record.
+func (r *Repository) AddBudgetStep(ctx context.Context, prID int64, name, email string) (*BudgetStep, error) {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+
+	recID, err := recIDForPRTx(ctx, tx, prID)
+	if err != nil {
+		return nil, err
+	}
+	var hasBudget bool
+	if err := tx.QueryRow(ctx, `
+		SELECT EXISTS(SELECT 1 FROM pr_recommendation_approvals WHERE recommendation_id = $1 AND approval_type = 'budget')`,
+		recID).Scan(&hasBudget); err != nil {
+		return nil, err
+	}
+	if !hasBudget {
+		return nil, ErrInvalidState
+	}
+	s := &BudgetStep{ApproverName: name, ApproverEmail: email, Decision: "pending", Comments: []RecComment{}}
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO pr_recommendation_budget_steps (recommendation_id, position, approver_name, approver_email)
+		VALUES ($1, (SELECT COALESCE(MAX(position), 0) + 1 FROM pr_recommendation_budget_steps WHERE recommendation_id = $1), $2, $3)
+		RETURNING id, position`, recID, name, email).Scan(&s.ID, &s.Position); err != nil {
+		return nil, err
+	}
+	if err := syncBudgetApprovalFromStepsTx(ctx, tx, recID); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return s, nil
+}
+
+// UpdateBudgetStep edits an additional step's named approver. Only a still-pending,
+// non-base step may be edited (ErrInvalidState otherwise).
+func (r *Repository) UpdateBudgetStep(ctx context.Context, prID, stepID int64, name, email string) error {
+	tag, err := r.pool.Exec(ctx, `
+		UPDATE pr_recommendation_budget_steps
+		SET approver_name = $3, approver_email = $4, updated_at = NOW()
+		WHERE id = $2
+		  AND recommendation_id = (SELECT id FROM pr_recommendations WHERE purchase_request_id = $1)
+		  AND position > 1 AND decision = 'pending'`, prID, stepID, name, email)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrInvalidState
+	}
+	return nil
+}
+
+// DeleteBudgetStep removes an additional (non-base), still-pending step and
+// resequences the remaining steps' positions, then re-syncs the projected budget
+// card. ErrInvalidState if the step is the base step, already decided, or unknown.
+func (r *Repository) DeleteBudgetStep(ctx context.Context, prID, stepID int64) error {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	recID, err := recIDForPRTx(ctx, tx, prID)
+	if err != nil {
+		return err
+	}
+	var position int
+	if err := tx.QueryRow(ctx, `
+		DELETE FROM pr_recommendation_budget_steps
+		WHERE id = $1 AND recommendation_id = $2 AND position > 1 AND decision = 'pending'
+		RETURNING position`, stepID, recID).Scan(&position); err != nil {
+		if err == pgx.ErrNoRows {
+			return ErrInvalidState
+		}
+		return err
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE pr_recommendation_budget_steps
+		SET position = position - 1, updated_at = NOW()
+		WHERE recommendation_id = $1 AND position > $2`, recID, position); err != nil {
+		return err
+	}
+	if err := syncBudgetApprovalFromStepsTx(ctx, tx, recID); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+// SetBudgetStepDecision records (or reverses) a step's decision, enforcing the
+// serial chain: the previous step must be approved, and the next step must still
+// be pending (a step locks once the following one has decided). decision is one of
+// "approve" | "reject" | "revert". It then re-syncs the projected budget card.
+// Returns the updated step. ErrInvalidState on a serial-order violation.
+func (r *Repository) SetBudgetStepDecision(ctx context.Context, prID, stepID int64, decision string, deciderID int64) (*BudgetStep, error) {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+
+	recID, err := recIDForPRTx(ctx, tx, prID)
+	if err != nil {
+		return nil, err
+	}
+
+	var position int
+	if err := tx.QueryRow(ctx, `
+		SELECT position FROM pr_recommendation_budget_steps WHERE id = $1 AND recommendation_id = $2`,
+		stepID, recID).Scan(&position); err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, ErrInvalidState
+		}
+		return nil, err
+	}
+
+	// Previous step (if any) must be approved.
+	if position > 1 {
+		var prevApproved bool
+		if err := tx.QueryRow(ctx, `
+			SELECT decision = 'approved' FROM pr_recommendation_budget_steps
+			WHERE recommendation_id = $1 AND position = $2`, recID, position-1).Scan(&prevApproved); err != nil {
+			return nil, err
+		}
+		if !prevApproved {
+			return nil, ErrInvalidState
+		}
+	}
+	// Next step (if any) must still be pending — this step locks once it has decided.
+	var nextDecided bool
+	if err := tx.QueryRow(ctx, `
+		SELECT EXISTS(SELECT 1 FROM pr_recommendation_budget_steps
+		              WHERE recommendation_id = $1 AND position = $2 AND decision <> 'pending')`,
+		recID, position+1).Scan(&nextDecided); err != nil {
+		return nil, err
+	}
+	if nextDecided {
+		return nil, ErrInvalidState
+	}
+
+	var newDecision string
+	var decidedBy *int64
+	switch decision {
+	case "approve":
+		newDecision, decidedBy = "approved", &deciderID
+	case "reject":
+		newDecision, decidedBy = "rejected", &deciderID
+	case "revert":
+		newDecision, decidedBy = "pending", nil
+	default:
+		return nil, ErrInvalidState
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE pr_recommendation_budget_steps
+		SET decision = $2,
+		    decided_by = $3,
+		    decided_at = CASE WHEN $2 = 'pending' THEN NULL ELSE NOW() END,
+		    updated_at = NOW()
+		WHERE id = $1`, stepID, newDecision, decidedBy); err != nil {
+		return nil, err
+	}
+	if err := syncBudgetApprovalFromStepsTx(ctx, tx, recID); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return &BudgetStep{ID: stepID, Position: position, IsBase: position == 1, Decision: newDecision}, nil
+}
+
+// syncBudgetApprovalFromStepsTx recomputes the budget card's approved_by/approved_at
+// projection from its chain: approved (stamped with the last step's decider/time)
+// iff there is ≥1 step and every step is approved; otherwise pending. Because steps
+// are serial, "all approved" == "last step approved".
+func syncBudgetApprovalFromStepsTx(ctx context.Context, tx pgx.Tx, recID int64) error {
+	var allApproved bool
+	if err := tx.QueryRow(ctx, `
+		SELECT EXISTS(SELECT 1 FROM pr_recommendation_budget_steps WHERE recommendation_id = $1)
+		   AND NOT EXISTS(SELECT 1 FROM pr_recommendation_budget_steps WHERE recommendation_id = $1 AND decision <> 'approved')`,
+		recID).Scan(&allApproved); err != nil {
+		return err
+	}
+	if allApproved {
+		_, err := tx.Exec(ctx, `
+			UPDATE pr_recommendation_approvals a
+			SET approved_by = s.decided_by, approved_at = s.decided_at
+			FROM (SELECT decided_by, decided_at FROM pr_recommendation_budget_steps
+			      WHERE recommendation_id = $1 ORDER BY position DESC LIMIT 1) s
+			WHERE a.recommendation_id = $1 AND a.approval_type = 'budget'`, recID)
+		return err
+	}
+	_, err := tx.Exec(ctx, `
+		UPDATE pr_recommendation_approvals
+		SET approved_by = NULL, approved_at = NULL
+		WHERE recommendation_id = $1 AND approval_type = 'budget'`, recID)
+	return err
+}
+
+// recIDForPRTx resolves a PR's recommendation id within a transaction.
+func recIDForPRTx(ctx context.Context, tx pgx.Tx, prID int64) (int64, error) {
+	var id int64
+	err := tx.QueryRow(ctx, `SELECT id FROM pr_recommendations WHERE purchase_request_id = $1`, prID).Scan(&id)
+	return id, err
+}
+
+// AddRecComment appends a comment to an approval card. When budgetStepID is
+// non-nil the comment is attached to that budget step (approvalType must be
+// "budget" and the step must belong to this PR's recommendation). Returns
+// ErrInvalidState if the card is not a required one / the step does not belong.
+func (r *Repository) AddRecComment(ctx context.Context, prID int64, approvalType string, budgetStepID *int64, authorID int64, comment string) (*RecComment, error) {
 	recID, err := r.recIDForPR(ctx, prID)
 	if err != nil {
 		return nil, err
@@ -631,12 +1102,23 @@ func (r *Repository) AddRecComment(ctx context.Context, prID int64, approvalType
 	if !required {
 		return nil, ErrInvalidState
 	}
+	if budgetStepID != nil {
+		var belongs bool
+		if err := r.pool.QueryRow(ctx, `
+			SELECT EXISTS(SELECT 1 FROM pr_recommendation_budget_steps WHERE id = $1 AND recommendation_id = $2)`,
+			*budgetStepID, recID).Scan(&belongs); err != nil {
+			return nil, err
+		}
+		if !belongs {
+			return nil, ErrInvalidState
+		}
+	}
 	c := &RecComment{Documents: []Document{}}
 	if err := r.pool.QueryRow(ctx, `
-		INSERT INTO pr_recommendation_comments (recommendation_id, approval_type, author_id, comment)
-		VALUES ($1, $2, $3, $4)
+		INSERT INTO pr_recommendation_comments (recommendation_id, approval_type, budget_step_id, author_id, comment)
+		VALUES ($1, $2, $3, $4, $5)
 		RETURNING id, author_id, comment, created_at`,
-		recID, approvalType, authorID, comment).
+		recID, approvalType, budgetStepID, authorID, comment).
 		Scan(&c.ID, &c.AuthorID, &c.Comment, &c.CreatedAt); err != nil {
 		return nil, err
 	}
@@ -686,50 +1168,33 @@ func recommendationFullyApprovedTx(ctx context.Context, tx pgx.Tx, prID int64) (
 }
 
 // IsBudgetApproverForPR reports whether the user is a qualified budget approver
-// for the PR's recommendation: a member of the approver set that the
-// recommendation's estimated value + currency resolve to within the PR's budget
-// unit (a matching bracket's approvers, else the unit's default approver).
+// for the PR's recommendation: their email is a member of the PR's free-text,
+// comma-separated budget_approver_email list (case-insensitive). This is the
+// approver the requester picked from the business unit's approver list.
 func (r *Repository) IsBudgetApproverForPR(ctx context.Context, prID, userID int64) (bool, error) {
 	var ok bool
 	err := r.pool.QueryRow(ctx, `
 		SELECT EXISTS(
 			SELECT 1
 			FROM purchase_requests pr
-			JOIN pr_recommendations rec ON rec.purchase_request_id = pr.id
-			JOIN resolve_budget_approvers(pr.budget_unit_id, rec.estimated_value, rec.currency) rba
-			  ON rba.user_id = $2
-			WHERE pr.id = $1)`, prID, userID).Scan(&ok)
+			JOIN users cu ON cu.id = $2
+			WHERE pr.id = $1
+			  AND cu.email <> '' AND lower(cu.email) = ANY (
+				SELECT lower(trim(e)) FROM unnest(string_to_array(pr.budget_approver_email, ',')) AS e WHERE trim(e) <> '')
+		)`, prID, userID).Scan(&ok)
 	return ok, err
 }
 
-// BudgetApproversForPR returns all qualified budget approvers for the PR's
-// recommendation (a matching bracket's approvers, else the default approver),
-// for notification.
+// BudgetApproversForPR returns all qualified budget approvers for the PR (the
+// users whose email matches the PR's budget_approver_email list), for
+// notification.
 func (r *Repository) BudgetApproversForPR(ctx context.Context, prID int64) ([]*UserSummary, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT u.id, u.email, u.name
 		FROM purchase_requests pr
-		JOIN pr_recommendations rec ON rec.purchase_request_id = pr.id
-		JOIN resolve_budget_approvers(pr.budget_unit_id, rec.estimated_value, rec.currency) rba
-		  ON TRUE
-		JOIN users u ON u.id = rba.user_id
+		JOIN users u ON u.email <> '' AND lower(u.email) = ANY (
+			SELECT lower(trim(e)) FROM unnest(string_to_array(pr.budget_approver_email, ',')) AS e WHERE trim(e) <> '')
 		WHERE pr.id = $1`, prID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	return scanUserSummaries(rows)
-}
-
-// BudgetApproversForValue resolves the qualified budget approvers for a budget
-// unit at a given estimated value + currency, without a recommendation — used
-// for the creation-phase preview shown to the requester. When no bracket matches
-// (nil value, currency mismatch, or out of range) it yields the default approver.
-func (r *Repository) BudgetApproversForValue(ctx context.Context, budgetUnitID int64, value *float64, currency string) ([]*UserSummary, error) {
-	rows, err := r.pool.Query(ctx, `
-		SELECT u.id, u.email, u.name
-		FROM resolve_budget_approvers($1, $2, $3) rba
-		JOIN users u ON u.id = rba.user_id`, budgetUnitID, value, currency)
 	if err != nil {
 		return nil, err
 	}

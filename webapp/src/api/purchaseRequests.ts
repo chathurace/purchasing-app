@@ -13,10 +13,28 @@ export type ApprovalDecision = "approve" | "reject";
 // decision (Approvals tab). Omit for the default role-based view.
 export type PRListScope = "mine" | "approvals";
 
-export const listPurchaseRequests = (scope?: PRListScope) =>
-  apiFetch<PurchaseRequest[]>(
-    scope ? `/api/v1/purchase-requests?scope=${scope}` : "/api/v1/purchase-requests",
-  );
+// PRListFilters mirrors the backend query params on the Purchase-requests list:
+// an exact status, a business unit, the recommended vendor, and the requester.
+// Any field left undefined is omitted (no filter on it).
+export type PRListFilters = {
+  status?: PurchaseRequest["status"];
+  businessUnitId?: number;
+  vendorId?: number;
+  requesterId?: number;
+  assigneeId?: number;
+};
+
+export const listPurchaseRequests = (scope?: PRListScope, filters?: PRListFilters) => {
+  const params = new URLSearchParams();
+  if (scope) params.set("scope", scope);
+  if (filters?.status) params.set("status", filters.status);
+  if (filters?.businessUnitId) params.set("business_unit_id", String(filters.businessUnitId));
+  if (filters?.vendorId) params.set("vendor_id", String(filters.vendorId));
+  if (filters?.requesterId) params.set("requester_id", String(filters.requesterId));
+  if (filters?.assigneeId) params.set("assignee_id", String(filters.assigneeId));
+  const qs = params.toString();
+  return apiFetch<PurchaseRequest[]>(`/api/v1/purchase-requests${qs ? `?${qs}` : ""}`);
+};
 
 export const getPurchaseRequest = (id: number) =>
   apiFetch<PurchaseRequest>(`/api/v1/purchase-requests/${id}`);

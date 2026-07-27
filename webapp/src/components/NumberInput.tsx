@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState, type InputHTMLAttributes } from "react";
+import { useEffect, useRef, useState, type FocusEvent, type InputHTMLAttributes } from "react";
+import { TextField } from "@wso2/oxygen-ui";
 
 type Props = Omit<InputHTMLAttributes<HTMLInputElement>, "value" | "onChange" | "type"> & {
   value: number;
@@ -26,10 +27,13 @@ export function NumberInput({ value, onChange, emptyValue = 0, ...rest }: Props)
     if (!focused.current) setText(String(value));
   }, [value]);
 
+  const { onFocus, onBlur, className, ...inputRest } = rest;
+
   return (
-    <input
-      {...rest}
+    <TextField
       type="number"
+      size="small"
+      className={className}
       value={text}
       onChange={(e) => {
         const next = e.target.value;
@@ -41,16 +45,19 @@ export function NumberInput({ value, onChange, emptyValue = 0, ...rest }: Props)
           if (Number.isFinite(n)) onChange(n);
         }
       }}
-      onFocus={(e) => {
-        focused.current = true;
-        rest.onFocus?.(e);
-      }}
-      onBlur={(e) => {
-        focused.current = false;
-        // Settle the display to the committed value (drops a trailing "."
-        // or a stray leading zero, restores "0" if left empty).
-        setText(String(value));
-        rest.onBlur?.(e);
+      inputProps={{
+        ...inputRest,
+        onFocus: (e: FocusEvent<HTMLInputElement>) => {
+          focused.current = true;
+          onFocus?.(e);
+        },
+        onBlur: (e: FocusEvent<HTMLInputElement>) => {
+          focused.current = false;
+          // Settle the display to the committed value (drops a trailing "."
+          // or a stray leading zero, restores "0" if left empty).
+          setText(String(value));
+          onBlur?.(e);
+        },
       }}
     />
   );
@@ -75,10 +82,13 @@ export function NullableNumberInput({ value, onChange, ...rest }: NullableProps)
     if (!focused.current) setText(value == null ? "" : String(value));
   }, [value]);
 
+  const { onFocus, onBlur, className, ...inputRest } = rest;
+
   return (
-    <input
-      {...rest}
+    <TextField
       type="number"
+      size="small"
+      className={className}
       value={text}
       onChange={(e) => {
         const next = e.target.value;
@@ -90,14 +100,17 @@ export function NullableNumberInput({ value, onChange, ...rest }: NullableProps)
           if (Number.isFinite(n)) onChange(n);
         }
       }}
-      onFocus={(e) => {
-        focused.current = true;
-        rest.onFocus?.(e);
-      }}
-      onBlur={(e) => {
-        focused.current = false;
-        setText(value == null ? "" : String(value));
-        rest.onBlur?.(e);
+      inputProps={{
+        ...inputRest,
+        onFocus: (e: FocusEvent<HTMLInputElement>) => {
+          focused.current = true;
+          onFocus?.(e);
+        },
+        onBlur: (e: FocusEvent<HTMLInputElement>) => {
+          focused.current = false;
+          setText(value == null ? "" : String(value));
+          onBlur?.(e);
+        },
       }}
     />
   );

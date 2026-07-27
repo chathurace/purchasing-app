@@ -1,6 +1,17 @@
 import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import {
+  Alert,
+  Box,
+  Button,
+  Card,
+  CardContent,
+  CircularProgress,
+  Link as MuiLink,
+  Stack,
+  Typography,
+} from "@wso2/oxygen-ui";
 import { useGRN } from "../hooks/useGrns";
 import { GRNFields } from "../components/GRNFields";
 import { DocumentList } from "../components/DocumentList";
@@ -78,104 +89,139 @@ export function GrnDetailPage() {
     onError: (e) => setActionError(e instanceof ApiError ? e.message : "Delete failed"),
   });
 
-  if (isLoading) return <p className="text-gray-500">Loading…</p>;
-  if (error || !g) return <p className="text-red-600">Failed to load GRN.</p>;
+  if (isLoading)
+    return (
+      <Box sx={{ maxWidth: 800, mx: "auto", p: { xs: 2, md: 4 } }}>
+        <CircularProgress size={24} />
+      </Box>
+    );
+  if (error || !g)
+    return (
+      <Box sx={{ maxWidth: 800, mx: "auto", p: { xs: 2, md: 4 } }}>
+        <Alert severity="error">Failed to load GRN.</Alert>
+      </Box>
+    );
 
   return (
-    <div className="mx-auto max-w-2xl">
-      <div className="mb-4 flex items-center gap-2 text-sm text-gray-500">
-        <Link to="/grns" className="text-indigo-600">
+    <Box sx={{ maxWidth: 800, mx: "auto", p: { xs: 2, md: 4 } }}>
+      <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 2 }}>
+        <MuiLink component={Link} to="/grns" variant="body2">
           GRNs
-        </Link>
-        <span>/</span>
-        <span>{grnRef(g.id)}</span>
-      </div>
+        </MuiLink>
+        <Typography variant="body2" color="text.secondary">
+          /
+        </Typography>
+        <Typography variant="body2" color="text.secondary">
+          {grnRef(g.id)}
+        </Typography>
+      </Stack>
 
       <ChainStepper prId={g.purchase_request_id} current={{ kind: "grn", id: g.id }} />
 
-      <div className="mb-4 flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-semibold text-gray-900">{grnRef(g.id)}</h1>
-          <div className="mt-1 text-sm text-gray-500">
+      <Stack
+        direction="row"
+        justifyContent="space-between"
+        alignItems="flex-start"
+        sx={{ mb: 2 }}
+      >
+        <Box>
+          <Typography variant="h5" sx={{ fontWeight: 600 }}>
+            {grnRef(g.id)}
+          </Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
             {g.vendor?.name ?? `Vendor #${g.vendor_id}`} · received {g.received_date}
-          </div>
-        </div>
+          </Typography>
+        </Box>
         {!editing && (
-          <div className="flex gap-2">
-            <button
+          <Stack direction="row" spacing={1}>
+            <Button
+              variant="outlined"
+              color="inherit"
               onClick={() => {
                 setDraft(toInput(g));
                 setEditing(true);
               }}
-              className="rounded border px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
             >
               Edit
-            </button>
-            <button
+            </Button>
+            <Button
+              variant="outlined"
+              color="error"
               onClick={() => {
                 if (confirm(`Delete ${grnRef(g.id)}? This cannot be undone.`)) deleteGRNMutation.mutate();
               }}
               disabled={deleteGRNMutation.isPending}
-              className="rounded border px-3 py-2 text-sm text-red-600 hover:bg-red-50 disabled:opacity-50"
             >
               Delete
-            </button>
-          </div>
+            </Button>
+          </Stack>
         )}
-      </div>
+      </Stack>
 
-      {actionError && <p className="mb-4 text-sm text-red-600">{actionError}</p>}
+      {actionError && (
+        <Alert severity="error" sx={{ mb: 2 }}>
+          {actionError}
+        </Alert>
+      )}
 
-      <div className="rounded border bg-white p-6">
-        {editing && draft ? (
-          <>
-            <GRNFields value={draft} onChange={setDraft} />
-            <div className="mt-6 flex gap-2">
-              <button
-                onClick={() => saveMutation.mutate()}
-                disabled={saveMutation.isPending}
-                className="rounded bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
-              >
-                {saveMutation.isPending ? "Saving…" : "Save changes"}
-              </button>
-              <button
-                onClick={() => {
-                  setEditing(false);
-                  setActionError(null);
-                }}
-                className="rounded border px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
-              >
-                Cancel
-              </button>
-            </div>
-          </>
-        ) : (
-          <dl className="space-y-4 text-sm">
-            <Field label="Received date">{g.received_date}</Field>
-            <Field label="Received by">{g.received_by || "—"}</Field>
-            <Field label="Items received">
-              {g.items.length === 0 ? (
-                "—"
-              ) : (
-                <ul className="list-disc pl-5">
-                  {g.items.map((it) => (
-                    <li key={it.id}>
-                      {it.description} — <span className="text-gray-500">qty {it.quantity}</span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </Field>
-            <Field label="Note">
-              <span className="whitespace-pre-wrap">{g.note || "—"}</span>
-            </Field>
-          </dl>
-        )}
-      </div>
+      <Card variant="outlined">
+        <CardContent>
+          {editing && draft ? (
+            <>
+              <GRNFields value={draft} onChange={setDraft} />
+              <Stack direction="row" spacing={1} sx={{ mt: 3 }}>
+                <Button
+                  variant="contained"
+                  onClick={() => saveMutation.mutate()}
+                  disabled={saveMutation.isPending}
+                >
+                  {saveMutation.isPending ? "Saving…" : "Save changes"}
+                </Button>
+                <Button
+                  variant="outlined"
+                  color="inherit"
+                  onClick={() => {
+                    setEditing(false);
+                    setActionError(null);
+                  }}
+                >
+                  Cancel
+                </Button>
+              </Stack>
+            </>
+          ) : (
+            <Stack spacing={2}>
+              <Field label="Received date">{g.received_date}</Field>
+              <Field label="Received by">{g.received_by || "—"}</Field>
+              <Field label="Items received">
+                {g.items.length === 0 ? (
+                  "—"
+                ) : (
+                  <Box component="ul" sx={{ listStyle: "disc", pl: 2.5, m: 0 }}>
+                    {g.items.map((it) => (
+                      <li key={it.id}>
+                        {it.description} —{" "}
+                        <Box component="span" sx={{ color: "text.secondary" }}>
+                          qty {it.quantity}
+                        </Box>
+                      </li>
+                    ))}
+                  </Box>
+                )}
+              </Field>
+              <Field label="Note">
+                <Box component="span" sx={{ whiteSpace: "pre-wrap" }}>
+                  {g.note || "—"}
+                </Box>
+              </Field>
+            </Stack>
+          )}
+        </CardContent>
+      </Card>
 
       <DirectParentCard prId={g.purchase_request_id} current={{ kind: "grn", id: g.id }} />
 
-      <div className="mt-6">
+      <Box sx={{ mt: 3 }}>
         <DocumentList
           documents={g.documents ?? []}
           canEdit
@@ -184,18 +230,22 @@ export function GrnDetailPage() {
           onDownload={(doc: Document) => downloadGRNDocument(g.id, doc)}
           onError={setActionError}
         />
-      </div>
+      </Box>
 
       <RelatedDocuments prId={g.purchase_request_id} current={{ kind: "grn", id: g.id }} />
-    </div>
+    </Box>
   );
 }
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div>
-      <dt className="font-medium text-gray-500">{label}</dt>
-      <dd className="mt-0.5 text-gray-900">{children}</dd>
-    </div>
+    <Box>
+      <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600 }}>
+        {label}
+      </Typography>
+      <Typography variant="body2" component="div">
+        {children}
+      </Typography>
+    </Box>
   );
 }

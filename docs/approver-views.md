@@ -33,9 +33,9 @@ approve. Vendors/Cost centers/Settings keep their prior `procurement_admin`/`adm
 
 - **Shared predicate** — `approvablePredicate` in `internal/repository/repository.go` is the single
   definition of "caller is an approver on PR `pr`" (named approver, legal/security card actor by
-  role, or a qualified budget approver of the PR's budget unit — via `resolve_budget_approvers`, see
-  `docs/budget-units.md`). Binds `$1` caller / `$2` hasLegal / `$3`
-  hasSecurity. Reused by every query below; `myApprovalStateExpr` is the matching state CASE.
+  role, or the PR's named budget approver — email match via `budgetEmailMatch`, see
+  `docs/business-units.md`). Binds `$1` caller / `$2` hasLegal / `$3`
+  hasSecurity / `$4` caller email. Reused by every query below; `myApprovalStateExpr` is the matching state CASE.
 - **PR list** — `ListPurchaseRequests(..., scope)` takes `PRScopeMine` / `PRScopeApprovals` /
   `PRScopeDefault`; handler maps `?scope=mine|approvals`. Every row now also carries
   `my_approval_state` (pending | approved | rejected) unified across both systems.

@@ -302,16 +302,16 @@ type InvoiceItem struct {
 	Position    int     `json:"position"`
 }
 
-// CostAllocation splits an invoice's cost to a budget unit. Value is a
+// CostAllocation splits an invoice's cost to a business unit. Value is a
 // percentage (0-100) or an absolute amount, per the invoice's AllocationMode.
 // Amount is the resolved amount in the invoice currency, computed on read.
 type CostAllocation struct {
-	ID           int64              `json:"id"`
-	BudgetUnitID int64              `json:"budget_unit_id"`
-	Value        float64            `json:"value"`
-	Position     int                `json:"position"`
-	Amount       float64            `json:"amount"`
-	BudgetUnit   *BudgetUnitSummary `json:"budget_unit,omitempty"`
+	ID             int64                `json:"id"`
+	BusinessUnitID int64                `json:"business_unit_id"`
+	Value          float64              `json:"value"`
+	Position       int                  `json:"position"`
+	Amount         float64              `json:"amount"`
+	BusinessUnit   *BusinessUnitSummary `json:"business_unit,omitempty"`
 }
 
 type Invoice struct {
@@ -470,8 +470,8 @@ func replaceInvoiceAllocations(ctx context.Context, tx pgx.Tx, invoiceID int64, 
 	}
 	for i, a := range allocs {
 		if _, err := tx.Exec(ctx, `
-			INSERT INTO invoice_cost_allocations (invoice_id, budget_unit_id, value, position)
-			VALUES ($1, $2, $3, $4)`, invoiceID, a.BudgetUnitID, a.Value, i); err != nil {
+			INSERT INTO invoice_cost_allocations (invoice_id, business_unit_id, value, position)
+			VALUES ($1, $2, $3, $4)`, invoiceID, a.BusinessUnitID, a.Value, i); err != nil {
 			return err
 		}
 	}
@@ -480,9 +480,9 @@ func replaceInvoiceAllocations(ctx context.Context, tx pgx.Tx, invoiceID int64, 
 
 func (r *Repository) listInvoiceAllocations(ctx context.Context, invoiceID int64) ([]CostAllocation, error) {
 	rows, err := r.pool.Query(ctx, `
-		SELECT a.id, a.budget_unit_id, a.value, a.position, bu.code, bu.name
+		SELECT a.id, a.business_unit_id, a.value, a.position, bu.name
 		FROM invoice_cost_allocations a
-		JOIN budget_units bu ON bu.id = a.budget_unit_id
+		JOIN business_units bu ON bu.id = a.business_unit_id
 		WHERE a.invoice_id = $1 ORDER BY a.position, a.id`, invoiceID)
 	if err != nil {
 		return nil, err
@@ -491,11 +491,11 @@ func (r *Repository) listInvoiceAllocations(ctx context.Context, invoiceID int64
 	out := []CostAllocation{}
 	for rows.Next() {
 		var a CostAllocation
-		var code, name string
-		if err := rows.Scan(&a.ID, &a.BudgetUnitID, &a.Value, &a.Position, &code, &name); err != nil {
+		var name string
+		if err := rows.Scan(&a.ID, &a.BusinessUnitID, &a.Value, &a.Position, &name); err != nil {
 			return nil, err
 		}
-		a.BudgetUnit = &BudgetUnitSummary{ID: a.BudgetUnitID, Code: code, Name: name}
+		a.BusinessUnit = &BusinessUnitSummary{ID: a.BusinessUnitID, Name: name}
 		out = append(out, a)
 	}
 	return out, rows.Err()

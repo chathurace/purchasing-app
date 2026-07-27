@@ -67,8 +67,8 @@ on each card (`can_comment` / `can_approve` / `can_assign`):
 - **Comment** — any member of the card's team (legal → `legal` role, security →
   `security` role), as before. (`canActOnRecType`)
 - **Approve** — **only the card's assignee** may toggle approve/revert.
-  (`canApproveRecType`) The budget card has no assignee — any qualified budget approver of the PR's
-  budget unit (or admin) may approve; see `docs/budget-units.md`.
+  (`canApproveRecType`) The budget card has no assignee — the PR's named budget approver
+  (email match; or admin) may approve; see `docs/business-units.md`.
 - **Assign** — any member of the card's team, **or** any procurement user
   (procurement / procurement_admin / admin). (`canAssignRecType`)
 

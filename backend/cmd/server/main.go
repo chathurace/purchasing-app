@@ -21,6 +21,7 @@ import (
 
 	"github.com/cs/purchasing-app/internal/config"
 	"github.com/cs/purchasing-app/internal/crypto"
+	"github.com/cs/purchasing-app/internal/directory"
 	"github.com/cs/purchasing-app/internal/email"
 	"github.com/cs/purchasing-app/internal/handler"
 	"github.com/cs/purchasing-app/internal/middleware"
@@ -88,6 +89,38 @@ func main() {
 		log.Fatal().Err(err).Msg("init OIDC")
 	}
 
+	// User directory for name/email autocomplete. When SCIM is disabled, it falls
+	// back to the app's own active DB users so dev needs no M2M app.
+	dirSvc := directory.New(
+		cfg.SCIM.Enabled,
+		directory.SCIMConfig{
+			BaseURL:            cfg.SCIM.BaseURL,
+			TokenURL:           cfg.SCIM.TokenURL,
+			ClientID:           cfg.SCIM.ClientID,
+			ClientSecret:       cfg.SCIM.ClientSecret,
+			Scopes:             cfg.SCIM.Scopes,
+			InsecureSkipVerify: cfg.SCIM.InsecureSkipVerify,
+			PageSize:           cfg.SCIM.PageSize,
+		},
+		time.Duration(cfg.SCIM.CacheTTLSeconds)*time.Second,
+		func(ctx context.Context) ([]directory.User, error) {
+			summaries, err := repo.ListActiveUsers(ctx)
+			if err != nil {
+				return nil, err
+			}
+			users := make([]directory.User, 0, len(summaries))
+			for _, s := range summaries {
+				if s.Email == "" {
+					continue
+				}
+				users = append(users, directory.User{Name: s.Name, Email: s.Email})
+			}
+			return users, nil
+		},
+		log,
+	)
+	log.Info().Bool("scim_enabled", dirSvc.Enabled()).Msg("user directory initialized")
+
 	router := handler.NewRouter(handler.Deps{
 		Repo:           repo,
 		Storage:        storageMgr,
@@ -97,6 +130,7 @@ func main() {
 		GDriveAPIKey:   cfg.Storage.GDrive.OAuth.APIKey,
 		GDriveAppID:    cfg.Storage.GDrive.OAuth.AppID,
 		Auth:           auth,
+		Directory:      dirSvc,
 		Mailer:         mailer,
 		AppBaseURL:     cfg.Email.AppBaseURL,
 		AllowedOrigins: cfg.CORS.AllowedOrigins,

@@ -1,0 +1,1334 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>ProQ · New Purchase Requisition</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --ink: #0a0a0a;
+    --proq-blue: #0b5cff;
+    --proq-blue-deep: #0847c4;
+    --sky-tint: #eaf1ff;
+    --slate: #5b6472;
+    --line: #e6e9ef;
+    --bg: #f6f8fb;
+    --white: #ffffff;
+    --ok: #0e9f6e;
+    --danger: #dc2626; --danger-bg: #fdecec;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: 'Inter', -apple-system, sans-serif;
+    background: var(--bg);
+    color: var(--ink);
+    min-height: 100vh;
+  }
+
+  /* ============ TOP NAV (shared ProQ chrome) ============ */
+  .topnav { background: var(--ink); color: #fff; position: sticky; top: 0; z-index: 50; }
+  .topnav-inner {
+    max-width: 1320px; margin: 0 auto; padding: 0 28px;
+    display: flex; align-items: center; gap: 28px; height: 62px;
+  }
+  .brand { display: flex; align-items: center; gap: 7px; flex: none; }
+  .logo-mark {
+    width: 34px; height: 34px; border-radius: 9px;
+    display: grid; place-items: center;
+    font-family: 'Space Grotesk', sans-serif; font-weight: 700; font-size: 17px; color: #fff;
+  }
+  .logo-mark img {
+    width: 27px; height: 27px; display: block;
+    filter: drop-shadow(-1px -1px 0.5px rgba(255,255,255,0.4)) drop-shadow(1.5px 1.5px 1.5px rgba(0,0,0,0.6));
+  }
+  .logo-word { font-family: 'Space Grotesk', sans-serif; font-weight: 700; font-size: 18px; letter-spacing: -0.2px; }
+  .logo-word span { color: #6f9dff; }
+  .nav-links { display: flex; gap: 2px; flex: 1; overflow-x: auto; scrollbar-width: none; }
+  .nav-links::-webkit-scrollbar { display: none; }
+  .nav-links a {
+    color: rgba(255,255,255,0.62); text-decoration: none;
+    font-size: 13.5px; font-weight: 500; padding: 8px 13px; border-radius: 8px; white-space: nowrap;
+    transition: color .15s, background .15s;
+  }
+  .nav-links a:hover { color: #fff; background: rgba(255,255,255,0.07); }
+  .nav-links a.active { color: #fff; background: rgba(11,92,255,0.28); box-shadow: inset 0 0 0 1px rgba(11,92,255,0.6); }
+  .avatar {
+    width: 34px; height: 34px; border-radius: 50%;
+    background: linear-gradient(135deg, #0b5cff, #6f9dff);
+    display: grid; place-items: center; font-size: 12.5px; font-weight: 600; color: #fff; cursor: pointer; flex: none;
+  }
+
+  /* ============ PAGE ============ */
+  .page { max-width: 980px; margin: 0 auto; padding: 34px 28px 80px; }
+
+  /* ============ PAGE HERO (full-bleed dark banner, flush with the nav bar, edge to edge) ============ */
+  .page-hero {
+    background: var(--ink);
+    position: relative;
+    overflow: hidden;
+    box-shadow: 0 4px 20px rgba(10,10,10,0.2);
+  }
+  .page-hero::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background-image:
+      linear-gradient(rgba(255,255,255,0.045) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255,255,255,0.045) 1px, transparent 1px);
+    background-size: 40px 40px;
+    pointer-events: none;
+  }
+  .page-hero::after {
+    content: "";
+    position: absolute;
+    width: 460px;
+    height: 460px;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(11,92,255,0.35) 0%, transparent 65%);
+    bottom: -280px;
+    left: -140px;
+    pointer-events: none;
+  }
+  .page-hero-inner {
+    max-width: 980px;
+    margin: 0 auto;
+    padding: 0 28px;
+    position: relative;
+    z-index: 1;
+  }
+  .page-hero-top { padding-top: 30px; padding-bottom: 22px; }
+  .page-hero-bottom { padding-top: 22px; padding-bottom: 32px; }
+  @media (max-width: 760px) {
+    .page-hero-inner { padding-left: 16px; padding-right: 16px; }
+  }
+
+  .crumb {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11.5px; letter-spacing: 1.8px; text-transform: uppercase;
+    color: #8fb3ff; margin-bottom: 8px;
+  }
+  .crumb a { color: #8fb3ff; text-decoration: none; }
+  .crumb a:hover { text-decoration: underline; }
+  .page-hero-inner h1 {
+    font-family: 'Space Grotesk', sans-serif; font-weight: 700;
+    font-size: 30px; letter-spacing: -0.7px;
+    color: #ffffff;
+  }
+  .page-hero-inner .sub { margin-top: 6px; font-size: 14px; color: rgba(255,255,255,0.72); max-width: 640px; line-height: 1.6; }
+
+  .hero-divider {
+    height: 2px;
+    width: 100%;
+    background: #ffffff;
+    position: relative;
+    z-index: 1;
+  }
+
+  /* ============ STEPPER — oval pills, running color-cycle is purely decorative; the line beneath is real progress ============ */
+  .stepper {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 12px;
+    row-gap: 18px;
+    position: relative;
+    z-index: 1;
+  }
+  .step-tab {
+    display: flex; align-items: center; gap: 9px;
+    padding: 10px 16px;
+    font-size: 13.5px; font-weight: 600;
+    color: rgba(255,255,255,0.55);
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(255,255,255,0.16);
+    border-radius: 999px;
+    cursor: pointer;
+    position: relative;
+    font-family: 'Inter', sans-serif;
+    white-space: nowrap;
+    transition: background .2s ease, color .15s, border-color .2s ease;
+  }
+  /* real progress line — only appears once that step has actually been completed */
+  .step-tab::after {
+    content: "";
+    position: absolute;
+    left: 14px; right: 14px;
+    bottom: -7px;
+    height: 1.5px;
+    background: #ffffff;
+    opacity: 0;
+    transition: opacity .3s ease;
+  }
+  .step-tab.reached::after { opacity: 1; }
+  .step-tab .n {
+    width: 22px; height: 22px; border-radius: 50%;
+    display: grid; place-items: center;
+    font-size: 11.5px; font-weight: 600;
+    background: rgba(255,255,255,0.12); color: rgba(255,255,255,0.6);
+    flex: none;
+    transition: all .15s;
+  }
+  .step-tab.done { color: #ffffff; background: rgba(11,92,255,0.18); border-color: rgba(11,92,255,0.65); }
+  .step-tab.done .n { background: var(--ok); color: #fff; }
+  .step-tab.done .n::before { content: "✓"; }
+  .step-tab.done .n span { display: none; }
+  /* current step pulses gently — "running" without misrepresenting steps not yet reached */
+  .step-tab.current {
+    color: #ffffff; background: rgba(11,92,255,0.2); border-color: var(--proq-blue);
+    animation: stepGlow 1.8s ease-in-out infinite;
+  }
+  .step-tab.current .n { background: var(--proq-blue); color: #fff; box-shadow: 0 0 10px rgba(11,92,255,0.9); }
+  @keyframes stepGlow {
+    0%, 100% { box-shadow: 0 0 0 rgba(11,92,255,0); }
+    50% { box-shadow: 0 0 16px rgba(11,92,255,0.55); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .step-tab.current { animation: none; }
+  }
+  .step-tab:not(.done):not(.current):hover { background: rgba(255,255,255,0.09); border-color: rgba(255,255,255,0.3); }
+  .step-tab.done:hover { background: rgba(11,92,255,0.28); }
+
+
+  /* ============ CARD / FORM ============ */
+  .form-card {
+    background: var(--white);
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    box-shadow: 0 1px 3px rgba(10,10,10,0.05);
+    padding: 34px 38px 30px;
+  }
+
+  .step-pane { display: none; }
+  .step-pane.visible { display: block; }
+
+  .pane-title {
+    font-family: 'Space Grotesk', sans-serif;
+    font-weight: 600; font-size: 21px; letter-spacing: -0.4px;
+    padding-bottom: 8px; margin-bottom: 6px;
+    border-bottom: 3px solid var(--proq-blue);
+    display: inline-block;
+  }
+  .pane-sub { font-size: 14px; color: var(--slate); margin-bottom: 26px; line-height: 1.6; }
+
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 18px 22px; }
+  .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 18px 22px; }
+  .field { margin-bottom: 18px; }
+  .field label {
+    display: block;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px; font-weight: 500;
+    letter-spacing: 1.4px; text-transform: uppercase;
+    color: var(--slate);
+    margin-bottom: 8px;
+  }
+  .field label b { color: var(--proq-blue); font-weight: 500; }
+  .field input[type="text"], .field input[type="email"], .field input[type="date"], .field input[type="number"],
+  .field select, .field textarea, .name-row input[type="text"] {
+    width: 100%;
+    font-family: 'Inter', sans-serif;
+    font-size: 14.5px;
+    color: var(--ink);
+    padding: 12px 14px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: var(--white);
+    outline: none;
+    transition: border-color .15s, box-shadow .15s;
+  }
+  .field textarea { min-height: 96px; resize: vertical; line-height: 1.55; }
+  .field input:focus, .field select:focus, .field textarea:focus, .name-row input:focus {
+    border-color: var(--proq-blue);
+    box-shadow: 0 0 0 3px rgba(11,92,255,0.14);
+  }
+  .field input::placeholder, .field textarea::placeholder, .name-row input::placeholder { color: #9aa2ae; }
+  .field .help { margin-top: 7px; font-size: 12.5px; color: #8b93a1; font-style: italic; line-height: 1.5; }
+
+  /* dynamic name lists (users / administrators) */
+  .name-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; }
+  .name-row { display: flex; gap: 8px; align-items: center; }
+  .name-row input { flex: 1; }
+  .name-remove {
+    flex: none; width: 38px; height: 38px; border-radius: 9px;
+    border: 1px solid var(--line); background: var(--white); color: var(--slate);
+    font-size: 17px; line-height: 1; cursor: pointer; transition: all .15s;
+  }
+  .name-remove:hover { border-color: var(--danger); color: var(--danger); background: var(--danger-bg); }
+  .name-add {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-family: 'Inter', sans-serif; font-size: 13px; font-weight: 600;
+    color: var(--proq-blue); background: var(--sky-tint);
+    border: 1px dashed rgba(11,92,255,0.45); border-radius: 9px;
+    padding: 9px 15px; cursor: pointer; transition: all .15s;
+  }
+  .name-add:hover { background: #ddeaff; }
+
+  /* nested conditional follow-up (revealed on Yes) */
+  .followup {
+    margin: -6px 0 18px;
+    padding: 16px 18px 4px;
+    border-left: 3px solid rgba(11,92,255,0.4);
+    background: #fafbff;
+    border-radius: 0 10px 10px 0;
+  }
+
+  /* under-development placeholder */
+  .dev-note {
+    display: flex; gap: 12px; align-items: flex-start;
+    background: var(--sky-tint);
+    border: 1.5px dashed rgba(11,92,255,0.45);
+    border-radius: 14px;
+    padding: 20px 22px;
+    font-size: 14.5px; line-height: 1.65; color: var(--ink);
+  }
+  .dev-note .icon { font-size: 22px; line-height: 1; flex: none; }
+  .dev-note strong { font-weight: 600; }
+
+  /* reassurance / process note (e.g. "Procurement will contact this supplier") */
+  .info-note {
+    display: flex; gap: 12px; align-items: flex-start;
+    background: var(--sky-tint);
+    border-left: 4px solid var(--proq-blue);
+    border-radius: 0 12px 12px 0;
+    padding: 16px 20px;
+    margin: 4px 0 24px;
+    font-size: 13.5px; line-height: 1.6; color: var(--ink);
+  }
+  .info-note .icon { font-size: 19px; line-height: 1.3; flex: none; }
+
+  /* file attachment field */
+  .field input[type="file"] {
+    width: 100%;
+    font-family: 'Inter', sans-serif;
+    font-size: 13.5px;
+    color: var(--slate);
+    padding: 10px 0 4px;
+    border: none;
+    background: transparent;
+  }
+
+  /* section band */
+  .section-band {
+    display: flex; align-items: center; gap: 10px;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12px; font-weight: 500;
+    letter-spacing: 1.8px; text-transform: uppercase;
+    color: var(--ink);
+    background: var(--sky-tint);
+    border-left: 4px solid var(--proq-blue);
+    border-radius: 0 10px 10px 0;
+    padding: 12px 16px;
+    margin: 26px 0 20px;
+  }
+
+  /* purchase type cards */
+  .type-cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 6px; }
+  .type-card {
+    text-align: left;
+    border: 1.5px solid var(--line);
+    border-radius: 14px;
+    background: var(--white);
+    padding: 20px 22px;
+    cursor: pointer;
+    font-family: 'Inter', sans-serif;
+    transition: all .15s;
+    position: relative;
+  }
+  .type-card:hover { border-color: #c9cfda; }
+  .type-card h3 {
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: 17px; font-weight: 600; letter-spacing: -0.2px;
+    margin-bottom: 5px;
+    display: flex; align-items: center; gap: 9px;
+  }
+  .type-card p { font-size: 13.5px; color: var(--slate); }
+  .type-card .tick {
+    position: absolute; top: 16px; right: 16px;
+    width: 22px; height: 22px; border-radius: 50%;
+    border: 1.5px solid var(--line);
+    display: grid; place-items: center;
+    font-size: 12px; color: transparent;
+    transition: all .15s;
+  }
+  .type-card.selected {
+    border-color: var(--proq-blue);
+    background: var(--ink);
+    box-shadow: 0 10px 28px rgba(11,92,255,0.32), 0 0 0 3px rgba(11,92,255,0.22);
+  }
+  .type-card.selected h3 { color: #ffffff; }
+  .type-card.selected p { color: rgba(255,255,255,0.72); }
+  .type-card.selected .tick { background: var(--proq-blue); border-color: var(--proq-blue); color: #fff; }
+  .type-hint { font-size: 13px; color: #9aa2ae; margin: 10px 2px 4px; }
+
+  /* yes/no toggles */
+  .yn { display: flex; gap: 10px; max-width: 340px; }
+  .yn button {
+    flex: 1;
+    padding: 11px 10px;
+    font-family: 'Inter', sans-serif;
+    font-size: 14px; font-weight: 600;
+    border: 1.5px solid var(--line);
+    border-radius: 10px;
+    background: var(--white);
+    color: var(--slate);
+    cursor: pointer;
+    transition: all .15s;
+  }
+  .yn button:hover { border-color: #c9cfda; }
+  .yn button.on-yes { border-color: var(--proq-blue); background: var(--sky-tint); color: var(--proq-blue); }
+  .yn button.on-no  { border-color: var(--ink); background: #f2f3f6; color: var(--ink); }
+
+  /* collapsible optional sections */
+  .collapsible { border: 1px solid var(--line); border-radius: 12px; margin-bottom: 14px; overflow: hidden; }
+  .collapsible > summary {
+    list-style: none;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 15px 18px;
+    cursor: pointer;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12px; letter-spacing: 1.6px; text-transform: uppercase;
+    color: var(--ink);
+    background: #fafbfd;
+    user-select: none;
+  }
+  .collapsible > summary::-webkit-details-marker { display: none; }
+  .collapsible > summary .opt { color: #9aa2ae; letter-spacing: 0.5px; text-transform: none; font-family: 'Inter', sans-serif; font-size: 12.5px; }
+  .collapsible > summary .chev { transition: transform .2s; color: var(--proq-blue); }
+  .collapsible[open] > summary .chev { transform: rotate(90deg); }
+  .collapsible .body { padding: 20px 18px 8px; border-top: 1px solid var(--line); }
+
+  /* validation */
+  .error-msg {
+    display: none;
+    align-items: center; gap: 8px;
+    color: var(--danger);
+    background: var(--danger-bg);
+    border-radius: 10px;
+    padding: 12px 16px;
+    font-size: 13.5px; font-weight: 500;
+    margin-top: 20px;
+  }
+  .error-msg.show { display: flex; }
+
+  /* footer actions */
+  .form-actions {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-top: 28px; padding-top: 22px;
+    border-top: 1px solid var(--line);
+  }
+  .btn {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-family: 'Inter', sans-serif; font-size: 14.5px; font-weight: 600;
+    padding: 12px 22px; border-radius: 11px; border: none; cursor: pointer;
+    transition: all .15s;
+  }
+  .btn-primary {
+    background: var(--proq-blue); color: #fff;
+    box-shadow: 0 5px 16px rgba(11,92,255,0.28);
+  }
+  .btn-primary:hover { background: var(--proq-blue-deep); transform: translateY(-1px); }
+  .btn-ghost {
+    background: var(--white); color: var(--ink);
+    box-shadow: inset 0 0 0 1px var(--line);
+  }
+  .btn-ghost:hover { box-shadow: inset 0 0 0 1px #c9cfda; }
+  .btn-submit {
+    background: linear-gradient(135deg, #0b5cff, #0847c4);
+    color: #fff; font-weight: 700;
+    padding: 13px 26px;
+    box-shadow: 0 8px 22px rgba(11,92,255,0.4);
+  }
+  .btn-submit:hover { transform: translateY(-1px); box-shadow: 0 11px 26px rgba(11,92,255,0.48); }
+
+  /* review step */
+  .review-block { border: 1px solid var(--line); border-radius: 12px; margin-bottom: 16px; overflow: hidden; }
+  .review-block header {
+    display: flex; justify-content: space-between; align-items: center;
+    background: #fafbfd; padding: 13px 18px;
+    border-bottom: 1px solid var(--line);
+  }
+  .review-block header h4 {
+    font-family: 'Space Grotesk', sans-serif; font-size: 15px; font-weight: 600;
+  }
+  .review-block header button {
+    font-family: 'Inter', sans-serif; font-size: 12.5px; font-weight: 600;
+    color: var(--proq-blue); background: none; border: none; cursor: pointer;
+  }
+  .review-block header button:hover { text-decoration: underline; }
+  .review-rows { padding: 8px 18px 14px; }
+  .review-row { display: grid; grid-template-columns: 220px 1fr; gap: 14px; padding: 8px 0; font-size: 13.5px; border-bottom: 1px dashed #f0f2f6; }
+  .review-row:last-child { border-bottom: none; }
+  .review-row .k { color: var(--slate); }
+  .review-row .v { font-weight: 500; word-break: break-word; }
+  .review-row .v:empty::before { content: "—"; color: #c2c8d2; font-weight: 400; }
+
+  /* success state */
+  .success-pane { text-align: center; padding: 40px 20px 30px; display: none; }
+  .success-pane.visible { display: block; }
+  .success-pane .big-tick {
+    width: 72px; height: 72px; border-radius: 50%;
+    background: var(--sky-tint);
+    display: grid; place-items: center;
+    margin: 0 auto 22px;
+  }
+  .success-pane h2 {
+    font-family: 'Space Grotesk', sans-serif; font-size: 26px; font-weight: 700; letter-spacing: -0.5px;
+    margin-bottom: 10px;
+  }
+  .success-pane .ref-box {
+    display: inline-flex; align-items: center; gap: 8px;
+    background: var(--white);
+    border: 1.5px solid var(--line);
+    border-radius: 12px;
+    padding: 14px 26px;
+    margin: 8px 0 24px;
+    font-size: 14.5px; color: var(--slate);
+  }
+  .success-pane .ref-box b {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 17px; font-weight: 700;
+    color: var(--proq-blue); letter-spacing: 0.3px;
+  }
+  .success-pane .vendor-notice {
+    display: flex; gap: 12px; align-items: flex-start;
+    text-align: left;
+    background: var(--sky-tint);
+    border: 1.5px solid rgba(11,92,255,0.28);
+    border-radius: 14px;
+    padding: 18px 20px;
+    max-width: 560px;
+    margin: 0 auto 26px;
+    font-size: 13.5px; line-height: 1.65; color: var(--ink);
+  }
+  .success-pane .vendor-notice .icon { font-size: 18px; line-height: 1.4; flex: none; }
+  .success-pane .vendor-notice a { color: var(--proq-blue); font-weight: 600; text-decoration: underline; }
+  .success-pane p { color: var(--slate); font-size: 14.5px; line-height: 1.65; max-width: 480px; margin: 0 auto 22px; }
+
+  @media (max-width: 760px) {
+    .grid-2, .grid-3 { grid-template-columns: 1fr; }
+    .type-cards { grid-template-columns: 1fr; }
+    .form-card { padding: 24px 18px; }
+    .stepper { row-gap: 12px; gap: 8px; }
+    .step-tab { padding: 9px 13px; font-size: 12.5px; }
+    .review-row { grid-template-columns: 1fr; gap: 2px; }
+    .page { padding: 24px 16px 60px; }
+  }
+</style>
+</head>
+<body>
+
+<nav class="topnav">
+  <div class="topnav-inner">
+    <div class="brand">
+      <div class="logo-mark"><img src="data:image/png;base64,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" alt="ProQ logo" /></div>
+      <div class="logo-word">Pro<span>Q</span></div>
+    </div>
+    <div class="nav-links">
+      <a href="#" class="active">Requests</a>
+      <a href="#">Approvals</a>
+      <a href="#">Quotations</a>
+      <a href="#">Contracts</a>
+      <a href="#">GRNs</a>
+      <a href="#">Invoices</a>
+      <a href="#">Vendors</a>
+      <a href="#">Cost centers</a>
+      <a href="#">Settings</a>
+    </div>
+    <div class="avatar" title="Chamika Karunarathne">CK</div>
+  </div>
+</nav>
+
+<div class="page-hero">
+  <div class="page-hero-inner page-hero-top">
+    <div class="crumb"><a href="#">Requests</a> / New</div>
+    <h1>New Purchase Requisition (PR)</h1>
+    <p class="sub">This is the first step of WSO2's supply chain cycle. Complete the five short steps below — once you submit, the WSO2 Procurement team takes over and manages your request through the full procurement lifecycle: budget approval, quotation, contract, purchase order, delivery, and payment. You can track progress at every stage.</p>
+  </div>
+
+  <div class="hero-divider"></div>
+
+  <div class="page-hero-inner page-hero-bottom">
+    <!-- STEPPER -->
+    <div class="stepper" role="tablist">
+      <button class="step-tab current" data-step="1" role="tab"><span class="n"><span>1</span></span>Requester details</button>
+      <button class="step-tab" data-step="2" role="tab"><span class="n"><span>2</span></span>Procurement Category</button>
+      <button class="step-tab" data-step="3" role="tab"><span class="n"><span>3</span></span><span id="tab3-label">Requirement Details</span></button>
+      <button class="step-tab" data-step="4" role="tab"><span class="n"><span>4</span></span>Vendor &amp; budget</button>
+      <button class="step-tab" data-step="5" role="tab"><span class="n"><span>5</span></span>Review &amp; submit</button>
+    </div>
+  </div>
+</div>
+
+<main class="page">
+
+  <div class="form-card">
+
+    <!-- ================= STEP 1 : REQUESTER ================= -->
+    <section class="step-pane visible" id="pane-1">
+      <div class="pane-title">Requester details</div>
+      <p class="pane-sub">Confirm who's raising this request. Cost center, entity, and business justification are captured in the next steps.</p>
+
+      <div class="grid-3">
+        <div class="field">
+          <label>Date <b>*</b></label>
+          <input type="date" id="f-date" value="2026-07-18" />
+        </div>
+        <div class="field">
+          <label>Your full name <b>*</b></label>
+          <input type="text" id="f-name" placeholder="e.g. Chamika Karunarathne" />
+        </div>
+        <div class="field">
+          <label>WSO2 email <b>*</b></label>
+          <input type="email" id="f-email" placeholder="you@wso2.com" />
+        </div>
+      </div>
+      <div class="help" style="margin: -8px 0 4px;">Name and email are pulled from your WSO2 SSO login — edit only if you're raising this requisition on someone else's behalf.</div>
+
+      <div class="error-msg" id="err-1">⚠ Please complete all required fields before continuing.</div>
+
+      <div class="form-actions">
+        <span></span>
+        <button class="btn btn-primary" onclick="goToStep(2)">Continue to Procurement Category →</button>
+      </div>
+    </section>
+
+    <!-- ================= STEP 2 : PROCUREMENT CATEGORY (selection only) ================= -->
+    <section class="step-pane" id="pane-2">
+      <div class="pane-title">Procurement Category</div>
+      <p class="pane-sub">Choose the category that best matches your request — ProQ will then ask only the questions relevant to your selection, on the next page.</p>
+
+      <div class="type-cards">
+        <button class="type-card" id="card-it" onclick="selectType('it')">
+          <span class="tick">✓</span>
+          <h3>💻 IT Related Procurement</h3>
+          <p>Software, SaaS subscriptions, cloud infrastructure, hardware, and other technology purchases.</p>
+        </button>
+        <button class="type-card" id="card-nonit" onclick="selectType('nonit')">
+          <span class="tick">✓</span>
+          <h3>🏢 Non-IT Related Procurement</h3>
+          <p>Facilities, insurance, office goods, consumables, and general professional services.</p>
+        </button>
+        <button class="type-card" id="card-events" onclick="selectType('events')">
+          <span class="tick">✓</span>
+          <h3>🎤 Marketing &amp; Events Procurement</h3>
+          <p>Conferences, sponsorships, venues, AV production, and vendor services for WSO2 events and campaigns.</p>
+        </button>
+      </div>
+      <p class="type-hint" id="type-hint">Select a procurement category above to continue.</p>
+
+      <div class="error-msg" id="err-2">⚠ Please select a procurement category to continue.</div>
+
+      <div class="form-actions">
+        <button class="btn btn-ghost" onclick="goToStep(1)">← Back</button>
+        <button class="btn btn-primary" id="btn-to-step3" onclick="goToStep(3)">Continue →</button>
+      </div>
+    </section>
+
+    <!-- ================= STEP 3 : REQUIREMENT DETAILS (dynamic per category) ================= -->
+    <section class="step-pane" id="pane-3">
+      <div class="pane-title" id="pane3-title">Requirement Details</div>
+      <p class="pane-sub">Complete the details below for your selected category.</p>
+
+      <!-- SECTION A : IT -->
+      <div id="section-it" style="display:none">
+        <div class="grid-2">
+          <div class="field">
+            <label>Product / solution name <b>*</b></label>
+            <input type="text" id="f-product-name" placeholder="e.g. Salesforce, GitHub Enterprise" />
+          </div>
+          <div class="field">
+            <label>Plan / subscription tier <b>*</b></label>
+            <input type="text" id="f-plan" placeholder="e.g. Enterprise, Pro" />
+          </div>
+        </div>
+        <div class="field">
+          <label>Description of the product / solution <b>*</b></label>
+          <textarea id="f-desc" placeholder="What does it do, and how will WSO2 use it?"></textarea>
+        </div>
+
+        <div class="grid-2">
+          <div class="field">
+            <label>Expected number of users <b>*</b></label>
+            <input type="number" min="1" id="f-user-count" placeholder="e.g. 5" onchange="syncNames('f-user-count','user-names-container','e.g. Jane Silva — Sales team')" />
+          </div>
+          <div class="field">
+            <label>Expected number of administrators <b>*</b></label>
+            <input type="number" min="1" id="f-admin-count" placeholder="e.g. 2" onchange="syncNames('f-admin-count','admin-names-container','e.g. John Perera')" />
+          </div>
+        </div>
+
+        <div class="field">
+          <label>Names of users / teams <b>*</b></label>
+          <div class="name-list" id="user-names-container">
+            <div class="name-row">
+              <input type="text" class="name-input" placeholder="e.g. Jane Silva — Sales team" />
+              <button type="button" class="name-remove" onclick="removeNameRow(this)" aria-label="Remove">×</button>
+            </div>
+          </div>
+          <button type="button" class="name-add" onclick="addNameRow('user-names-container','e.g. Jane Silva — Sales team')">+ Add name</button>
+        </div>
+
+        <div class="field">
+          <label>Names of administrators <b>*</b></label>
+          <div class="name-list" id="admin-names-container">
+            <div class="name-row">
+              <input type="text" class="name-input" placeholder="e.g. John Perera" />
+              <button type="button" class="name-remove" onclick="removeNameRow(this)" aria-label="Remove">×</button>
+            </div>
+          </div>
+          <button type="button" class="name-add" onclick="addNameRow('admin-names-container','e.g. John Perera')">+ Add name</button>
+        </div>
+
+        <div class="field">
+          <label>Expected usage period <b>*</b></label>
+          <select id="f-usage-period">
+            <option value="">Select duration</option>
+            <option>Trial / pilot (under 3 months)</option>
+            <option>Monthly plan</option>
+            <option>1 year</option>
+            <option>2 years</option>
+            <option>3+ years</option>
+            <option>Ongoing / perpetual</option>
+            <option>Other</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label>Business justification <b>*</b></label>
+          <textarea id="f-justify-it" placeholder="Why is this purchase needed? What problem does it solve, and what happens if we don't buy it?"></textarea>
+        </div>
+
+        <div class="section-band">Data &amp; security assessment</div>
+
+        <div class="field">
+          <label>Will this platform store or process sensitive or confidential WSO2 data? <b>*</b></label>
+          <div class="yn" data-key="sensitive">
+            <button onclick="setYN(this,'yes')">Yes</button>
+            <button onclick="setYN(this,'no')">No</button>
+          </div>
+        </div>
+
+        <div class="field">
+          <label>Will this platform store or process external PII (customers, prospects, leads, or third parties)? <b>*</b></label>
+          <div class="yn" data-key="extpii">
+            <button onclick="setYN(this,'yes')">Yes</button>
+            <button onclick="setYN(this,'no')">No</button>
+          </div>
+        </div>
+        <div class="followup" id="followup-extpii" style="display:none">
+          <div class="field">
+            <label>What data would this include? <b>*</b></label>
+            <input type="text" id="f-extpii-detail" placeholder="e.g. names, emails, phone numbers, payment details" />
+          </div>
+        </div>
+
+        <div class="field">
+          <label>Will this platform store or process internal employee PII? <b>*</b></label>
+          <div class="yn" data-key="intpii">
+            <button onclick="setYN(this,'yes')">Yes</button>
+            <button onclick="setYN(this,'no')">No</button>
+          </div>
+        </div>
+        <div class="followup" id="followup-intpii" style="display:none">
+          <div class="field">
+            <label>What data would this include? <b>*</b></label>
+            <input type="text" id="f-intpii-detail" placeholder="e.g. employee ID, payroll data, performance records" />
+          </div>
+        </div>
+
+        <div class="field">
+          <label>Will this integrate with WSO2 internal systems? <b>*</b></label>
+          <div class="yn" data-key="integrates">
+            <button onclick="setYN(this,'yes')">Yes</button>
+            <button onclick="setYN(this,'no')">No</button>
+          </div>
+        </div>
+        <div class="followup" id="followup-integrates" style="display:none">
+          <div class="grid-2">
+            <div class="field">
+              <label>Which systems? <b>*</b></label>
+              <input type="text" id="f-integrates-systems" placeholder="e.g. WSO2 Identity Server, Google Workspace" />
+            </div>
+            <div class="field">
+              <label>What kind of integration? <b>*</b></label>
+              <select id="f-integrates-kind">
+                <option value="">Select type</option>
+                <option>API integration</option>
+                <option>SSO / identity</option>
+                <option>Data sync / ETL</option>
+                <option>Webhook</option>
+                <option>Other</option>
+              </select>
+            </div>
+          </div>
+          <div class="field">
+            <label>Has the vendor provided guidelines / documentation on this integration? <b>*</b></label>
+            <div class="yn" data-key="vendordocs">
+              <button onclick="setYN(this,'yes')">Yes</button>
+              <button onclick="setYN(this,'no')">No</button>
+            </div>
+          </div>
+          <div class="followup" id="followup-vendordocs" style="display:none">
+            <div class="field">
+              <label>Documentation link(s) <b>*</b></label>
+              <input type="text" id="f-vendordocs-link" placeholder="Paste link(s), separated by commas" />
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- SECTION B : NON-IT -->
+      <div id="section-nonit" style="display:none">
+        <div class="field">
+          <label>Details of goods / services required <b>*</b></label>
+          <textarea id="f-nonit-details" placeholder="Describe what's needed, including quantities — e.g. 40 ergonomic office chairs for the Colombo office"></textarea>
+        </div>
+        <div class="field">
+          <label>Additional specifications or document links</label>
+          <textarea id="f-nonit-specs" placeholder="Any additional specifications, or links to spec sheets / vendor quotes, if available"></textarea>
+        </div>
+        <div class="field">
+          <label>Business justification <b>*</b></label>
+          <textarea id="f-justify-nonit" placeholder="Why is this purchase needed? What problem does it solve, and what happens if we don't buy it?"></textarea>
+        </div>
+      </div>
+
+      <!-- SECTION C : MARKETING & EVENTS -->
+      <div id="section-events" style="display:none">
+        <div class="dev-note">
+          <span class="icon">🚧</span>
+          <span><strong>This procurement category is under development.</strong> The Marketing &amp; Events requirement questions are still being finalized. Please continue for now — the WSO2 Procurement team will follow up with you directly for any additional details needed.</span>
+        </div>
+      </div>
+
+      <div class="error-msg" id="err-3">⚠ Please complete the business justification and the required fields for your selected category.</div>
+
+      <div class="form-actions">
+        <button class="btn btn-ghost" onclick="goToStep(2)">← Back</button>
+        <button class="btn btn-primary" onclick="goToStep(4)">Continue to Vendor &amp; budget →</button>
+      </div>
+    </section>
+
+
+    <!-- ================= STEP 4 : VENDOR & BUDGET ================= -->
+    <section class="step-pane" id="pane-4">
+      <div class="pane-title">Vendor &amp; budget</div>
+      <p class="pane-sub">Tell us about the proposed supplier, then complete the budget details for this purchase.</p>
+
+      <!-- IT VENDOR & BUDGET -->
+      <div id="budget-it" style="display:none">
+        <div class="section-band">Proposed vendor</div>
+        <div class="grid-2">
+          <div class="field">
+            <label>Proposed supplier name <span style="text-transform:none; font-weight:400;">(if any)</span></label>
+            <input type="text" id="f-it-supplier-name" placeholder="e.g. Softchoice, AWS" />
+          </div>
+          <div class="field">
+            <label>Proposed supplier's website</label>
+            <input type="text" id="f-it-supplier-website" placeholder="e.g. https://www.supplier.com" />
+          </div>
+        </div>
+        <div class="grid-2">
+          <div class="field">
+            <label>Contact name</label>
+            <input type="text" id="f-it-supplier-contact-name" placeholder="e.g. Jane Smith" />
+          </div>
+          <div class="field">
+            <label>Contact email</label>
+            <input type="email" id="f-it-supplier-contact-email" placeholder="contact@supplier.com" />
+          </div>
+        </div>
+        <div class="field">
+          <label>Attach proposal or supporting documents</label>
+          <input type="file" id="f-it-supplier-docs" multiple />
+          <div class="help">Optional — PDF, DOCX, PPTX, or similar.</div>
+        </div>
+        <div class="info-note">
+          <span class="icon">🤝</span>
+          <span>Once submitted, the WSO2 Procurement team will contact this supplier directly and assess whether to proceed, in line with the Global Supply Chain Management Policy.</span>
+        </div>
+
+        <div class="section-band">Budget details</div>
+        <div class="grid-2">
+          <div class="field">
+            <label>Budget category</label>
+            <input type="text" id="f-it-budgetcat" placeholder="e.g. Software & SaaS, Hardware & Equipment, Cloud & Hosting" />
+          </div>
+          <div class="field">
+            <label>Business unit (BU)</label>
+            <input type="text" id="f-it-bu" placeholder="e.g. IT & Infrastructure, Engineering, Marketing" />
+          </div>
+          <div class="field">
+            <label>Product</label>
+            <input type="text" id="f-it-product" placeholder="e.g. WSO2 Identity Server, Choreo, Corporate / shared" />
+          </div>
+          <div class="field">
+            <label>Region</label>
+            <input type="text" id="f-it-region" placeholder="e.g. APAC — Sri Lanka, EMEA — UK, Global" />
+          </div>
+        </div>
+        <div class="field">
+          <label>Engagement code</label>
+          <input type="text" id="f-it-engcode" placeholder="e.g. ENG-1001, if known" />
+          <div class="help">Finance / NetSuite cost-center code, if known.</div>
+        </div>
+
+        <div class="section-band">Budget approval</div>
+        <div class="grid-2">
+          <div class="field">
+            <label>Budget approver's name <b>*</b></label>
+            <input type="text" id="f-it-approver" placeholder="Name of the budget owner" />
+            <div class="help">Filled in from the business unit owner — edit if someone else approves.</div>
+          </div>
+          <div class="field">
+            <label>Budget approver's email <b>*</b></label>
+            <input type="email" id="f-it-approver-email" placeholder="approver@wso2.com" />
+          </div>
+        </div>
+
+        <div class="section-band">Notes for the Procurement team</div>
+        <div class="field">
+          <textarea id="f-it-notes" placeholder="Anything else Procurement should know — deadlines, existing quotes, contract references…"></textarea>
+        </div>
+      </div>
+
+      <!-- NON-IT VENDOR & BUDGET -->
+      <div id="budget-nonit" style="display:none">
+        <div class="section-band">Proposed vendor</div>
+        <div class="grid-2">
+          <div class="field">
+            <label>Proposed supplier name <span style="text-transform:none; font-weight:400;">(if any)</span></label>
+            <input type="text" id="f-nonit-supplier-name" placeholder="e.g. WeWork, Encore AV" />
+          </div>
+          <div class="field">
+            <label>Proposed supplier's website</label>
+            <input type="text" id="f-nonit-supplier-website" placeholder="e.g. https://www.supplier.com" />
+          </div>
+        </div>
+        <div class="grid-3">
+          <div class="field">
+            <label>Contact name</label>
+            <input type="text" id="f-nonit-supplier-contact-name" placeholder="e.g. Jane Smith" />
+          </div>
+          <div class="field">
+            <label>Contact email</label>
+            <input type="email" id="f-nonit-supplier-contact-email" placeholder="contact@supplier.com" />
+          </div>
+          <div class="field">
+            <label>Contact number</label>
+            <input type="text" id="f-nonit-supplier-contact-number" placeholder="e.g. +94 77 123 4567" />
+          </div>
+        </div>
+        <div class="field">
+          <label>Attach proposal, quotation, or supporting documents</label>
+          <input type="file" id="f-nonit-supplier-docs" multiple />
+          <div class="help">Optional — PDF, DOCX, PPTX, or similar.</div>
+        </div>
+        <div class="info-note">
+          <span class="icon">🤝</span>
+          <span>Once submitted, the WSO2 Procurement team will contact this supplier directly and assess whether to proceed, in line with the Global Supply Chain Management Policy.</span>
+        </div>
+
+        <div class="section-band">Budget details</div>
+        <div class="grid-2">
+          <div class="field">
+            <label>Budget category</label>
+            <input type="text" id="f-nonit-budgetcat" placeholder="e.g. Facilities, Professional Services, Goods & Consumables" />
+          </div>
+          <div class="field">
+            <label>Business unit (BU)</label>
+            <input type="text" id="f-nonit-bu" placeholder="e.g. Facilities & Admin, Marketing, Finance" />
+          </div>
+          <div class="field">
+            <label>Product</label>
+            <input type="text" id="f-nonit-product" placeholder="e.g. Corporate / shared" />
+          </div>
+          <div class="field">
+            <label>Region</label>
+            <input type="text" id="f-nonit-region" placeholder="e.g. APAC — Sri Lanka, EMEA — UK, Global" />
+          </div>
+        </div>
+        <div class="field">
+          <label>Engagement code</label>
+          <input type="text" id="f-nonit-engcode" placeholder="e.g. ENG-1001, if known" />
+          <div class="help">Finance / NetSuite cost-center code, if known.</div>
+        </div>
+
+        <div class="section-band">Budget approval</div>
+        <div class="grid-2">
+          <div class="field">
+            <label>Budget approver's name <b>*</b></label>
+            <input type="text" id="f-nonit-approver" placeholder="Name of the budget owner" />
+            <div class="help">Filled in from the business unit owner — edit if someone else approves.</div>
+          </div>
+          <div class="field">
+            <label>Budget approver's email <b>*</b></label>
+            <input type="email" id="f-nonit-approver-email" placeholder="approver@wso2.com" />
+          </div>
+        </div>
+
+        <div class="section-band">Notes for the Procurement team</div>
+        <div class="field">
+          <textarea id="f-nonit-notes" placeholder="Anything else Procurement should know — deadlines, existing quotes, contract references…"></textarea>
+        </div>
+      </div>
+
+      <!-- MARKETING & EVENTS VENDOR & BUDGET -->
+      <div id="budget-events" style="display:none">
+        <div class="dev-note">
+          <span class="icon">🚧</span>
+          <span><strong>This procurement category is under development.</strong> Vendor and budget questions for Marketing &amp; Events requests are still being finalized. Please continue — the WSO2 Procurement team will coordinate vendor and budget details with you directly.</span>
+        </div>
+      </div>
+
+      <div class="error-msg" id="err-4">⚠ Please complete the budget approver's name and email.</div>
+
+      <div class="form-actions">
+        <button class="btn btn-ghost" onclick="goToStep(3)">← Back</button>
+        <button class="btn btn-primary" onclick="goToStep(5)">Next → Review</button>
+      </div>
+    </section>
+
+
+    <!-- ================= STEP 5 : REVIEW ================= -->
+    <section class="step-pane" id="pane-5">
+      <div class="pane-title">Review &amp; submit</div>
+      <p class="pane-sub">Please confirm everything below is correct. On submission your requisition receives a PR reference and is routed to the budget approver.</p>
+
+      <div class="review-block">
+        <header><h4>1 · Requester details</h4><button onclick="goToStep(1)">Edit</button></header>
+        <div class="review-rows">
+          <div class="review-row"><span class="k">Date</span><span class="v" id="r-date"></span></div>
+          <div class="review-row"><span class="k">Full name</span><span class="v" id="r-name"></span></div>
+          <div class="review-row"><span class="k">WSO2 email</span><span class="v" id="r-email"></span></div>
+        </div>
+      </div>
+
+      <div class="review-block">
+        <header><h4>2 · Procurement Category</h4><button onclick="goToStep(2)">Edit</button></header>
+        <div class="review-rows">
+          <div class="review-row"><span class="k">Procurement category</span><span class="v" id="r-category"></span></div>
+        </div>
+      </div>
+
+      <div class="review-block">
+        <header><h4>3 · Requirement Details</h4><button onclick="goToStep(3)">Edit</button></header>
+        <div class="review-rows" id="r-purchase-rows"></div>
+      </div>
+
+      <div class="review-block">
+        <header><h4>4 · Vendor &amp; budget</h4><button onclick="goToStep(4)">Edit</button></header>
+        <div class="review-rows" id="r-budget-rows"></div>
+      </div>
+
+      <div class="form-actions">
+        <button class="btn btn-ghost" onclick="goToStep(4)">← Back</button>
+        <button class="btn btn-submit" onclick="submitPR()">✓ Submit Purchase Requisition</button>
+      </div>
+    </section>
+
+    <!-- ================= SUCCESS ================= -->
+    <section class="success-pane" id="pane-success">
+      <div class="big-tick">
+        <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="#0b5cff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
+      </div>
+      <h2>Requisition submitted successfully</h2>
+      <p>Your request has been sent to the WSO2 Procurement team. You'll receive a confirmation and be kept updated at every stage — budget approval, quotation, contract, purchase order, delivery, and payment.</p>
+
+      <div class="ref-box">Your reference number: <b id="new-ref">PR-2026-0000001</b></div>
+
+      <div class="vendor-notice">
+        <span class="icon">⚠️</span>
+        <span>Do not contact the vendor or make any commitments until the Procurement team issues a Purchase Order. Questions? Email <a href="mailto:procurement@wso2.com">procurement@wso2.com</a>.</span>
+      </div>
+
+      <button class="btn btn-primary" onclick="location.reload()">Raise another requisition</button>
+    </section>
+
+
+  </div>
+</main>
+
+<script>
+  var state = { type: null, yn: {} };
+
+  var categoryNames = {
+    it: 'IT Related Procurement',
+    nonit: 'Non-IT Related Procurement',
+    events: 'Marketing & Events Procurement'
+  };
+  var detailTabNames = {
+    it: 'IT Requirement Details',
+    nonit: 'Non-IT Requirement Details',
+    events: 'Event Requirement Details'
+  };
+  var detailBtnNames = {
+    it: 'Continue to IT Requirement Details →',
+    nonit: 'Continue to Non-IT Requirement Details →',
+    events: 'Continue to Event Requirement Details →'
+  };
+
+  function goToStep(n) {
+    // simple required-field guard when moving forward
+    if (n === 2 && !checkStep1()) return;
+    if (n === 3 && currentStep() === 2 && !checkStep2()) return;
+    if (n === 4 && currentStep() === 3 && !checkStep3()) return;
+    if (n === 5 && !checkStep4()) return;
+
+    document.querySelectorAll('.step-pane').forEach(function (p) { p.classList.remove('visible'); });
+    document.getElementById('pane-' + n).classList.add('visible');
+
+    // real progress line: mark every step strictly before the one we're moving to as completed
+    document.querySelectorAll('.step-tab').forEach(function (t) {
+      var s = parseInt(t.dataset.step, 10);
+      if (s < n) t.classList.add('reached');
+    });
+
+    if (n === 5) fillReview();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  function currentStep() {
+    var vis = document.querySelector('.step-pane.visible');
+    return vis ? parseInt(vis.id.replace('pane-', ''), 10) || 0 : 0;
+  }
+
+  // Animate the stepper: a purely decorative illustration, auto-cycling forever (same pattern as the login page rail)
+  (function () {
+    var reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    var steps = document.querySelectorAll('.step-tab');
+    if (!steps.length) return;
+    if (reduce) { steps[0].classList.add('current'); return; }
+    var i = 0;
+    setInterval(function () {
+      steps.forEach(function (s) { s.classList.remove('current'); });
+      steps[i].classList.add('current');
+      i = (i + 1) % steps.length;
+    }, 1400);
+  })();
+
+  // step tab clicks (allow free navigation backwards, guarded forwards)
+  document.querySelectorAll('.step-tab').forEach(function (t) {
+    t.addEventListener('click', function () { goToStep(parseInt(t.dataset.step, 10)); });
+  });
+
+  function val(id) { var el = document.getElementById(id); return el ? el.value.trim() : ''; }
+
+  function justifyFieldId() {
+    if (state.type === 'it') return 'f-justify-it';
+    if (state.type === 'nonit') return 'f-justify-nonit';
+    return null; // Marketing & Events has no justification field while under development
+  }
+
+  function checkStep1() {
+    var ok = val('f-date') && val('f-name') && val('f-email');
+    document.getElementById('err-1').classList.toggle('show', !ok);
+    return !!ok;
+  }
+
+  function checkStep2() {
+    var ok = !!state.type;
+    document.getElementById('err-2').classList.toggle('show', !ok);
+    return !!ok;
+  }
+
+  function checkStep3() {
+    if (currentStep() !== 3) return true;
+    var jid = justifyFieldId();
+    var justifyOk = jid ? !!val(jid) : true;
+    var typeOk = false;
+    if (state.type === 'it') {
+      var base = val('f-product-name') && val('f-plan') && val('f-desc')
+        && val('f-user-count') && getNames('user-names-container').length > 0
+        && val('f-admin-count') && getNames('admin-names-container').length > 0
+        && val('f-usage-period')
+        && state.yn.sensitive && state.yn.extpii && state.yn.intpii && state.yn.integrates;
+      var extpiiOk = (state.yn.extpii !== 'yes') || !!val('f-extpii-detail');
+      var intpiiOk = (state.yn.intpii !== 'yes') || !!val('f-intpii-detail');
+      var integratesOk = (state.yn.integrates !== 'yes') ||
+        (!!val('f-integrates-systems') && !!val('f-integrates-kind') && !!state.yn.vendordocs &&
+         (state.yn.vendordocs !== 'yes' || !!val('f-vendordocs-link')));
+      typeOk = !!(base && extpiiOk && intpiiOk && integratesOk);
+    } else if (state.type === 'nonit') {
+      typeOk = !!val('f-nonit-details');
+    } else if (state.type === 'events') {
+      typeOk = true; // requirement form still under development — nothing to validate yet
+    }
+    var ok = justifyOk && typeOk;
+    document.getElementById('err-3').classList.toggle('show', !ok);
+    return !!ok;
+  }
+
+  function checkStep4() {
+    if (currentStep() !== 4) return true;
+    var ok = false;
+    if (state.type === 'it') {
+      ok = !!(val('f-it-approver') && val('f-it-approver-email'));
+    } else if (state.type === 'nonit') {
+      ok = !!(val('f-nonit-approver') && val('f-nonit-approver-email'));
+    } else if (state.type === 'events') {
+      ok = true; // under development — nothing to validate yet
+    }
+    document.getElementById('err-4').classList.toggle('show', !ok);
+    return !!ok;
+  }
+
+  function selectType(t) {
+    state.type = t;
+    document.getElementById('card-it').classList.toggle('selected', t === 'it');
+    document.getElementById('card-nonit').classList.toggle('selected', t === 'nonit');
+    document.getElementById('card-events').classList.toggle('selected', t === 'events');
+    document.getElementById('section-it').style.display = (t === 'it') ? 'block' : 'none';
+    document.getElementById('section-nonit').style.display = (t === 'nonit') ? 'block' : 'none';
+    document.getElementById('section-events').style.display = (t === 'events') ? 'block' : 'none';
+    document.getElementById('budget-it').style.display = (t === 'it') ? 'block' : 'none';
+    document.getElementById('budget-nonit').style.display = (t === 'nonit') ? 'block' : 'none';
+    document.getElementById('budget-events').style.display = (t === 'events') ? 'block' : 'none';
+    document.getElementById('type-hint').style.display = 'none';
+
+    var label = detailTabNames[t] || 'Requirement Details';
+    document.getElementById('tab3-label').textContent = label;
+    document.getElementById('pane3-title').textContent = label;
+    document.getElementById('btn-to-step3').textContent = (t ? 'Continue to ' + label + ' →' : 'Continue →');
+  }
+
+  function setYN(btn, v) {
+    var group = btn.parentElement;
+    var key = group.dataset.key;
+    state.yn[key] = v;
+    var btns = group.querySelectorAll('button');
+    btns.forEach(function (b) { b.classList.remove('on-yes', 'on-no'); });
+    btn.classList.add(v === 'yes' ? 'on-yes' : 'on-no');
+    var followup = document.getElementById('followup-' + key);
+    if (followup) { followup.style.display = (v === 'yes') ? 'block' : 'none'; }
+  }
+
+  function addNameRow(containerId, placeholder) {
+    var container = document.getElementById(containerId);
+    var row = document.createElement('div');
+    row.className = 'name-row';
+    var input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'name-input';
+    input.placeholder = placeholder;
+    var removeBtn = document.createElement('button');
+    removeBtn.type = 'button';
+    removeBtn.className = 'name-remove';
+    removeBtn.setAttribute('aria-label', 'Remove');
+    removeBtn.textContent = '×';
+    removeBtn.onclick = function () { removeNameRow(removeBtn); };
+    row.appendChild(input);
+    row.appendChild(removeBtn);
+    container.appendChild(row);
+  }
+
+  function removeNameRow(btn) {
+    var row = btn.parentElement;
+    var container = row.parentElement;
+    if (container.querySelectorAll('.name-row').length > 1) {
+      row.remove();
+    } else {
+      row.querySelector('.name-input').value = '';
+    }
+  }
+
+  function syncNames(countId, containerId, placeholder) {
+    var count = parseInt(val(countId), 10);
+    if (!count || count < 1) return;
+    var container = document.getElementById(containerId);
+    var current = container.querySelectorAll('.name-row').length;
+    for (var i = current; i < count; i++) {
+      addNameRow(containerId, placeholder);
+    }
+  }
+
+  function getNames(containerId) {
+    var container = document.getElementById(containerId);
+    if (!container) return [];
+    var names = [];
+    container.querySelectorAll('.name-input').forEach(function (inp) {
+      if (inp.value.trim()) names.push(inp.value.trim());
+    });
+    return names;
+  }
+
+  function ynLabel(key) {
+    return state.yn[key] ? state.yn[key].toUpperCase() : '—';
+  }
+
+  function setText(id, text) { document.getElementById(id).textContent = text || ''; }
+
+  function reviewRow(label, value) {
+    return '<div class="review-row"><span class="k">' + label + '</span><span class="v">' + (value || '') + '</span></div>';
+  }
+
+  function fillReview() {
+    setText('r-date', val('f-date'));
+    setText('r-name', val('f-name'));
+    setText('r-email', val('f-email'));
+    setText('r-category', categoryNames[state.type] || '');
+
+    var rows = [];
+    var jid = justifyFieldId();
+    if (jid) rows.push(reviewRow('Business justification', val(jid)));
+
+    if (state.type === 'it') {
+      rows.push(reviewRow('Product / solution name', val('f-product-name')));
+      rows.push(reviewRow('Plan / subscription tier', val('f-plan')));
+      rows.push(reviewRow('Description', val('f-desc')));
+      rows.push(reviewRow('Expected number of users', val('f-user-count')));
+      rows.push(reviewRow('Names of users / teams', getNames('user-names-container').join(', ')));
+      rows.push(reviewRow('Expected number of administrators', val('f-admin-count')));
+      rows.push(reviewRow('Names of administrators', getNames('admin-names-container').join(', ')));
+      rows.push(reviewRow('Expected usage period', val('f-usage-period')));
+      rows.push(reviewRow('Sensitive / confidential data', ynLabel('sensitive')));
+      rows.push(reviewRow('External PII', ynLabel('extpii') + (state.yn.extpii === 'yes' ? ' — ' + val('f-extpii-detail') : '')));
+      rows.push(reviewRow('Internal employee PII', ynLabel('intpii') + (state.yn.intpii === 'yes' ? ' — ' + val('f-intpii-detail') : '')));
+      var integ = ynLabel('integrates');
+      if (state.yn.integrates === 'yes') {
+        integ += ' — ' + val('f-integrates-systems') + ' (' + val('f-integrates-kind') + '); vendor docs: ' + ynLabel('vendordocs');
+        if (state.yn.vendordocs === 'yes') integ += ' — ' + val('f-vendordocs-link');
+      }
+      rows.push(reviewRow('WSO2 system integrations', integ));
+    } else if (state.type === 'nonit') {
+      rows.push(reviewRow('Goods / services required', val('f-nonit-details')));
+      rows.push(reviewRow('Additional specifications / links', val('f-nonit-specs')));
+    } else if (state.type === 'events') {
+      rows.push(reviewRow('Status', 'Marketing &amp; Events requirement form is under development — the Procurement team will follow up directly.'));
+    }
+
+    document.getElementById('r-purchase-rows').innerHTML = rows.join('');
+
+    var budgetRows = [];
+    if (state.type === 'it') {
+      budgetRows.push(reviewRow('Proposed supplier', [val('f-it-supplier-name'), val('f-it-supplier-website')].filter(Boolean).join(' — ')));
+      budgetRows.push(reviewRow('Supplier contact', [val('f-it-supplier-contact-name'), val('f-it-supplier-contact-email')].filter(Boolean).join(' — ')));
+      budgetRows.push(reviewRow('Business unit', val('f-it-bu')));
+      budgetRows.push(reviewRow('Budget coding', [val('f-it-budgetcat'), val('f-it-product'), val('f-it-region'), val('f-it-engcode')].filter(Boolean).join(' · ')));
+      budgetRows.push(reviewRow('Budget approver', [val('f-it-approver'), val('f-it-approver-email')].filter(Boolean).join(' — ')));
+      budgetRows.push(reviewRow('Notes to Procurement', val('f-it-notes')));
+    } else if (state.type === 'nonit') {
+      budgetRows.push(reviewRow('Proposed supplier', [val('f-nonit-supplier-name'), val('f-nonit-supplier-website')].filter(Boolean).join(' — ')));
+      budgetRows.push(reviewRow('Supplier contact', [val('f-nonit-supplier-contact-name'), val('f-nonit-supplier-contact-email'), val('f-nonit-supplier-contact-number')].filter(Boolean).join(' — ')));
+      budgetRows.push(reviewRow('Business unit', val('f-nonit-bu')));
+      budgetRows.push(reviewRow('Budget coding', [val('f-nonit-budgetcat'), val('f-nonit-product'), val('f-nonit-region'), val('f-nonit-engcode')].filter(Boolean).join(' · ')));
+      budgetRows.push(reviewRow('Budget approver', [val('f-nonit-approver'), val('f-nonit-approver-email')].filter(Boolean).join(' — ')));
+      budgetRows.push(reviewRow('Notes to Procurement', val('f-nonit-notes')));
+    } else if (state.type === 'events') {
+      budgetRows.push(reviewRow('Status', 'Vendor and budget details for Marketing &amp; Events are under development — Procurement will coordinate directly.'));
+    }
+    document.getElementById('r-budget-rows').innerHTML = budgetRows.join('');
+  }
+
+  function submitPR() {
+    document.querySelectorAll('.step-pane').forEach(function (p) { p.classList.remove('visible'); });
+    document.getElementById('pane-success').classList.add('visible');
+    document.querySelectorAll('.step-tab').forEach(function (t) { t.classList.add('reached'); });
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+</script>
+</body>
+</html>

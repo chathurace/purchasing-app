@@ -40,3 +40,17 @@ func parseID(r *http.Request, param string) (int64, error) {
 func urlParam(r *http.Request, param string) string {
 	return chi.URLParam(r, param)
 }
+
+// parseInt64Param parses an optional int64 query-string value. It returns nil
+// when the value is empty or not a valid integer, so callers can treat a bad or
+// absent value as "no filter" rather than an error.
+func parseInt64Param(s string) *int64 {
+	if s == "" {
+		return nil
+	}
+	v, err := strconv.ParseInt(s, 10, 64)
+	if err != nil {
+		return nil
+	}
+	return &v
+}

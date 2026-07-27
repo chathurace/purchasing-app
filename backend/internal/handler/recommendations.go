@@ -8,6 +8,7 @@ import (
 	"github.com/cs/purchasing-app/internal/middleware"
 	"github.com/cs/purchasing-app/internal/model"
 	"github.com/cs/purchasing-app/internal/repository"
+	"github.com/jackc/pgx/v5"
 )
 
 // Procurement recommendation endpoints. These hang off a purchase request and
@@ -243,6 +244,86 @@ func (h *PurchaseRequestsHandler) DeleteRecommendation(w http.ResponseWriter, r 
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// RequestRecApproval adds (requires) a single approval card to the recommendation
+// — the "Request X approval" buttons. Procurement only.
+func (h *PurchaseRequestsHandler) RequestRecApproval(w http.ResponseWriter, r *http.Request) {
+	if !middleware.HasProcurementAccess(r.Context()) {
+		writeError(w, http.StatusForbidden, "procurement access required")
+		return
+	}
+	pr, ok := h.load(w, r)
+	if !ok {
+		return
+	}
+	if pr.Recommendation == nil {
+		writeError(w, http.StatusNotFound, "no recommendation on this request")
+		return
+	}
+	approvalType := urlParam(r, "type")
+	if !model.IsRecApprovalType(approvalType) {
+		writeError(w, http.StatusBadRequest, "approval type must be budget, legal or security")
+		return
+	}
+	if err := h.Repo.AddRecApprovalCard(r.Context(), pr.ID, approvalType); err != nil {
+		if errors.Is(err, repository.ErrInvalidState) {
+			writeError(w, http.StatusConflict, "the "+approvalType+" approval is already requested")
+			return
+		}
+		reqLog(r).Error().Err(err).Msg("request recommendation approval")
+		writeError(w, http.StatusInternalServerError, "failed to request approval")
+		return
+	}
+	recordProcessEvent(r, h.Repo, pr.ID, model.ProcessRequestRecApproval, approvalType)
+	ensureCollaborator(r, h.Repo, pr.ID)
+	if approvalType == model.RecApprovalBudget {
+		h.notifyBudgetApprovers(r, pr)
+	}
+	h.reloadPR(w, r, pr.ID)
+}
+
+// RemoveRecApproval removes a single approval card from the recommendation — the
+// "Remove X approval" button (confirmed on the client). Procurement only; a
+// recommendation must keep at least one card.
+func (h *PurchaseRequestsHandler) RemoveRecApproval(w http.ResponseWriter, r *http.Request) {
+	if !middleware.HasProcurementAccess(r.Context()) {
+		writeError(w, http.StatusForbidden, "procurement access required")
+		return
+	}
+	pr, ok := h.load(w, r)
+	if !ok {
+		return
+	}
+	if pr.Recommendation == nil {
+		writeError(w, http.StatusNotFound, "no recommendation on this request")
+		return
+	}
+	approvalType := urlParam(r, "type")
+	if !model.IsRecApprovalType(approvalType) {
+		writeError(w, http.StatusBadRequest, "approval type must be budget, legal or security")
+		return
+	}
+	paths, err := h.Repo.RemoveRecApprovalCard(r.Context(), pr.ID, approvalType)
+	if err != nil {
+		if errors.Is(err, repository.ErrInvalidState) {
+			writeError(w, http.StatusConflict, "a recommendation must keep at least one approval")
+			return
+		}
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "the "+approvalType+" approval is not required on this recommendation")
+			return
+		}
+		reqLog(r).Error().Err(err).Msg("remove recommendation approval")
+		writeError(w, http.StatusInternalServerError, "failed to remove approval")
+		return
+	}
+	for _, p := range paths {
+		_ = h.Storage.Delete(p)
+	}
+	recordProcessEvent(r, h.Repo, pr.ID, model.ProcessRemoveRecApproval, approvalType)
+	ensureCollaborator(r, h.Repo, pr.ID)
+	h.reloadPR(w, r, pr.ID)
+}
+
 // CreateRecommendationContract drafts the contract attached to a PR's
 // recommendation (the optional contract card). The given description becomes the
 // contract terms; the PDF is uploaded separately against the returned contract
@@ -459,6 +540,11 @@ func (h *PurchaseRequestsHandler) SetRecApproval(w http.ResponseWriter, r *http.
 		writeError(w, http.StatusBadRequest, "approval type must be budget, legal or security")
 		return
 	}
+	if approvalType == model.RecApprovalBudget {
+		// Budget approval is a serial chain — decisions go through the step endpoints.
+		writeError(w, http.StatusBadRequest, "budget approval is recorded per step (see budget-steps)")
+		return
+	}
 	card := findApproval(pr.Recommendation, approvalType)
 	if card == nil {
 		writeError(w, http.StatusBadRequest, "the "+approvalType+" approval is not required on this recommendation")
@@ -517,6 +603,7 @@ func (h *PurchaseRequestsHandler) AddRecComment(w http.ResponseWriter, r *http.R
 	}
 	var in struct {
 		ApprovalType string `json:"approval_type"`
+		BudgetStepID *int64 `json:"budget_step_id"`
 		Comment      string `json:"comment"`
 	}
 	if err := decodeJSON(r, &in); err != nil {
@@ -527,17 +614,36 @@ func (h *PurchaseRequestsHandler) AddRecComment(w http.ResponseWriter, r *http.R
 		writeError(w, http.StatusBadRequest, "approval type must be budget, legal or security")
 		return
 	}
-	can, err := h.canActOnRecType(r, pr, in.ApprovalType)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to check permission")
-		return
-	}
-	if !can {
-		writeError(w, http.StatusForbidden, "you cannot comment on the "+in.ApprovalType+" approval")
-		return
+	// Budget comments hang off a specific step; commenting is allowed for anyone
+	// qualified on that step (its approver, or a budget-unit approver for the base)
+	// or a procurement user managing the chain.
+	if in.BudgetStepID != nil {
+		if in.ApprovalType != model.RecApprovalBudget {
+			writeError(w, http.StatusBadRequest, "budget_step_id is only valid for the budget card")
+			return
+		}
+		step := findBudgetStep(pr.Recommendation, *in.BudgetStepID)
+		if step == nil {
+			writeError(w, http.StatusBadRequest, "unknown budget step")
+			return
+		}
+		if !h.canCommentOnBudgetStep(r, pr, step) {
+			writeError(w, http.StatusForbidden, "you cannot comment on this budget step")
+			return
+		}
+	} else {
+		can, err := h.canActOnRecType(r, pr, in.ApprovalType)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to check permission")
+			return
+		}
+		if !can {
+			writeError(w, http.StatusForbidden, "you cannot comment on the "+in.ApprovalType+" approval")
+			return
+		}
 	}
 	user := middleware.UserFromCtx(r.Context())
-	comment, err := h.Repo.AddRecComment(r.Context(), pr.ID, in.ApprovalType, user.ID, strings.TrimSpace(in.Comment))
+	comment, err := h.Repo.AddRecComment(r.Context(), pr.ID, in.ApprovalType, in.BudgetStepID, user.ID, strings.TrimSpace(in.Comment))
 	if err != nil {
 		reqLog(r).Error().Err(err).Msg("add recommendation comment")
 		writeError(w, http.StatusInternalServerError, "failed to add comment")
@@ -679,6 +785,284 @@ func (h *PurchaseRequestsHandler) RemindBudgetApprovers(w http.ResponseWriter, r
 		return
 	}
 	h.notifyBudgetApprovers(r, pr)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// =====================================================================
+// Budget approval chain (serial steps on the budget card)
+// =====================================================================
+
+// findBudgetStep returns the budget step with the given id on a recommendation's
+// budget card, or nil.
+func findBudgetStep(rec *repository.Recommendation, stepID int64) *repository.BudgetStep {
+	card := findApproval(rec, model.RecApprovalBudget)
+	if card == nil {
+		return nil
+	}
+	for i := range card.BudgetSteps {
+		if card.BudgetSteps[i].ID == stepID {
+			return &card.BudgetSteps[i]
+		}
+	}
+	return nil
+}
+
+// canBudgetStepActor reports whether the caller is the approver of a budget step
+// (ignoring the serial order, which the repository enforces): admins pass; the base
+// step is governed by budget-unit membership; an additional step matches on its
+// named approver email (case-insensitive).
+func (h *PurchaseRequestsHandler) canBudgetStepActor(r *http.Request, pr *repository.PurchaseRequest, step *repository.BudgetStep) (bool, error) {
+	ctx := r.Context()
+	if middleware.HasRole(ctx, model.RoleAdmin) {
+		return true, nil
+	}
+	user := middleware.UserFromCtx(ctx)
+	if user == nil {
+		return false, nil
+	}
+	if step.IsBase {
+		return h.Repo.IsBudgetApproverForPR(ctx, pr.ID, user.ID)
+	}
+	return step.ApproverEmail != "" &&
+		strings.EqualFold(strings.TrimSpace(user.Email), strings.TrimSpace(step.ApproverEmail)), nil
+}
+
+// canCommentOnBudgetStep reports whether the caller may comment on a budget step:
+// the step's approver, or any procurement user managing the chain.
+func (h *PurchaseRequestsHandler) canCommentOnBudgetStep(r *http.Request, pr *repository.PurchaseRequest, step *repository.BudgetStep) bool {
+	if middleware.HasProcurementAccess(r.Context()) {
+		return true
+	}
+	ok, err := h.canBudgetStepActor(r, pr, step)
+	if err != nil {
+		reqLog(r).Error().Err(err).Int64("pr_id", pr.ID).Msg("check budget step actor")
+	}
+	return ok
+}
+
+// loadBudgetChainPR loads the PR (must have a recommendation with a budget card)
+// and enforces the procurement work gate — the shared preamble for the chain
+// management endpoints (add / edit / remove / remind).
+func (h *PurchaseRequestsHandler) loadBudgetChainPR(w http.ResponseWriter, r *http.Request) (*repository.PurchaseRequest, bool) {
+	if !middleware.HasProcurementAccess(r.Context()) {
+		writeError(w, http.StatusForbidden, "procurement access required")
+		return nil, false
+	}
+	pr, ok := h.load(w, r)
+	if !ok {
+		return nil, false
+	}
+	if !model.IsTeamLeadApproved(pr.TeamLeadStatus) {
+		writeError(w, http.StatusConflict, "purchase request is awaiting team lead approval")
+		return nil, false
+	}
+	if code, msg, ok := assignmentWorkGate(r, pr); !ok {
+		writeError(w, code, msg)
+		return nil, false
+	}
+	if pr.Recommendation == nil {
+		writeError(w, http.StatusNotFound, "no recommendation on this request")
+		return nil, false
+	}
+	if findApproval(pr.Recommendation, model.RecApprovalBudget) == nil {
+		writeError(w, http.StatusBadRequest, "the budget approval is not required on this recommendation")
+		return nil, false
+	}
+	return pr, true
+}
+
+// AddBudgetStep appends a named budget approval step to the chain. Procurement only.
+func (h *PurchaseRequestsHandler) AddBudgetStep(w http.ResponseWriter, r *http.Request) {
+	pr, ok := h.loadBudgetChainPR(w, r)
+	if !ok {
+		return
+	}
+	var in struct {
+		ApproverName  string `json:"approver_name"`
+		ApproverEmail string `json:"approver_email"`
+	}
+	if err := decodeJSON(r, &in); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	email := strings.TrimSpace(in.ApproverEmail)
+	if email == "" || !strings.Contains(email, "@") {
+		writeError(w, http.StatusBadRequest, "a valid approver email is required")
+		return
+	}
+	step, err := h.Repo.AddBudgetStep(r.Context(), pr.ID, strings.TrimSpace(in.ApproverName), email)
+	if err != nil {
+		if errors.Is(err, repository.ErrInvalidState) {
+			writeError(w, http.StatusConflict, "the budget approval is not required on this recommendation")
+			return
+		}
+		reqLog(r).Error().Err(err).Msg("add budget step")
+		writeError(w, http.StatusInternalServerError, "failed to add budget approval step")
+		return
+	}
+	recordProcessEvent(r, h.Repo, pr.ID, model.ProcessUpdateBudgetChain, model.QualifierAdd)
+	ensureCollaborator(r, h.Repo, pr.ID)
+	// A newly added step is only actionable once its predecessors are approved; notify
+	// it now only if it is already the current step (i.e. the base was already approved).
+	h.notifyBudgetStepIfCurrent(r, pr, step.Position)
+	h.reloadPR(w, r, pr.ID)
+}
+
+// UpdateBudgetStep edits an additional step's named approver. Procurement only.
+func (h *PurchaseRequestsHandler) UpdateBudgetStep(w http.ResponseWriter, r *http.Request) {
+	pr, ok := h.loadBudgetChainPR(w, r)
+	if !ok {
+		return
+	}
+	stepID, err := parseID(r, "stepID")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid step id")
+		return
+	}
+	var in struct {
+		ApproverName  string `json:"approver_name"`
+		ApproverEmail string `json:"approver_email"`
+	}
+	if err := decodeJSON(r, &in); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	email := strings.TrimSpace(in.ApproverEmail)
+	if email == "" || !strings.Contains(email, "@") {
+		writeError(w, http.StatusBadRequest, "a valid approver email is required")
+		return
+	}
+	if err := h.Repo.UpdateBudgetStep(r.Context(), pr.ID, stepID, strings.TrimSpace(in.ApproverName), email); err != nil {
+		if errors.Is(err, repository.ErrInvalidState) {
+			writeError(w, http.StatusConflict, "only a pending additional step can be edited")
+			return
+		}
+		reqLog(r).Error().Err(err).Msg("update budget step")
+		writeError(w, http.StatusInternalServerError, "failed to update budget approval step")
+		return
+	}
+	recordProcessEvent(r, h.Repo, pr.ID, model.ProcessUpdateBudgetChain, model.QualifierUpdate)
+	ensureCollaborator(r, h.Repo, pr.ID)
+	h.reloadPR(w, r, pr.ID)
+}
+
+// DeleteBudgetStep removes an additional, still-pending step. Procurement only.
+func (h *PurchaseRequestsHandler) DeleteBudgetStep(w http.ResponseWriter, r *http.Request) {
+	pr, ok := h.loadBudgetChainPR(w, r)
+	if !ok {
+		return
+	}
+	stepID, err := parseID(r, "stepID")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid step id")
+		return
+	}
+	if err := h.Repo.DeleteBudgetStep(r.Context(), pr.ID, stepID); err != nil {
+		if errors.Is(err, repository.ErrInvalidState) {
+			writeError(w, http.StatusConflict, "only a pending additional step can be removed")
+			return
+		}
+		reqLog(r).Error().Err(err).Msg("delete budget step")
+		writeError(w, http.StatusInternalServerError, "failed to remove budget approval step")
+		return
+	}
+	recordProcessEvent(r, h.Repo, pr.ID, model.ProcessUpdateBudgetChain, model.QualifierRemove)
+	ensureCollaborator(r, h.Repo, pr.ID)
+	h.reloadPR(w, r, pr.ID)
+}
+
+// SetBudgetStepDecision records a step's approve / reject / revert decision. The
+// step's approver acts (admins pass); the repository enforces the serial order.
+func (h *PurchaseRequestsHandler) SetBudgetStepDecision(w http.ResponseWriter, r *http.Request) {
+	pr, ok := h.loadViewablePR(w, r)
+	if !ok {
+		return
+	}
+	if pr.Recommendation == nil {
+		writeError(w, http.StatusNotFound, "no recommendation on this request")
+		return
+	}
+	stepID, err := parseID(r, "stepID")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid step id")
+		return
+	}
+	step := findBudgetStep(pr.Recommendation, stepID)
+	if step == nil {
+		writeError(w, http.StatusNotFound, "unknown budget step")
+		return
+	}
+	var in struct {
+		Decision string `json:"decision"` // approve | reject | revert
+	}
+	if err := decodeJSON(r, &in); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if in.Decision != "approve" && in.Decision != "reject" && in.Decision != "revert" {
+		writeError(w, http.StatusBadRequest, "decision must be approve, reject or revert")
+		return
+	}
+	can, err := h.canBudgetStepActor(r, pr, step)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to check permission")
+		return
+	}
+	if !can {
+		writeError(w, http.StatusForbidden, "only this step's approver can decide it")
+		return
+	}
+	user := middleware.UserFromCtx(r.Context())
+	updated, err := h.Repo.SetBudgetStepDecision(r.Context(), pr.ID, stepID, in.Decision, user.ID)
+	if err != nil {
+		if errors.Is(err, repository.ErrInvalidState) {
+			writeError(w, http.StatusConflict, "this step cannot be decided yet (the previous step must be approved and the next step must be undecided)")
+			return
+		}
+		reqLog(r).Error().Err(err).Msg("set budget step decision")
+		writeError(w, http.StatusInternalServerError, "failed to record decision")
+		return
+	}
+	qualifier := model.QualifierRevert
+	switch in.Decision {
+	case "approve":
+		qualifier = model.QualifierApprove
+	case "reject":
+		qualifier = model.QualifierReject
+	}
+	recordProcessEvent(r, h.Repo, pr.ID, model.ProcessRecApprovalBudget, qualifier)
+	ensureCollaborator(r, h.Repo, pr.ID)
+	// Approving this step hands off to the next one — notify its approver.
+	if in.Decision == "approve" {
+		h.notifyBudgetStepIfCurrent(r, pr, updated.Position+1)
+	}
+	h.reloadPR(w, r, pr.ID)
+}
+
+// RemindBudgetStep re-sends the approval request to an additional step's approver.
+// Procurement only.
+func (h *PurchaseRequestsHandler) RemindBudgetStep(w http.ResponseWriter, r *http.Request) {
+	pr, ok := h.loadBudgetChainPR(w, r)
+	if !ok {
+		return
+	}
+	stepID, err := parseID(r, "stepID")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid step id")
+		return
+	}
+	step := findBudgetStep(pr.Recommendation, stepID)
+	if step == nil {
+		writeError(w, http.StatusNotFound, "unknown budget step")
+		return
+	}
+	if step.IsBase {
+		// The base step is governed by the budget unit — reuse the existing fan-out.
+		h.notifyBudgetApprovers(r, pr)
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	h.notifyBudgetStepApprover(r, pr, step)
 	w.WriteHeader(http.StatusNoContent)
 }
 

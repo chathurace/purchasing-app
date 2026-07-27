@@ -1,5 +1,7 @@
 package model
 
+import "sort"
+
 // Fixed action catalogs for the audit tables (process_events, audit_events).
 //
 // These constants are the single source of truth for the "fixed set of actions"
@@ -24,7 +26,7 @@ const (
 	ProcessRerequestPRApproval = "rerequest_pr_approval"
 	ProcessTeamLeadApproval    = "team_lead_approval" // qualifier: approve | reject
 
-	ProcessAssignPR              = "assign_pr"              // qualifier: assign | unassign
+	ProcessAssignPR              = "assign_pr" // qualifier: assign | unassign
 	ProcessUpdatePRCollaborators = "update_pr_collaborators"
 
 	ProcessCreateRecommendation = "create_recommendation"
@@ -32,7 +34,10 @@ const (
 	ProcessDeleteRecommendation = "delete_recommendation"
 	ProcessRecApprovalLegal     = "rec_approval_legal"    // qualifier: approve | revert
 	ProcessRecApprovalSecurity  = "rec_approval_security" // qualifier: approve | revert
-	ProcessRecApprovalBudget    = "rec_approval_budget"   // qualifier: approve | revert
+	ProcessRecApprovalBudget    = "rec_approval_budget"   // qualifier: approve | reject | revert
+	ProcessRequestRecApproval   = "request_rec_approval"  // qualifier: budget | legal | security
+	ProcessRemoveRecApproval    = "remove_rec_approval"   // qualifier: budget | legal | security
+	ProcessUpdateBudgetChain    = "update_budget_chain"   // qualifier: add | update | remove
 	ProcessAssignRecLegal       = "assign_rec_legal"      // qualifier: assign | unassign
 	ProcessAssignRecSecurity    = "assign_rec_security"   // qualifier: assign | unassign
 	ProcessRaiseRFI             = "raise_rfi"
@@ -71,6 +76,11 @@ const (
 	QualifierAssign   = "assign"
 	QualifierUnassign = "unassign"
 
+	// update_budget_chain
+	QualifierAdd    = "add"
+	QualifierUpdate = "update"
+	QualifierRemove = "remove"
+
 	// add_draft_contract source
 	QualifierFromRecommendation = "recommendation"
 
@@ -85,8 +95,8 @@ const (
 	AuditCreateVendor = "create_vendor"
 	AuditUpdateVendor = "update_vendor"
 
-	AuditCreateBudgetUnit = "create_budget_unit"
-	AuditUpdateBudgetUnit = "update_budget_unit"
+	AuditCreateBusinessUnit = "create_business_unit"
+	AuditUpdateBusinessUnit = "update_business_unit"
 
 	AuditCreateConfigOption = "create_config_option"
 	AuditUpdateConfigOption = "update_config_option"
@@ -105,7 +115,7 @@ const (
 // Audit entity types.
 const (
 	EntityVendor       = "vendor"
-	EntityBudgetUnit   = "budget_unit"
+	EntityBusinessUnit = "business_unit"
 	EntityConfigOption = "config_option"
 	EntityUser         = "user"
 	EntityStorage      = "storage"
@@ -120,6 +130,8 @@ var ValidProcessActions = setOf(
 	ProcessAssignPR, ProcessUpdatePRCollaborators,
 	ProcessCreateRecommendation, ProcessUpdateRecommendation, ProcessDeleteRecommendation,
 	ProcessRecApprovalLegal, ProcessRecApprovalSecurity, ProcessRecApprovalBudget,
+	ProcessRequestRecApproval, ProcessRemoveRecApproval,
+	ProcessUpdateBudgetChain,
 	ProcessAssignRecLegal, ProcessAssignRecSecurity,
 	ProcessRaiseRFI, ProcessClearRFI,
 	ProcessAddQuotation, ProcessUpdateQuotation, ProcessDeleteQuotation, ProcessSelectQuotation,
@@ -130,7 +142,7 @@ var ValidProcessActions = setOf(
 
 var ValidAuditActions = setOf(
 	AuditCreateVendor, AuditUpdateVendor,
-	AuditCreateBudgetUnit, AuditUpdateBudgetUnit,
+	AuditCreateBusinessUnit, AuditUpdateBusinessUnit,
 	AuditCreateConfigOption, AuditUpdateConfigOption, AuditDeleteConfigOption,
 	AuditCreateUser, AuditUpdateUser, AuditGrantRole, AuditRevokeRole, AuditSetUserActive,
 	AuditConnectStorage, AuditSetStorageFolder,
@@ -168,4 +180,19 @@ func setOf(vals ...string) map[string]bool {
 		m[v] = true
 	}
 	return m
+}
+
+// SortedProcessActions / SortedAuditActions return the fixed action catalogs as
+// sorted slices, for the events-view action filter dropdowns (the maps have no
+// stable order).
+func SortedProcessActions() []string { return sortedKeys(ValidProcessActions) }
+func SortedAuditActions() []string   { return sortedKeys(ValidAuditActions) }
+
+func sortedKeys(m map[string]bool) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }

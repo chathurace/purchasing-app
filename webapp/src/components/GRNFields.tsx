@@ -1,3 +1,5 @@
+import { Box, Button, Stack, TextField, Typography } from "@wso2/oxygen-ui";
+import { Plus } from "@wso2/oxygen-ui-icons-react";
 import { NumberInput } from "./NumberInput";
 import type { GRNInput } from "../types/api";
 
@@ -5,10 +7,6 @@ interface Props {
   value: GRNInput;
   onChange: (next: GRNInput) => void;
 }
-
-const baseInputCls = "rounded border px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none";
-const inputCls = "w-full " + baseInputCls;
-const labelCls = "block text-sm font-medium text-gray-700 mb-1";
 
 type GItem = { description: string; quantity: number };
 
@@ -21,79 +19,89 @@ export function GRNFields({ value, onChange }: Props) {
   };
 
   return (
-    <div className="space-y-5">
-      <div className="flex gap-2">
-        <div className="w-44 shrink-0">
-          <label className={labelCls}>Received date</label>
-          <input
-            type="date"
-            className={inputCls}
-            value={value.received_date}
-            onChange={(e) => set({ received_date: e.target.value })}
-          />
-        </div>
-        <div className="flex-1">
-          <label className={labelCls}>Received by</label>
-          <input
-            className={inputCls}
-            value={value.received_by}
-            onChange={(e) => set({ received_by: e.target.value })}
-            placeholder="Name of the person who received the goods"
-          />
-        </div>
-      </div>
+    <Stack spacing={2.5}>
+      <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5}>
+        <TextField
+          label="Received date"
+          type="date"
+          size="small"
+          InputLabelProps={{ shrink: true }}
+          value={value.received_date}
+          onChange={(e) => set({ received_date: e.target.value })}
+          sx={{ width: { xs: "100%", sm: 200 }, flexShrink: 0 }}
+        />
+        <TextField
+          label="Received by"
+          size="small"
+          fullWidth
+          value={value.received_by}
+          onChange={(e) => set({ received_by: e.target.value })}
+          placeholder="Name of the person who received the goods"
+        />
+      </Stack>
 
-      <div>
-        <div className="mb-1 flex items-center justify-between">
-          <label className={labelCls}>Items received</label>
-          <button
-            type="button"
-            className="text-sm text-indigo-600"
+      <Box>
+        <Box sx={{ mb: 1, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <Typography variant="body2" sx={{ fontWeight: 600 }}>
+            Items received
+          </Typography>
+          <Button
+            variant="text"
+            size="small"
+            startIcon={<Plus size={16} />}
             onClick={() => set({ items: [...value.items, { description: "", quantity: 1 }] })}
           >
-            + Add line
-          </button>
-        </div>
-        <div className="space-y-2">
-          {value.items.length === 0 && <p className="text-sm text-gray-400">No line items.</p>}
+            Add line
+          </Button>
+        </Box>
+        <Stack spacing={1}>
+          {value.items.length === 0 && (
+            <Typography variant="body2" color="text.secondary">
+              No line items.
+            </Typography>
+          )}
           {value.items.map((it, i) => (
-            <div key={i} className="flex gap-2">
-              <input
-                className={baseInputCls + " min-w-0 flex-1"}
+            <Stack key={i} direction="row" spacing={1} alignItems="center">
+              <TextField
+                size="small"
+                fullWidth
                 value={it.description}
                 onChange={(e) => setItem(i, { description: e.target.value })}
                 placeholder="Description"
+                sx={{ minWidth: 0, flex: 1 }}
               />
-              <NumberInput
+              <Box
+                component={NumberInput}
+                sx={{ width: 96, flexShrink: 0 }}
                 min={0}
                 step="any"
-                className={baseInputCls + " w-24 shrink-0"}
                 value={it.quantity}
-                onChange={(quantity) => setItem(i, { quantity })}
+                onChange={(quantity: number) => setItem(i, { quantity })}
                 placeholder="Qty"
               />
-              <button
-                type="button"
-                className="rounded border px-2 text-sm text-gray-500 hover:bg-gray-50"
+              <Button
+                variant="outlined"
+                color="inherit"
+                size="small"
                 onClick={() => set({ items: value.items.filter((_, idx) => idx !== i) })}
               >
                 Remove
-              </button>
-            </div>
+              </Button>
+            </Stack>
           ))}
-        </div>
-      </div>
+        </Stack>
+      </Box>
 
-      <div>
-        <label className={labelCls}>Note</label>
-        <textarea
-          className={inputCls}
-          rows={3}
-          value={value.note}
-          onChange={(e) => set({ note: e.target.value })}
-          placeholder="Condition, discrepancies, delivery reference…"
-        />
-      </div>
-    </div>
+      <TextField
+        label="Note"
+        size="small"
+        fullWidth
+        multiline
+        minRows={3}
+        value={value.note}
+        onChange={(e) => set({ note: e.target.value })}
+        placeholder="Condition, discrepancies, delivery reference…"
+      />
+    </Stack>
   );
 }
