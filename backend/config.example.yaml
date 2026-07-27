@@ -16,6 +16,24 @@ oidc:
   client_id: "<wso2-client-id>"
   insecure_skip_verify: true   # dev only — trusts the self-signed WSO2 cert
 
+# User directory (SCIM2) — powers name/email autocomplete from the connected
+# identity server. Needs a machine-to-machine (client-credentials) app in WSO2 IS
+# / Asgardeo holding the `internal_user_mgt_list` scope. When enabled is false
+# (the default), autocomplete falls back to the app's own DB users, so dev runs
+# without an M2M app. The full directory is fetched once per cache_ttl_seconds and
+# served from an in-memory cache; the browser never sees these credentials.
+scim:
+  enabled: false
+  base_url: "https://localhost:9443/scim2"       # SCIM2 base
+  token_url: "https://localhost:9443/oauth2/token"
+  client_id: "<scim-m2m-client-id>"
+  client_secret: "<scim-m2m-client-secret>"
+  scopes:
+    - "internal_user_mgt_list"
+  insecure_skip_verify: true   # dev only — trusts the self-signed WSO2 cert
+  cache_ttl_seconds: 600       # directory refresh interval
+  page_size: 100               # SCIM pagination count
+
 storage:
   backend: "local"             # "local" (filesystem) or "gdrive" (Google Drive)
   files_root: "../files"       # local backend only; relative to the backend working dir

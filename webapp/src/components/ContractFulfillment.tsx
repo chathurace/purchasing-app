@@ -1,9 +1,49 @@
 import { Link } from "react-router-dom";
+import {
+  Alert,
+  Box,
+  Button,
+  Card,
+  CardContent,
+  Link as MuiLink,
+  Stack,
+  Typography,
+} from "@wso2/oxygen-ui";
+import { Plus } from "@wso2/oxygen-ui-icons-react";
 import { useGRNsForContract } from "../hooks/useGrns";
 import { useInvoicesForContract } from "../hooks/useInvoices";
 import { EntityStatusBadge } from "./EntityStatusBadge";
 import { formatMoney, grnRef, invRef } from "../types/api";
 import type { Contract } from "../types/api";
+
+// EmptyCta is the dashed clickable prompt shown when a section has no records yet.
+function EmptyCta({ to, title, subtitle }: { to: string; title: string; subtitle: string }) {
+  return (
+    <Box
+      component={Link}
+      to={to}
+      sx={{
+        display: "block",
+        p: 2.5,
+        textAlign: "center",
+        borderRadius: 2,
+        border: "2px dashed",
+        borderColor: "primary.light",
+        bgcolor: "action.hover",
+        textDecoration: "none",
+        transition: "background-color 0.2s, border-color 0.2s",
+        "&:hover": { borderColor: "primary.main", bgcolor: "action.selected" },
+      }}
+    >
+      <Typography variant="subtitle2" sx={{ color: "primary.main" }}>
+        {title}
+      </Typography>
+      <Typography variant="caption" sx={{ color: "text.secondary" }}>
+        {subtitle}
+      </Typography>
+    </Box>
+  );
+}
 
 // ContractFulfillment shows the goods-received notes and invoices recorded
 // against a signed contract, plus the invoiced-vs-contract total summary with an
@@ -15,12 +55,17 @@ export function ContractFulfillment({ contract }: { contract: Contract }) {
 
   if (!signed) {
     return (
-      <div className="mt-6 rounded border bg-white p-6">
-        <h2 className="mb-1 font-medium text-gray-900">Goods received &amp; invoices</h2>
-        <p className="text-sm text-gray-400">
-          Available once the contract is signed. Sign the order above to start recording GRNs and invoices.
-        </p>
-      </div>
+      <Card variant="outlined" sx={{ mt: 3 }}>
+        <CardContent>
+          <Typography variant="h6" sx={{ mb: 0.5 }}>
+            Goods received &amp; invoices
+          </Typography>
+          <Typography variant="body2" sx={{ color: "text.disabled" }}>
+            Available once the contract is signed. Sign the order above to start recording GRNs and
+            invoices.
+          </Typography>
+        </CardContent>
+      </Card>
     );
   }
 
@@ -31,103 +76,124 @@ export function ContractFulfillment({ contract }: { contract: Contract }) {
   return (
     <>
       {/* Goods received notes */}
-      <div className="mt-6 rounded border bg-white p-6">
-        <div className="mb-3 flex items-center justify-between">
-          <h2 className="font-medium text-gray-900">Goods received (GRNs)</h2>
-          <Link
-            to={`/contracts/${contract.id}/grns/new`}
-            className="inline-flex items-center gap-1.5 rounded-md bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-700"
-          >
-            <span className="text-base leading-none">+</span> New GRN
-          </Link>
-        </div>
-        {!grns ? (
-          <p className="text-sm text-gray-400">Loading…</p>
-        ) : grns.length === 0 ? (
-          <Link
-            to={`/contracts/${contract.id}/grns/new`}
-            className="block rounded-lg border-2 border-dashed border-indigo-300 bg-indigo-50/60 p-5 text-center transition hover:border-indigo-400 hover:bg-indigo-50"
-          >
-            <p className="text-sm font-semibold text-indigo-900">Record the first GRN</p>
-            <p className="mt-0.5 text-xs text-indigo-700/80">
-              Log goods received against this signed contract.
-            </p>
-          </Link>
-        ) : (
-          <ul className="divide-y">
-            {grns.map((g) => (
-              <li key={g.id} className="flex items-center justify-between py-2 text-sm">
-                <Link to={`/grns/${g.id}`} className="text-indigo-600 hover:underline">
-                  {grnRef(g.id)}
-                </Link>
-                <span className="text-gray-500">
-                  received {g.received_date}
-                  {g.received_by ? ` · ${g.received_by}` : ""}
-                </span>
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
+      <Card variant="outlined" sx={{ mt: 3 }}>
+        <CardContent>
+          <Box sx={{ mb: 1.5, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <Typography variant="h6">Goods received (GRNs)</Typography>
+            <Button
+              component={Link}
+              to={`/contracts/${contract.id}/grns/new`}
+              variant="contained"
+              startIcon={<Plus size={16} />}
+            >
+              New GRN
+            </Button>
+          </Box>
+          {!grns ? (
+            <Typography variant="body2" sx={{ color: "text.disabled" }}>
+              Loading…
+            </Typography>
+          ) : grns.length === 0 ? (
+            <EmptyCta
+              to={`/contracts/${contract.id}/grns/new`}
+              title="Record the first GRN"
+              subtitle="Log goods received against this signed contract."
+            />
+          ) : (
+            <Stack divider={<Box sx={{ borderTop: 1, borderColor: "divider" }} />}>
+              {grns.map((g) => (
+                <Box
+                  key={g.id}
+                  sx={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    py: 1,
+                  }}
+                >
+                  <MuiLink component={Link} to={`/grns/${g.id}`} sx={{ textDecoration: "none" }}>
+                    {grnRef(g.id)}
+                  </MuiLink>
+                  <Typography variant="body2" sx={{ color: "text.secondary" }}>
+                    received {g.received_date}
+                    {g.received_by ? ` · ${g.received_by}` : ""}
+                  </Typography>
+                </Box>
+              ))}
+            </Stack>
+          )}
+        </CardContent>
+      </Card>
 
       {/* Invoices */}
-      <div className="mt-6 rounded border bg-white p-6">
-        <div className="mb-3 flex items-center justify-between">
-          <h2 className="font-medium text-gray-900">Invoices</h2>
-          <Link
-            to={`/contracts/${contract.id}/invoices/new`}
-            className="inline-flex items-center gap-1.5 rounded-md bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-700"
-          >
-            <span className="text-base leading-none">+</span> New invoice
-          </Link>
-        </div>
+      <Card variant="outlined" sx={{ mt: 3 }}>
+        <CardContent>
+          <Box sx={{ mb: 1.5, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <Typography variant="h6">Invoices</Typography>
+            <Button
+              component={Link}
+              to={`/contracts/${contract.id}/invoices/new`}
+              variant="contained"
+              startIcon={<Plus size={16} />}
+            >
+              New invoice
+            </Button>
+          </Box>
 
-        {/* Invoiced-vs-contract summary (over-billing warning) */}
-        <div
-          className={`mb-3 rounded p-3 text-sm ${
-            overBilled ? "bg-red-50 text-red-700" : "bg-gray-50 text-gray-600"
-          }`}
-        >
-          Invoiced {formatMoney(invoicedTotal, contract.currency)} of{" "}
-          {formatMoney(contract.total_amount, contract.currency)}
-          {overBilled ? (
-            <span className="font-medium">
-              {" "}
-              — over contract by {formatMoney(invoicedTotal - contract.total_amount, contract.currency)}
-            </span>
+          {/* Invoiced-vs-contract summary (over-billing warning) */}
+          <Alert severity={overBilled ? "error" : "info"} icon={false} sx={{ mb: 1.5 }}>
+            Invoiced {formatMoney(invoicedTotal, contract.currency)} of{" "}
+            {formatMoney(contract.total_amount, contract.currency)}
+            {overBilled ? (
+              <Box component="span" sx={{ fontWeight: 600 }}>
+                {" "}
+                — over contract by{" "}
+                {formatMoney(invoicedTotal - contract.total_amount, contract.currency)}
+              </Box>
+            ) : (
+              <span> · {formatMoney(remaining, contract.currency)} remaining</span>
+            )}
+          </Alert>
+
+          {!invoices ? (
+            <Typography variant="body2" sx={{ color: "text.disabled" }}>
+              Loading…
+            </Typography>
+          ) : invoices.length === 0 ? (
+            <EmptyCta
+              to={`/contracts/${contract.id}/invoices/new`}
+              title="Record the first invoice"
+              subtitle="Enter a vendor invoice billed against this contract."
+            />
           ) : (
-            <span> · {formatMoney(remaining, contract.currency)} remaining</span>
+            <Stack divider={<Box sx={{ borderTop: 1, borderColor: "divider" }} />}>
+              {invoices.map((inv) => (
+                <Box
+                  key={inv.id}
+                  sx={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    py: 1,
+                  }}
+                >
+                  <MuiLink component={Link} to={`/invoices/${inv.id}`} sx={{ textDecoration: "none" }}>
+                    {inv.vendor_invoice_no
+                      ? `${invRef(inv.id)} · ${inv.vendor_invoice_no}`
+                      : invRef(inv.id)}
+                  </MuiLink>
+                  <Box sx={{ display: "flex", alignItems: "center", gap: 1, color: "text.secondary" }}>
+                    <Typography variant="body2" sx={{ color: "text.secondary" }}>
+                      {formatMoney(inv.total_amount, inv.currency)}
+                    </Typography>
+                    <EntityStatusBadge status={inv.status} />
+                  </Box>
+                </Box>
+              ))}
+            </Stack>
           )}
-        </div>
-
-        {!invoices ? (
-          <p className="text-sm text-gray-400">Loading…</p>
-        ) : invoices.length === 0 ? (
-          <Link
-            to={`/contracts/${contract.id}/invoices/new`}
-            className="block rounded-lg border-2 border-dashed border-indigo-300 bg-indigo-50/60 p-5 text-center transition hover:border-indigo-400 hover:bg-indigo-50"
-          >
-            <p className="text-sm font-semibold text-indigo-900">Record the first invoice</p>
-            <p className="mt-0.5 text-xs text-indigo-700/80">
-              Enter a vendor invoice billed against this contract.
-            </p>
-          </Link>
-        ) : (
-          <ul className="divide-y">
-            {invoices.map((inv) => (
-              <li key={inv.id} className="flex items-center justify-between py-2 text-sm">
-                <Link to={`/invoices/${inv.id}`} className="text-indigo-600 hover:underline">
-                  {inv.vendor_invoice_no ? `${invRef(inv.id)} · ${inv.vendor_invoice_no}` : invRef(inv.id)}
-                </Link>
-                <span className="flex items-center gap-2 text-gray-500">
-                  {formatMoney(inv.total_amount, inv.currency)}
-                  <EntityStatusBadge status={inv.status} />
-                </span>
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
+        </CardContent>
+      </Card>
     </>
   );
 }

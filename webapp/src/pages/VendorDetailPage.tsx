@@ -1,14 +1,24 @@
 import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import {
+  Alert,
+  Box,
+  Button,
+  Card,
+  CardContent,
+  Chip,
+  CircularProgress,
+  Link as MuiLink,
+  Stack,
+  Typography,
+} from "@wso2/oxygen-ui";
 import { useVendor, useVendorUsage } from "../hooks/useVendors";
 import { useCanManageVendors } from "../hooks/useCanManageVendors";
 import { updateVendor } from "../api/vendors";
 import { ApiError } from "../api/client";
 import { VendorFields } from "../components/VendorFields";
 import { vendorRef, type Vendor, type VendorInput } from "../types/api";
-
-const labelCls = "font-medium text-gray-500";
 
 function toInput(v: Vendor): VendorInput {
   return {
@@ -64,13 +74,29 @@ export function VendorDetailPage() {
 
   if (!canManage) {
     return (
-      <div className="rounded border border-dashed bg-white p-8 text-center text-gray-500">
-        You need the admin or procurement_admin role to manage vendors.
-      </div>
+      <Box sx={{ maxWidth: 1200, mx: "auto", p: { xs: 2, md: 4 } }}>
+        <Card variant="outlined" sx={{ borderStyle: "dashed" }}>
+          <CardContent sx={{ textAlign: "center", py: 6 }}>
+            <Typography color="text.secondary">
+              You need the admin or procurement_admin role to manage vendors.
+            </Typography>
+          </CardContent>
+        </Card>
+      </Box>
     );
   }
-  if (isLoading) return <p className="text-gray-500">Loading…</p>;
-  if (error || !vendor) return <p className="text-red-600">Failed to load vendor.</p>;
+  if (isLoading)
+    return (
+      <Box sx={{ maxWidth: 1200, mx: "auto", p: { xs: 2, md: 4 } }}>
+        <CircularProgress size={24} />
+      </Box>
+    );
+  if (error || !vendor)
+    return (
+      <Box sx={{ maxWidth: 1200, mx: "auto", p: { xs: 2, md: 4 } }}>
+        <Alert severity="error">Failed to load vendor.</Alert>
+      </Box>
+    );
 
   const startEdit = () => {
     setDraft(toInput(vendor));
@@ -79,134 +105,187 @@ export function VendorDetailPage() {
   };
 
   return (
-    <div className="mx-auto max-w-2xl">
-      <div className="mb-4 flex items-center gap-2 text-sm text-gray-500">
-        <Link to="/vendors" className="text-indigo-600">
+    <Box sx={{ maxWidth: 800, mx: "auto", p: { xs: 2, md: 4 } }}>
+      <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 2 }}>
+        <MuiLink component={Link} to="/vendors" variant="body2">
           Vendors
-        </Link>
-        <span>/</span>
-        <span>{vendorRef(vendor.id)}</span>
-      </div>
+        </MuiLink>
+        <Typography variant="body2" color="text.secondary">
+          /
+        </Typography>
+        <Typography variant="body2" color="text.secondary">
+          {vendorRef(vendor.id)}
+        </Typography>
+      </Stack>
 
-      <div className="mb-4 flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-semibold text-gray-900">{vendor.name}</h1>
-          <div className="mt-1 flex items-center gap-2">
-            {vendor.is_active ? (
-              <span className="rounded bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700">
-                Active
-              </span>
-            ) : (
-              <span className="rounded bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700">
-                Inactive
-              </span>
-            )}
+      <Stack
+        direction="row"
+        justifyContent="space-between"
+        alignItems="flex-start"
+        sx={{ mb: 2 }}
+      >
+        <Box>
+          <Typography variant="h5" sx={{ fontWeight: 600 }}>
+            {vendor.name}
+          </Typography>
+          <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 1 }}>
+            <Chip
+              size="small"
+              variant="outlined"
+              color={vendor.is_active ? "success" : "error"}
+              label={vendor.is_active ? "Active" : "Inactive"}
+            />
             {vendor.registered && (
-              <span className="rounded bg-indigo-100 px-2 py-0.5 text-xs font-medium text-indigo-700">
-                Registered
-              </span>
+              <Chip size="small" variant="outlined" color="info" label="Registered" />
             )}
-          </div>
-        </div>
+          </Stack>
+        </Box>
         {!editing && (
-          <div className="flex gap-2">
-            <button
-              onClick={startEdit}
-              className="rounded border px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
-            >
+          <Stack direction="row" spacing={1}>
+            <Button variant="outlined" color="inherit" onClick={startEdit}>
               Edit details
-            </button>
-            <button
+            </Button>
+            <Button
+              variant="outlined"
+              color="inherit"
               onClick={() => toggleActive.mutate()}
               disabled={toggleActive.isPending}
-              className="rounded border px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50"
             >
               {vendor.is_active ? "Deactivate" : "Reactivate"}
-            </button>
-          </div>
+            </Button>
+          </Stack>
         )}
-      </div>
+      </Stack>
 
-      {actionError && <p className="mb-4 text-sm text-red-600">{actionError}</p>}
+      {actionError && (
+        <Alert severity="error" sx={{ mb: 2 }}>
+          {actionError}
+        </Alert>
+      )}
 
-      <div className="rounded border bg-white p-6">
-        {editing && draft ? (
-          <div className="space-y-4">
-            <VendorFields value={draft} onChange={setDraft} />
-            <div className="flex gap-2">
-              <button
-                onClick={() => save.mutate(draft)}
-                disabled={save.isPending || draft.name.trim() === ""}
-                className="rounded bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
-              >
-                {save.isPending ? "Saving…" : "Save changes"}
-              </button>
-              <button
-                onClick={() => {
-                  setEditing(false);
-                  setActionError(null);
-                }}
-                className="rounded border px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
-        ) : (
-          <dl className="grid grid-cols-2 gap-x-6 gap-y-4 text-sm">
-            <Field label="Contact name" value={vendor.contact_name} />
-            <Field label="Tax / registration ID" value={vendor.tax_id} />
-            <Field label="Email" value={vendor.email} />
-            <Field label="Phone" value={vendor.phone} />
-            <Field label="Website" value={vendor.website} />
-            <Field label="Address" value={vendor.address_line} />
-            <Field
-              label="City / postal / country"
-              value={[vendor.city, vendor.postal_code, vendor.country].filter(Boolean).join(", ")}
-            />
-            <div className="col-span-2">
-              <dt className={labelCls}>Notes</dt>
-              <dd className="mt-0.5 whitespace-pre-wrap text-gray-900">{vendor.notes || "—"}</dd>
-            </div>
-          </dl>
-        )}
-      </div>
+      <Card variant="outlined">
+        <CardContent>
+          {editing && draft ? (
+            <Stack spacing={2}>
+              <VendorFields value={draft} onChange={setDraft} />
+              <Stack direction="row" spacing={1}>
+                <Button
+                  variant="contained"
+                  onClick={() => save.mutate(draft)}
+                  disabled={save.isPending || draft.name.trim() === ""}
+                >
+                  {save.isPending ? "Saving…" : "Save changes"}
+                </Button>
+                <Button
+                  variant="outlined"
+                  color="inherit"
+                  onClick={() => {
+                    setEditing(false);
+                    setActionError(null);
+                  }}
+                >
+                  Cancel
+                </Button>
+              </Stack>
+            </Stack>
+          ) : (
+            <Box
+              sx={{
+                display: "grid",
+                gridTemplateColumns: { xs: "1fr", sm: "1fr 1fr" },
+                columnGap: 3,
+                rowGap: 2,
+              }}
+            >
+              <Field label="Contact name" value={vendor.contact_name} />
+              <Field label="Tax / registration ID" value={vendor.tax_id} />
+              <Field label="Email" value={vendor.email} />
+              <Field label="Phone" value={vendor.phone} />
+              <Field label="Website" value={vendor.website} />
+              <Field label="Address" value={vendor.address_line} />
+              <Field
+                label="City / postal / country"
+                value={[vendor.city, vendor.postal_code, vendor.country].filter(Boolean).join(", ")}
+              />
+              <Box sx={{ gridColumn: { sm: "1 / -1" } }}>
+                <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600 }}>
+                  Notes
+                </Typography>
+                <Typography variant="body2" sx={{ whiteSpace: "pre-wrap" }}>
+                  {vendor.notes || "—"}
+                </Typography>
+              </Box>
+            </Box>
+          )}
+        </CardContent>
+      </Card>
 
       {/* Where used */}
-      <div className="mt-6 rounded border bg-white p-6">
-        <h2 className="mb-3 font-medium text-gray-900">Where used</h2>
-        {!usage ? (
-          <p className="text-sm text-gray-400">Loading…</p>
-        ) : (
-          <div className="grid grid-cols-4 gap-3 text-center">
-            <UsageStat to={`/quotations?vendor=${vendor.id}`} label="Quotations" count={usage.quotations} />
-            <UsageStat to={`/contracts?vendor=${vendor.id}`} label="Contracts" count={usage.contracts} />
-            <UsageStat to={`/grns?vendor=${vendor.id}`} label="GRNs" count={usage.grns} />
-            <UsageStat to={`/invoices?vendor=${vendor.id}`} label="Invoices" count={usage.invoices} />
-          </div>
-        )}
-        <p className="mt-3 text-xs text-gray-400">
-          Vendors referenced by these records cannot be deleted — deactivate instead.
-        </p>
-      </div>
-    </div>
+      <Card variant="outlined" sx={{ mt: 3 }}>
+        <CardContent>
+          <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 2 }}>
+            Where used
+          </Typography>
+          {!usage ? (
+            <Typography variant="body2" color="text.secondary">
+              Loading…
+            </Typography>
+          ) : (
+            <Box
+              sx={{
+                display: "grid",
+                gridTemplateColumns: "repeat(4, 1fr)",
+                gap: 1.5,
+              }}
+            >
+              <UsageStat to={`/quotations?vendor=${vendor.id}`} label="Quotations" count={usage.quotations} />
+              <UsageStat to={`/contracts?vendor=${vendor.id}`} label="Contracts" count={usage.contracts} />
+              <UsageStat to={`/grns?vendor=${vendor.id}`} label="GRNs" count={usage.grns} />
+              <UsageStat to={`/invoices?vendor=${vendor.id}`} label="Invoices" count={usage.invoices} />
+            </Box>
+          )}
+          <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 2 }}>
+            Vendors referenced by these records cannot be deleted — deactivate instead.
+          </Typography>
+        </CardContent>
+      </Card>
+    </Box>
   );
 }
 
 function Field({ label, value }: { label: string; value: string }) {
   return (
-    <div>
-      <dt className={labelCls}>{label}</dt>
-      <dd className="mt-0.5 text-gray-900">{value || "—"}</dd>
-    </div>
+    <Box>
+      <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600 }}>
+        {label}
+      </Typography>
+      <Typography variant="body2">{value || "—"}</Typography>
+    </Box>
   );
 }
 
 function UsageStat({ to, label, count }: { to: string; label: string; count: number }) {
   return (
-    <Link to={to} className="rounded border p-3 hover:bg-gray-50">
-      <div className="text-2xl font-semibold text-gray-900">{count}</div>
-      <div className="text-xs text-gray-500">{label}</div>
-    </Link>
+    <Box
+      component={Link}
+      to={to}
+      sx={{
+        textAlign: "center",
+        p: 1.5,
+        border: 1,
+        borderColor: "divider",
+        borderRadius: 2,
+        textDecoration: "none",
+        color: "inherit",
+        "&:hover": { bgcolor: "action.hover" },
+      }}
+    >
+      <Typography variant="h5" sx={{ fontWeight: 600 }}>
+        {count}
+      </Typography>
+      <Typography variant="caption" color="text.secondary">
+        {label}
+      </Typography>
+    </Box>
   );
 }

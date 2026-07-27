@@ -3,17 +3,27 @@ import {
   getPurchaseRequest,
   getRelatedDocuments,
   listPurchaseRequests,
+  type PRListFilters,
 } from "../api/purchaseRequests";
-import { useProcurementAccess } from "./useProcurementAccess";
 
-// usePurchaseRequests powers the Requests tab. Procurement/admin see the full
-// procurement queue; everyone else sees only their own submissions (scope=mine).
-export function usePurchaseRequests() {
-  const procurement = useProcurementAccess();
-  const scope = procurement ? undefined : ("mine" as const);
+// useMyRequests powers the "My requests" tab (visible to everyone): only the
+// caller's own submissions (scope=mine).
+export function useMyRequests() {
   return useQuery({
-    queryKey: ["purchase-requests", scope ?? "all"],
-    queryFn: () => listPurchaseRequests(scope),
+    queryKey: ["purchase-requests", "mine"],
+    queryFn: () => listPurchaseRequests("mine"),
+    refetchInterval: 5000,
+  });
+}
+
+// useAllPurchaseRequests powers the "Purchase requests" tab (procurement/admin
+// only): the full procurement queue (default role-based scope). Optional filters
+// (status / business unit / recommended vendor / requester) are applied
+// server-side and keyed into the cache so each filter combination is its own query.
+export function useAllPurchaseRequests(filters?: PRListFilters) {
+  return useQuery({
+    queryKey: ["purchase-requests", "all", filters ?? {}],
+    queryFn: () => listPurchaseRequests(undefined, filters),
     refetchInterval: 5000,
   });
 }

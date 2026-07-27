@@ -1,15 +1,50 @@
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  alpha,
+  Alert,
+  Box,
+  Button,
+  Card,
+  CardContent,
+  Checkbox,
+  Chip,
+  FormControlLabel,
+  IconButton,
+  Link as MuiLink,
+  MenuItem,
+  Stack,
+  Switch,
+  TextField,
+  Tooltip,
+  Typography,
+} from "@wso2/oxygen-ui";
+import type { Theme } from "@wso2/oxygen-ui";
+import {
+  Banknote,
+  FileText,
+  MessageCircleQuestion,
+  Paperclip,
+  Pencil,
+  Plus,
+  Scale,
+  ShieldCheck,
+  Trash2,
+  X,
+} from "@wso2/oxygen-ui-icons-react";
 import { useProcurementAccess } from "../hooks/useProcurementAccess";
-import { useBudgetUnitApprovers } from "../hooks/useBudgetUnits";
+import { useBusinessUnitApprovers } from "../hooks/useBusinessUnits";
+import { useDirectory } from "../hooks/useDirectory";
 import { useQuotationsForPR } from "../hooks/useQuotations";
 import { useConfigLookup, optionsFor } from "../hooks/useConfigOptions";
 import { ApiError } from "../api/client";
 import {
+  addBudgetStep,
   addRecComment,
   createRecommendation,
   createRecommendationContract,
+  deleteBudgetStep,
   deleteRecommendation,
   deleteRecommendationContract,
   deleteRecommendationRFI,
@@ -17,10 +52,15 @@ import {
   downloadRecCommentDocument,
   downloadRecRFIDocument,
   remindBudgetApprovers,
+  remindBudgetStep,
   remindRecAssignee,
+  removeRecApproval,
+  requestRecApproval,
+  setBudgetStepDecision,
   setRecApproval,
   setRecAssignee,
   setRecommendationRFI,
+  updateBudgetStep,
   updateRecommendation,
   uploadRecCommentDocument,
   uploadRecRFIDocument,
@@ -29,25 +69,45 @@ import { listTeams } from "../api/teams";
 import { setBudgetApprover } from "../api/purchaseRequests";
 import { uploadContractDocument } from "../api/contracts";
 import { ContractContent } from "./ContractContent";
+import { EmailAutocomplete } from "./EmailAutocomplete";
 import { CurrencyInput } from "./CurrencyInput";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { EntityStatusBadge } from "./EntityStatusBadge";
 import { conRef, REC_APPROVAL_LABELS, REC_APPROVAL_TYPES } from "../types/api";
 import type {
+  BudgetStep,
   Document,
   PurchaseRequest,
   RecApproval,
   RecApprovalType,
+  RecComment,
   Recommendation,
   UserSummary,
 } from "../types/api";
-
-const inputCls = "w-full rounded border px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none";
 
 interface QuotedVendor {
   id: number;
   name: string;
   registered: boolean;
+}
+
+// FieldLabel is the small caption above a form control (was a Tailwind label).
+function FieldLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <Typography variant="body2" sx={{ mb: 0.5, fontWeight: 500 }}>
+      {children}
+    </Typography>
+  );
+}
+
+// InlineError renders a small inline error message under a control.
+function InlineError({ children }: { children: React.ReactNode }) {
+  if (!children) return null;
+  return (
+    <Typography variant="body2" sx={{ color: "error.main" }}>
+      {children}
+    </Typography>
+  );
 }
 
 // RecommendationSection renders the PR's procurement recommendation: procurement adds
@@ -81,14 +141,18 @@ export function RecommendationSection({ pr }: { pr: PurchaseRequest }) {
   if (!rec && quotedVendors.length === 0) return null;
 
   return (
-    <div className="app-card mt-6 p-6">
-      <h2 className="mb-3 font-semibold text-slate-900">Procurement recommendation</h2>
-      {rec ? (
-        <RecommendationView pr={pr} rec={rec} procurement={procurement} quotedVendors={quotedVendors} />
-      ) : (
-        <RecommendationForm pr={pr} quotedVendors={quotedVendors} />
-      )}
-    </div>
+    <Card variant="outlined" sx={{ mt: 3 }}>
+      <CardContent>
+        <Typography variant="h6" sx={{ mb: 1.5 }}>
+          Procurement recommendation
+        </Typography>
+        {rec ? (
+          <RecommendationView pr={pr} rec={rec} procurement={procurement} quotedVendors={quotedVendors} />
+        ) : (
+          <RecommendationForm pr={pr} quotedVendors={quotedVendors} />
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
@@ -145,103 +209,114 @@ function RecommendationForm({
     setTypes((prev) => (prev.includes(t) ? prev.filter((x) => x !== t) : [...prev, t]));
 
   return (
-    <div className="space-y-3">
+    <Stack spacing={2}>
       {editing && (
-        <p className="rounded border-l-2 border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+        <Alert severity="warning" variant="outlined">
           Editing the recommendation resets all approvals back to pending.
-        </p>
+        </Alert>
       )}
-      <div>
-        <label className="mb-1 block text-sm font-medium text-gray-700">Vendor</label>
-        <select className={inputCls} value={vendorId || ""} onChange={(e) => setVendorId(Number(e.target.value))}>
-          <option value="">Select a quoted vendor…</option>
+      <Box>
+        <FieldLabel>Vendor</FieldLabel>
+        <TextField
+          select
+          size="small"
+          fullWidth
+          value={vendorId || ""}
+          onChange={(e) => setVendorId(Number(e.target.value))}
+        >
+          <MenuItem value="">Select a quoted vendor…</MenuItem>
           {quotedVendors.map((v) => (
-            <option key={v.id} value={v.id}>
+            <MenuItem key={v.id} value={v.id}>
               {v.name}
               {!v.registered ? " (unregistered)" : ""}
-            </option>
+            </MenuItem>
           ))}
-        </select>
-      </div>
-      <div>
-        <label className="mb-1 block text-sm font-medium text-gray-700">Description</label>
-        <textarea
-          className={inputCls}
-          rows={2}
+        </TextField>
+      </Box>
+      <Box>
+        <FieldLabel>Description</FieldLabel>
+        <TextField
+          size="small"
+          fullWidth
+          multiline
+          minRows={2}
           value={description}
           onChange={(e) => setDescription(e.target.value)}
           placeholder="Why this vendor (optional)"
         />
-      </div>
-      <div className="grid gap-3 sm:grid-cols-3">
-        <div>
-          <label className="mb-1 block text-sm font-medium text-gray-700">Estimated value</label>
-          <input
+      </Box>
+      <Box sx={{ display: "grid", gap: 2, gridTemplateColumns: { sm: "repeat(3, 1fr)" } }}>
+        <Box>
+          <FieldLabel>Estimated value</FieldLabel>
+          <TextField
             type="number"
-            min={0}
-            step="0.01"
-            className={inputCls}
+            size="small"
+            fullWidth
+            inputProps={{ min: 0, step: "0.01" }}
             value={estimatedValue || ""}
             onChange={(e) => setEstimatedValue(Number(e.target.value))}
             placeholder="0.00"
           />
-        </div>
-        <div>
-          <label className="mb-1 block text-sm font-medium text-gray-700">Currency</label>
-          <CurrencyInput
-            className={inputCls}
-            value={currency}
-            onChange={setCurrency}
-            maxLength={3}
-            options={optionsFor(lists, "currency", currency)}
-          />
-        </div>
-        <div>
-          <label className="mb-1 block text-sm font-medium text-gray-700">Engagement type</label>
-          <select
-            className={inputCls}
+        </Box>
+        <Box>
+          <FieldLabel>Currency</FieldLabel>
+          <Box sx={{ "& .MuiTextField-root": { width: "100%" } }}>
+            <CurrencyInput
+              value={currency}
+              onChange={setCurrency}
+              maxLength={3}
+              options={optionsFor(lists, "currency", currency)}
+            />
+          </Box>
+        </Box>
+        <Box>
+          <FieldLabel>Engagement type</FieldLabel>
+          <TextField
+            select
+            size="small"
+            fullWidth
             value={engagementType}
             onChange={(e) => setEngagementType(e.target.value)}
           >
-            <option value="">Select…</option>
+            <MenuItem value="">Select…</MenuItem>
             {optionsFor(lists, "engagement_type", engagementType).map((o) => (
-              <option key={o} value={o}>
+              <MenuItem key={o} value={o}>
                 {o}
-              </option>
+              </MenuItem>
             ))}
-          </select>
-        </div>
-      </div>
-      <div>
-        <span className="mb-1 block text-sm font-medium text-gray-700">Approvals required</span>
-        <div className="flex flex-wrap gap-4">
+          </TextField>
+        </Box>
+      </Box>
+      <Box>
+        <FieldLabel>Approvals required</FieldLabel>
+        <Stack direction="row" flexWrap="wrap" sx={{ gap: 2 }}>
           {REC_APPROVAL_TYPES.map((t) => (
-            <label key={t} className="flex items-center gap-2 text-sm text-gray-700">
-              <input type="checkbox" checked={types.includes(t)} onChange={() => toggleType(t)} />
-              {REC_APPROVAL_LABELS[t]}
-            </label>
+            <FormControlLabel
+              key={t}
+              control={
+                <Checkbox size="small" checked={types.includes(t)} onChange={() => toggleType(t)} />
+              }
+              label={REC_APPROVAL_LABELS[t]}
+            />
           ))}
-        </div>
-      </div>
-      {error && <p className="text-sm text-red-600">{error}</p>}
-      <div className="flex gap-2 pt-1">
-        <button
+        </Stack>
+      </Box>
+      {error && <InlineError>{error}</InlineError>}
+      <Stack direction="row" spacing={1} sx={{ pt: 0.5 }}>
+        <Button
+          variant="contained"
           disabled={mutation.isPending || !vendorId || types.length === 0}
           onClick={() => mutation.mutate()}
-          className="rounded bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
         >
           {mutation.isPending ? "Saving…" : editing ? "Save changes" : "Save recommendation"}
-        </button>
+        </Button>
         {editing && (
-          <button
-            onClick={() => onDone?.()}
-            className="rounded border px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
-          >
+          <Button variant="outlined" color="inherit" onClick={() => onDone?.()}>
             Cancel
-          </button>
+          </Button>
         )}
-      </div>
-    </div>
+      </Stack>
+    </Stack>
   );
 }
 
@@ -284,205 +359,212 @@ function RecommendationView({
   const approved = rec.approvals.filter((a) => a.approved).length;
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-start justify-between gap-3">
-        <dl className="space-y-1 text-sm">
-          <div>
-            <dt className="inline font-medium text-slate-500">Vendor: </dt>
-            <dd className="inline font-medium text-slate-900">{rec.vendor?.name ?? `Vendor #${rec.vendor_id}`}</dd>
-          </div>
+    <Stack spacing={2}>
+      <Box sx={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 1.5 }}>
+        <Box sx={{ display: "flex", flexDirection: "column", gap: 0.5 }}>
+          <Box>
+            <Typography component="span" variant="body2" sx={{ fontWeight: 500, color: "text.secondary" }}>
+              Vendor:{" "}
+            </Typography>
+            <Typography component="span" variant="body2" sx={{ fontWeight: 500 }}>
+              {rec.vendor?.name ?? `Vendor #${rec.vendor_id}`}
+            </Typography>
+          </Box>
           {rec.description && (
-            <p className="whitespace-pre-wrap text-slate-600">{rec.description}</p>
+            <Typography variant="body2" sx={{ whiteSpace: "pre-wrap", color: "text.secondary" }}>
+              {rec.description}
+            </Typography>
           )}
           {(rec.estimated_value > 0 || rec.currency || rec.engagement_type) && (
-            <div className="flex flex-wrap gap-x-6 gap-y-0.5 pt-0.5 text-slate-600">
+            <Box sx={{ display: "flex", flexWrap: "wrap", columnGap: 3, rowGap: 0.25, pt: 0.25, color: "text.secondary" }}>
               {(rec.estimated_value > 0 || rec.currency) && (
-                <span>
-                  <span className="font-medium text-slate-500">Estimated value: </span>
+                <Typography variant="body2" component="span" sx={{ color: "text.secondary" }}>
+                  <Box component="span" sx={{ fontWeight: 500 }}>
+                    Estimated value:{" "}
+                  </Box>
                   {rec.currency} {rec.estimated_value.toLocaleString()}
-                </span>
+                </Typography>
               )}
               {rec.engagement_type && (
-                <span>
-                  <span className="font-medium text-slate-500">Engagement: </span>
+                <Typography variant="body2" component="span" sx={{ color: "text.secondary" }}>
+                  <Box component="span" sx={{ fontWeight: 500 }}>
+                    Engagement:{" "}
+                  </Box>
                   {rec.engagement_type}
-                </span>
+                </Typography>
               )}
-            </div>
+            </Box>
           )}
-          <p className="pt-0.5">
-            <span
-              className={`badge ${
-                approved === rec.approvals.length
-                  ? "bg-emerald-50 text-emerald-700 ring-emerald-600/20"
-                  : "bg-slate-100 text-slate-600 ring-slate-500/20"
-              }`}
-            >
-              {approved} of {rec.approvals.length} approvals granted
-            </span>
-          </p>
-        </dl>
+          <Box sx={{ pt: 0.25 }}>
+            <Chip
+              size="small"
+              variant="outlined"
+              color={approved === rec.approvals.length ? "success" : "default"}
+              label={`${approved} of ${rec.approvals.length} approvals granted`}
+            />
+          </Box>
+        </Box>
         {procurement && (
-          <div className="flex shrink-0 gap-3 text-sm">
-            <button className="font-medium text-indigo-600 hover:text-indigo-700" onClick={() => setEditing(true)}>
+          <Stack direction="row" spacing={1} sx={{ flexShrink: 0 }}>
+            <Button variant="text" size="small" onClick={() => setEditing(true)}>
               Edit
-            </button>
-            <button
-              className="font-medium text-red-600 hover:text-red-700 disabled:opacity-50"
+            </Button>
+            <Button
+              variant="text"
+              size="small"
+              color="error"
               disabled={deleteMutation.isPending}
               onClick={() => deleteMutation.mutate()}
             >
               Remove
-            </button>
-          </div>
+            </Button>
+          </Stack>
         )}
-      </div>
+      </Box>
 
-      {error && <p className="text-sm text-red-600">{error}</p>}
+      {error && <InlineError>{error}</InlineError>}
 
-      <div>
-        <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
-          Required approvals
-        </p>
-        <div className="space-y-3">
+      <Box>
+        <Box sx={{ mb: 1, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 1 }}>
+          <Typography
+            variant="caption"
+            sx={{ fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", color: "text.secondary" }}
+          >
+            Required approvals
+          </Typography>
+          {procurement && <RequestApprovalButtons prId={pr.id} rec={rec} />}
+        </Box>
+        <Stack spacing={1.5}>
           {rec.approvals.map((a) => (
             <ApprovalCard
               key={a.approval_type}
               prId={pr.id}
               approval={a}
-              budgetUnitId={pr.budget_unit_id}
-              estimatedValue={rec.estimated_value}
-              currency={rec.currency}
+              businessUnitId={pr.business_unit_id}
               prApproverName={pr.budget_approver_name}
               prApproverEmail={pr.budget_approver_email}
               procurement={procurement}
             />
           ))}
-        </div>
-      </div>
+        </Stack>
+      </Box>
 
       <RFICard pr={pr} rec={rec} procurement={procurement} />
       <ContractCard pr={pr} rec={rec} procurement={procurement} />
-    </div>
+    </Stack>
   );
 }
 
 // --- shared chrome for the recommendation's sub-cards ---
 //
-// Each sub-card (approval / RFI / contract) is an elevated white card with a
-// colored left accent and an icon tile, so the individual steps of the
-// procurement function read as distinct, primary components.
+// Each sub-card (approval / RFI / contract) is an outlined card with a colored
+// left accent and an icon tile, so the individual steps of the procurement
+// function read as distinct, primary components.
 
-const TONE: Record<
-  "emerald" | "amber" | "indigo" | "violet" | "sky" | "slate",
-  { bar: string; tile: string }
-> = {
-  emerald: { bar: "border-l-emerald-400", tile: "bg-emerald-50 text-emerald-600 ring-emerald-600/20" },
-  amber: { bar: "border-l-amber-400", tile: "bg-amber-50 text-amber-600 ring-amber-600/20" },
-  indigo: { bar: "border-l-indigo-400", tile: "bg-indigo-50 text-indigo-600 ring-indigo-600/20" },
-  violet: { bar: "border-l-violet-400", tile: "bg-violet-50 text-violet-600 ring-violet-600/20" },
-  sky: { bar: "border-l-sky-400", tile: "bg-sky-50 text-sky-600 ring-sky-600/20" },
-  slate: { bar: "border-l-slate-300", tile: "bg-slate-100 text-slate-500 ring-slate-500/20" },
+type Tone = "emerald" | "amber" | "indigo" | "violet" | "sky" | "slate";
+
+// Map the legacy tone names onto MUI semantic palette keys.
+const TONE_PALETTE: Record<Exclude<Tone, "slate">, "success" | "warning" | "primary" | "secondary" | "info"> = {
+  emerald: "success",
+  amber: "warning",
+  indigo: "primary",
+  violet: "secondary",
+  sky: "info",
 };
 
-type Tone = keyof typeof TONE;
+function accentColor(tone: Tone): string {
+  return tone === "slate" ? "divider" : `${TONE_PALETTE[tone]}.main`;
+}
 
-// SubCard is the elevated shell shared by the recommendation's sub-cards.
+function tileSx(tone: Tone) {
+  if (tone === "slate") {
+    return {
+      bgcolor: (theme: Theme) => alpha(theme.palette.text.secondary, 0.1),
+      color: "text.secondary",
+      borderColor: (theme: Theme) => alpha(theme.palette.text.secondary, 0.2),
+    } as const;
+  }
+  const key = TONE_PALETTE[tone];
+  return {
+    bgcolor: (theme: Theme) => alpha(theme.palette[key].main, 0.12),
+    color: `${key}.main`,
+    borderColor: (theme: Theme) => alpha(theme.palette[key].main, 0.24),
+  } as const;
+}
+
+// SubCard is the outlined shell shared by the recommendation's sub-cards.
 function SubCard({ tone, children }: { tone: Tone; children: React.ReactNode }) {
   return (
-    <div
-      className={`overflow-hidden rounded-xl border border-l-4 border-slate-200 bg-white shadow-sm transition hover:shadow-md ${TONE[tone].bar}`}
+    <Card
+      variant="outlined"
+      sx={{
+        overflow: "hidden",
+        borderLeft: 4,
+        borderLeftColor: accentColor(tone),
+        transition: "box-shadow 0.2s",
+        "&:hover": { boxShadow: 1 },
+      }}
     >
       {children}
-    </div>
+    </Card>
   );
 }
 
 function IconTile({ tone, children }: { tone: Tone; children: React.ReactNode }) {
   return (
-    <span
-      className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ring-1 ring-inset ${TONE[tone].tile}`}
+    <Box
+      sx={{
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        flexShrink: 0,
+        width: 36,
+        height: 36,
+        borderRadius: 1.5,
+        border: 1,
+        ...tileSx(tone),
+      }}
     >
       {children}
-    </span>
+    </Box>
   );
 }
 
 // SubCardBody is the tinted lower section (comments, form fields, attachments).
 function SubCardBody({ children }: { children: React.ReactNode }) {
-  return <div className="border-t border-slate-100 bg-slate-50/60 px-4 py-3">{children}</div>;
+  return (
+    <Box sx={{ borderTop: 1, borderColor: "divider", bgcolor: "action.hover", px: 2, py: 1.5 }}>
+      {children}
+    </Box>
+  );
 }
 
-const svgCls = "h-[18px] w-[18px]";
-const svgProps = {
-  className: svgCls,
-  viewBox: "0 0 24 24",
-  fill: "none",
-  stroke: "currentColor",
-  strokeWidth: 1.8,
-  strokeLinecap: "round" as const,
-  strokeLinejoin: "round" as const,
-};
+// SubCardHead is the top row of a sub-card (icon tile + title + trailing content).
+function SubCardHead({ children }: { children: React.ReactNode }) {
+  return (
+    <Box sx={{ display: "flex", alignItems: "center", gap: 1.5, px: 2, py: 1.5 }}>{children}</Box>
+  );
+}
 
 function ApprovalIcon({ type }: { type: string }) {
-  if (type === "legal") {
-    // scales of justice
-    return (
-      <svg {...svgProps}>
-        <path d="M12 3v18M7 21h10M5 7h14M12 3 5 7l-2.5 5a3 3 0 0 0 6 0L12 3zm0 0 7 4 2.5 5a3 3 0 0 1-6 0L12 3z" />
-      </svg>
-    );
-  }
-  if (type === "security") {
-    // shield with check
-    return (
-      <svg {...svgProps}>
-        <path d="M12 3 5 6v5c0 4.5 3 8 7 10 4-2 7-5.5 7-10V6l-7-3z" />
-        <path d="m9 12 2 2 4-4" />
-      </svg>
-    );
-  }
-  // budget — banknote
-  return (
-    <svg {...svgProps}>
-      <rect x="2" y="6" width="20" height="12" rx="2" />
-      <circle cx="12" cy="12" r="2.5" />
-      <path d="M6 12h.01M18 12h.01" />
-    </svg>
-  );
-}
-
-function RFIIcon() {
-  // chat bubble with a question
-  return (
-    <svg {...svgProps}>
-      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-      <path d="M9.5 9a2.5 2.5 0 1 1 3 2.5c-.7.3-1 .8-1 1.5M12 16h.01" />
-    </svg>
-  );
-}
-
-function ContractDocIcon() {
-  return (
-    <svg {...svgProps}>
-      <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" />
-      <path d="M14 3v5h5M9 13h6M9 17h4" />
-    </svg>
-  );
+  if (type === "legal") return <Scale size={18} />;
+  if (type === "security") return <ShieldCheck size={18} />;
+  return <Banknote size={18} />;
 }
 
 // --- optional RFI card: request for information from the vendor (description + PDFs) ---
 
 function DocChip({ filename, onClick }: { filename: string; onClick: () => void }) {
   return (
-    <button
-      type="button"
-      className="inline-flex items-center gap-1 rounded-full border bg-white px-2 py-0.5 text-xs text-indigo-600 hover:bg-gray-100"
+    <Chip
+      size="small"
+      variant="outlined"
+      color="primary"
+      clickable
       onClick={onClick}
-    >
-      <span aria-hidden>📎</span>
-      {filename}
-    </button>
+      icon={<Paperclip size={14} />}
+      label={filename}
+    />
   );
 }
 
@@ -549,62 +631,71 @@ function RFICard({
   if (procurement && (editing || !present)) {
     return (
       <SubCard tone="sky">
-        <div className="flex items-center gap-3 px-4 py-3">
+        <SubCardHead>
           <IconTile tone="sky">
-            <RFIIcon />
+            <MessageCircleQuestion size={18} />
           </IconTile>
-          <div className="min-w-0">
-            <p className="text-sm font-semibold text-slate-900">RFI — request for information</p>
-            <p className="text-xs text-slate-500">
+          <Box sx={{ minWidth: 0 }}>
+            <Typography variant="subtitle2">RFI — request for information</Typography>
+            <Typography variant="caption" sx={{ color: "text.secondary" }}>
               {present ? "Update the request or its attachments" : "Optional — ask the vendor for more detail"}
-            </p>
-          </div>
-        </div>
+            </Typography>
+          </Box>
+        </SubCardHead>
         <SubCardBody>
-          <textarea
-            className={inputCls}
-            rows={2}
+          <TextField
+            size="small"
+            fullWidth
+            multiline
+            minRows={2}
             value={description}
             onChange={(e) => setDescription(e.target.value)}
             placeholder="What information are you requesting from the vendor?"
           />
-          <div className="mt-2 flex items-center gap-2">
-            <label className="cursor-pointer text-sm font-medium text-indigo-600 hover:text-indigo-700">
-              {file ? "Change PDF" : "+ Attach PDF"}
+          <Box sx={{ mt: 1, display: "flex", alignItems: "center", gap: 1 }}>
+            <Button variant="text" component="label" startIcon={<Paperclip size={16} />}>
+              {file ? "Change PDF" : "Attach PDF"}
               <input
                 type="file"
                 accept="application/pdf,.pdf"
-                className="hidden"
+                hidden
                 onChange={(e) => setFile(e.target.files?.[0] ?? null)}
               />
-            </label>
-            {file && <span className="text-xs text-slate-600">{file.name}</span>}
-          </div>
-          {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
-          <div className="mt-3 flex gap-2">
-            <button
-              type="button"
+            </Button>
+            {file && (
+              <Typography variant="caption" sx={{ color: "text.secondary" }}>
+                {file.name}
+              </Typography>
+            )}
+          </Box>
+          {error && (
+            <Box sx={{ mt: 1 }}>
+              <InlineError>{error}</InlineError>
+            </Box>
+          )}
+          <Stack direction="row" spacing={1} sx={{ mt: 1.5 }}>
+            <Button
+              variant="contained"
               disabled={saveMutation.isPending || (!present && !file && description.trim() === "")}
               onClick={() => saveMutation.mutate()}
-              className="btn-primary"
             >
               {saveMutation.isPending ? "Saving…" : present ? "Save RFI" : "Add RFI"}
-            </button>
+            </Button>
             {present && (
-              <button
-                type="button"
+              <Button
+                variant="outlined"
+                color="inherit"
                 onClick={() => {
                   setEditing(false);
                   setDescription(rec.rfi_description);
                   setFile(null);
                   setError(null);
                 }}
-                className="btn-secondary"
               >
                 Cancel
-              </button>
+              </Button>
             )}
-          </div>
+          </Stack>
         </SubCardBody>
       </SubCard>
     );
@@ -613,69 +704,87 @@ function RFICard({
   // Read view (RFI present).
   return (
     <SubCard tone="sky">
-      <div className="flex items-center gap-3 px-4 py-3">
+      <SubCardHead>
         <IconTile tone="sky">
-          <RFIIcon />
+          <MessageCircleQuestion size={18} />
         </IconTile>
-        <div className="min-w-0">
-          <p className="text-sm font-semibold text-slate-900">RFI — request for information</p>
-          <p className="text-xs text-slate-500">Raised with the vendor</p>
-        </div>
+        <Box sx={{ minWidth: 0 }}>
+          <Typography variant="subtitle2">RFI — request for information</Typography>
+          <Typography variant="caption" sx={{ color: "text.secondary" }}>
+            Raised with the vendor
+          </Typography>
+        </Box>
         {procurement && (
-          <div className="ml-auto flex shrink-0 gap-3 text-sm">
-            <button className="font-medium text-indigo-600 hover:text-indigo-700" onClick={() => setEditing(true)}>
+          <Stack direction="row" spacing={1} sx={{ ml: "auto", flexShrink: 0 }}>
+            <Button variant="text" size="small" onClick={() => setEditing(true)}>
               Edit
-            </button>
-            <button
-              className="font-medium text-red-600 hover:text-red-700 disabled:opacity-50"
+            </Button>
+            <Button
+              variant="text"
+              size="small"
+              color="error"
               disabled={removeMutation.isPending}
               onClick={() => removeMutation.mutate()}
             >
               Remove
-            </button>
-          </div>
+            </Button>
+          </Stack>
         )}
-      </div>
+      </SubCardHead>
       <SubCardBody>
         {rec.rfi_description && (
-          <p className="whitespace-pre-wrap text-sm text-slate-700">{rec.rfi_description}</p>
+          <Typography variant="body2" sx={{ whiteSpace: "pre-wrap", color: "text.primary" }}>
+            {rec.rfi_description}
+          </Typography>
         )}
         {(rec.rfi_documents?.length ?? 0) > 0 && (
-          <div className={`flex flex-wrap items-center gap-1.5 ${rec.rfi_description ? "mt-2" : ""}`}>
+          <Box sx={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 1, mt: rec.rfi_description ? 1 : 0 }}>
             {rec.rfi_documents.map((d) => (
-              <span key={d.id} className="inline-flex items-center">
+              <Box key={d.id} sx={{ display: "inline-flex", alignItems: "center" }}>
                 <DocChip filename={d.filename} onClick={() => downloadRecRFIDocument(pr.id, d)} />
                 {procurement && (
-                  <button
-                    type="button"
-                    title="Remove attachment"
-                    disabled={removeDocMutation.isPending}
-                    onClick={() => removeDocMutation.mutate(d.id)}
-                    className="ml-0.5 text-xs text-slate-400 hover:text-red-600 disabled:opacity-50"
-                  >
-                    ✕
-                  </button>
+                  <Tooltip title="Remove attachment">
+                    <span>
+                      <IconButton
+                        size="small"
+                        disabled={removeDocMutation.isPending}
+                        onClick={() => removeDocMutation.mutate(d.id)}
+                        sx={{ ml: 0.25, color: "text.disabled", "&:hover": { color: "error.main" } }}
+                      >
+                        <X size={14} />
+                      </IconButton>
+                    </span>
+                  </Tooltip>
                 )}
-              </span>
+              </Box>
             ))}
-          </div>
+          </Box>
         )}
         {procurement && (
-          <label className="mt-2 inline-block cursor-pointer text-sm font-medium text-indigo-600 hover:text-indigo-700">
-            + Add attachment
+          <Button
+            variant="text"
+            component="label"
+            startIcon={<Plus size={16} />}
+            sx={{ mt: 1 }}
+          >
+            Add attachment
             <input
               type="file"
               accept="application/pdf,.pdf"
-              className="hidden"
+              hidden
               onChange={(e) => {
                 const f = e.target.files?.[0];
                 if (f) addDocMutation.mutate(f);
                 e.target.value = "";
               }}
             />
-          </label>
+          </Button>
         )}
-        {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
+        {error && (
+          <Box sx={{ mt: 1 }}>
+            <InlineError>{error}</InlineError>
+          </Box>
+        )}
       </SubCardBody>
     </SubCard>
   );
@@ -731,34 +840,39 @@ function ContractCard({
     const canRemove = procurement && contract.status === "draft";
     return (
       <SubCard tone="violet">
-        <div className="flex items-center gap-3 px-4 py-3">
+        <SubCardHead>
           <IconTile tone="violet">
-            <ContractDocIcon />
+            <FileText size={18} />
           </IconTile>
-          <div className="min-w-0">
-            <Link
-              to={`/contracts/${contract.id}`}
-              className="text-sm font-semibold text-indigo-600 hover:underline"
-            >
+          <Box sx={{ minWidth: 0 }}>
+            <MuiLink component={Link} to={`/contracts/${contract.id}`} sx={{ fontWeight: 600, fontSize: 14 }}>
               {conRef(contract.id)}
-            </Link>
-            <p className="text-xs text-slate-500">Contract</p>
-          </div>
-          <div className="ml-auto flex shrink-0 items-center gap-3">
+            </MuiLink>
+            <Typography variant="caption" sx={{ display: "block", color: "text.secondary" }}>
+              Contract
+            </Typography>
+          </Box>
+          <Box sx={{ ml: "auto", display: "flex", alignItems: "center", gap: 1.5, flexShrink: 0 }}>
             <EntityStatusBadge status={contract.status} />
             {canRemove && (
-              <button
-                className="text-sm font-medium text-red-600 hover:text-red-700 disabled:opacity-50"
+              <Button
+                variant="text"
+                size="small"
+                color="error"
                 disabled={removeMutation.isPending}
                 onClick={() => removeMutation.mutate()}
               >
                 Remove
-              </button>
+              </Button>
             )}
-          </div>
-        </div>
+          </Box>
+        </SubCardHead>
         <SubCardBody>
-          {error && <p className="mb-2 text-sm text-red-600">{error}</p>}
+          {error && (
+            <Box sx={{ mb: 1 }}>
+              <InlineError>{error}</InlineError>
+            </Box>
+          )}
           <ContractContent contract={contract} canEdit={procurement} invalidate={invalidate} />
         </SubCardBody>
       </SubCard>
@@ -769,44 +883,57 @@ function ContractCard({
 
   return (
     <SubCard tone="violet">
-      <div className="flex items-center gap-3 px-4 py-3">
+      <SubCardHead>
         <IconTile tone="violet">
-          <ContractDocIcon />
+          <FileText size={18} />
         </IconTile>
-        <div className="min-w-0">
-          <p className="text-sm font-semibold text-slate-900">Contract</p>
-          <p className="text-xs text-slate-500">Optional — attach a draft contract PDF to begin</p>
-        </div>
-      </div>
+        <Box sx={{ minWidth: 0 }}>
+          <Typography variant="subtitle2">Contract</Typography>
+          <Typography variant="caption" sx={{ color: "text.secondary" }}>
+            Optional — attach a draft contract PDF to begin
+          </Typography>
+        </Box>
+      </SubCardHead>
       <SubCardBody>
-        <div className="flex items-center gap-2">
-          <label className="cursor-pointer text-sm font-medium text-indigo-600 hover:text-indigo-700">
-            {file ? "Change PDF" : "+ Choose PDF"}
+        <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+          <Button variant="text" component="label" startIcon={<Paperclip size={16} />}>
+            {file ? "Change PDF" : "Choose PDF"}
             <input
               type="file"
               accept="application/pdf,.pdf"
-              className="hidden"
+              hidden
               onChange={(e) => setFile(e.target.files?.[0] ?? null)}
             />
-          </label>
-          {file && <span className="text-xs text-slate-600">{file.name}</span>}
-        </div>
-        <textarea
-          className={`${inputCls} mt-2`}
-          rows={2}
+          </Button>
+          {file && (
+            <Typography variant="caption" sx={{ color: "text.secondary" }}>
+              {file.name}
+            </Typography>
+          )}
+        </Box>
+        <TextField
+          size="small"
+          fullWidth
+          multiline
+          minRows={2}
+          sx={{ mt: 1 }}
           value={notes}
           onChange={(e) => setNotes(e.target.value)}
           placeholder="Notes for this draft (optional)"
         />
-        {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
-        <button
-          type="button"
+        {error && (
+          <Box sx={{ mt: 1 }}>
+            <InlineError>{error}</InlineError>
+          </Box>
+        )}
+        <Button
+          variant="contained"
+          sx={{ mt: 1.5 }}
           disabled={createMutation.isPending || !file}
           onClick={() => createMutation.mutate()}
-          className="btn-primary mt-3"
         >
           {createMutation.isPending ? "Adding…" : "Add draft contract"}
-        </button>
+        </Button>
       </SubCardBody>
     </SubCard>
   );
@@ -818,21 +945,56 @@ function reviewerLabel(name?: string | null, email?: string | null, id?: number)
   return email || name || (id != null ? `#${id}` : "");
 }
 
+// RequestApprovalButtons offers a "Request X approval" pill for each approval type
+// not yet required on the recommendation (procurement only).
+function RequestApprovalButtons({ prId, rec }: { prId: number; rec: Recommendation }) {
+  const qc = useQueryClient();
+  const [error, setError] = useState<string | null>(null);
+  const present = new Set(rec.approvals.map((a) => a.approval_type));
+  const missing = REC_APPROVAL_TYPES.filter((t) => !present.has(t));
+  const request = useMutation({
+    mutationFn: (t: RecApprovalType) => requestRecApproval(prId, t),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["purchase-requests", prId] });
+      setError(null);
+    },
+    onError: (e) => setError(e instanceof ApiError ? e.message : "Failed to request approval"),
+  });
+  if (missing.length === 0) return null;
+  return (
+    <Box sx={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 1 }}>
+      {missing.map((t) => (
+        <Button
+          key={t}
+          size="small"
+          variant="outlined"
+          startIcon={<Plus size={14} />}
+          disabled={request.isPending}
+          onClick={() => request.mutate(t)}
+        >
+          Request {t} approval
+        </Button>
+      ))}
+      {error && (
+        <Typography variant="caption" sx={{ color: "error.main" }}>
+          {error}
+        </Typography>
+      )}
+    </Box>
+  );
+}
+
 function ApprovalCard({
   prId,
   approval,
-  budgetUnitId,
-  estimatedValue,
-  currency,
+  businessUnitId,
   prApproverName,
   prApproverEmail,
   procurement,
 }: {
   prId: number;
   approval: RecApproval;
-  budgetUnitId: number | null;
-  estimatedValue: number;
-  currency: string;
+  businessUnitId: number | null;
   prApproverName?: string;
   prApproverEmail?: string;
   procurement: boolean;
@@ -845,6 +1007,17 @@ function ApprovalCard({
   const [error, setError] = useState<string | null>(null);
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ["purchase-requests", prId] });
+
+  const [confirmRemove, setConfirmRemove] = useState(false);
+  const removeMutation = useMutation({
+    mutationFn: () => removeRecApproval(prId, t),
+    onSuccess: () => {
+      invalidate();
+      setConfirmRemove(false);
+      setError(null);
+    },
+    onError: (e) => setError(e instanceof ApiError ? e.message : "Failed to remove approval"),
+  });
 
   const toggleMutation = useMutation({
     mutationFn: () => setRecApproval(prId, t, !approval.approved),
@@ -900,20 +1073,11 @@ function ApprovalCard({
     onError: (e) => setError(e instanceof ApiError ? e.message : "Failed to send reminder"),
   });
 
-  // Budget card — the designated approver(s) come from the budget unit and the
-  // recommendation's estimated value (any of them may approve). Procurement can
-  // (re-)notify them all, and reconcile the PR's named approver against them.
+  // Budget card — the budget approver is one of the PR's business unit approvers.
+  // Procurement can change it and (re-)notify the approver.
   const isBudget = t === "budget";
-  const {
-    data: budgetApprovers,
-    refetch: refetchApprovers,
-    isFetching: approversFetching,
-  } = useBudgetUnitApprovers(
-    isBudget ? budgetUnitId : null,
-    estimatedValue > 0 ? estimatedValue : null,
-    currency,
-  );
-  const designated = budgetApprovers ?? [];
+  const { data: businessUnitApprovers } = useBusinessUnitApprovers(isBudget ? businessUnitId : null);
+  const approverOptions = businessUnitApprovers ?? [];
   const [notified, setNotified] = useState(false);
   const notifyBudgetMutation = useMutation({
     mutationFn: () => remindBudgetApprovers(prId),
@@ -921,20 +1085,13 @@ function ApprovalCard({
       setNotified(true);
       setError(null);
     },
-    onError: (e) => setError(e instanceof ApiError ? e.message : "Failed to notify approvers"),
+    onError: (e) => setError(e instanceof ApiError ? e.message : "Failed to notify approver"),
   });
 
-  // The PR's named budget approver, editable from this card (procurement) and
-  // reconcilable against the designated approver(s).
+  // The PR's named budget approver, editable from this card (procurement) by
+  // picking from the business unit's approver list.
   const [editingApprover, setEditingApprover] = useState(false);
-  const [approverName, setApproverName] = useState(prApproverName ?? "");
   const [approverEmail, setApproverEmail] = useState(prApproverEmail ?? "");
-  const approverKey = (emails: string) =>
-    emails.split(",").map((s) => s.trim().toLowerCase()).filter(Boolean).sort().join(",");
-  const approverMismatch =
-    isBudget &&
-    designated.length > 0 &&
-    approverKey(designated.map((u) => u.email).join(",")) !== approverKey(prApproverEmail ?? "");
   const saveApprover = useMutation({
     mutationFn: (v: { name: string; email: string }) => setBudgetApprover(prId, v.name, v.email),
     onSuccess: () => {
@@ -944,11 +1101,14 @@ function ApprovalCard({
     },
     onError: (e) => setError(e instanceof ApiError ? e.message : "Failed to update approver"),
   });
-  const useDesignatedApprover = () =>
-    saveApprover.mutate({
-      name: designated.map((u) => u.name || u.email).join(", "),
-      email: designated.map((u) => u.email).join(", "),
-    });
+  const saveSelectedApprover = (email: string) => {
+    const u = approverOptions.find((a) => a.email === email);
+    saveApprover.mutate({ name: u ? u.name || "" : "", email });
+  };
+  const namedApproverText =
+    prApproverName || prApproverEmail
+      ? `${prApproverName || ""}${prApproverEmail ? ` · ${prApproverEmail}` : ""}`
+      : "—";
 
   const onPickAssignee = (value: string) => {
     const currentId = approval.assignee_id ?? null;
@@ -968,213 +1128,234 @@ function ApprovalCard({
   const tone: Tone = approval.approved ? "emerald" : "amber";
   return (
     <SubCard tone={tone}>
-      <div className="flex items-center gap-3 px-4 py-3">
+      <SubCardHead>
         <IconTile tone={tone}>
           <ApprovalIcon type={t} />
         </IconTile>
-        <div className="min-w-0">
-          <p className="text-sm font-semibold text-slate-900">{REC_APPROVAL_LABELS[t]}</p>
-          <p className="truncate text-xs text-slate-500">
+        <Box sx={{ minWidth: 0 }}>
+          <Typography variant="subtitle2">{REC_APPROVAL_LABELS[t]}</Typography>
+          <Typography variant="caption" noWrap sx={{ display: "block", color: "text.secondary" }}>
             {approval.approved && approval.approver
               ? `Approved by ${reviewerLabel(approval.approver.name, approval.approver.email)}`
               : "Awaiting sign-off"}
-          </p>
-        </div>
-        <div className="ml-auto flex shrink-0 items-center gap-3">
-          <span
-            className={`badge ${
-              approval.approved
-                ? "bg-emerald-50 text-emerald-700 ring-emerald-600/20"
-                : "bg-amber-50 text-amber-700 ring-amber-600/20"
-            }`}
-          >
-            <span className={`h-1.5 w-1.5 rounded-full ${approval.approved ? "bg-emerald-500" : "bg-amber-500"}`} />
-            {approval.approved ? "Approved" : "Pending"}
-          </span>
-          {approval.can_approve && (
-            <button
-              type="button"
-              role="switch"
-              aria-checked={approval.approved}
-              disabled={toggleMutation.isPending}
-              onClick={() => toggleMutation.mutate()}
-              title={approval.approved ? "Revert to pending" : "Approve"}
-              className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors disabled:opacity-50 ${
-                approval.approved ? "bg-emerald-600" : "bg-slate-300"
-              }`}
-            >
-              <span
-                className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${
-                  approval.approved ? "translate-x-4" : "translate-x-1"
-                }`}
-              />
-            </button>
+          </Typography>
+        </Box>
+        <Box sx={{ ml: "auto", display: "flex", alignItems: "center", gap: 1.5, flexShrink: 0 }}>
+          <Chip
+            size="small"
+            variant="outlined"
+            color={approval.approved ? "success" : "warning"}
+            label={approval.approved ? "Approved" : "Pending"}
+          />
+          {approval.can_approve && !isBudget && (
+            <Tooltip title={approval.approved ? "Revert to pending" : "Approve"}>
+              <span>
+                <Switch
+                  size="small"
+                  color="success"
+                  checked={approval.approved}
+                  disabled={toggleMutation.isPending}
+                  onChange={() => toggleMutation.mutate()}
+                  inputProps={{ "aria-label": approval.approved ? "Revert to pending" : "Approve" }}
+                />
+              </span>
+            </Tooltip>
           )}
-        </div>
-      </div>
+          {procurement && (
+            <Tooltip title={`Remove the ${REC_APPROVAL_LABELS[t]} approval`}>
+              <IconButton
+                size="small"
+                onClick={() => setConfirmRemove(true)}
+                sx={{ color: "text.disabled", "&:hover": { color: "error.main" } }}
+              >
+                <X size={16} />
+              </IconButton>
+            </Tooltip>
+          )}
+        </Box>
+      </SubCardHead>
+
+      {confirmRemove && (
+        <ConfirmDialog
+          title={`Remove ${REC_APPROVAL_LABELS[t]} approval?`}
+          confirmLabel="Remove"
+          danger
+          busy={removeMutation.isPending}
+          message={
+            <p>
+              Remove the <span style={{ fontWeight: 600 }}>{REC_APPROVAL_LABELS[t]}</span> approval from
+              this recommendation? Its comments and attachments
+              {isBudget ? " and every approval step" : ""} will be deleted.
+            </p>
+          }
+          onConfirm={() => removeMutation.mutate()}
+          onCancel={() => setConfirmRemove(false)}
+        />
+      )}
 
       {/* Budget card — the PR's named approver + the designated approver(s) */}
       {isBudget && (
-        <div className="space-y-2 border-t border-slate-100 bg-white px-4 py-2.5 text-sm">
-          {/* Named approver (from the PR), editable by procurement */}
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">Approver</span>
+        <Box sx={{ borderTop: 1, borderColor: "divider", bgcolor: "background.paper", px: 2, py: 1.25 }}>
+          {/* Named approver (from the PR's business unit), editable by procurement */}
+          <Box sx={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 1 }}>
+            <Typography
+              variant="caption"
+              sx={{ fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", color: "text.secondary" }}
+            >
+              Approver
+            </Typography>
             {editingApprover ? (
-              <div className="flex flex-1 flex-wrap items-center gap-2">
-                <input
-                  className="min-w-0 flex-1 rounded border px-2 py-1 text-sm focus:border-indigo-500 focus:outline-none"
-                  value={approverName}
-                  onChange={(e) => setApproverName(e.target.value)}
-                  placeholder="Name"
-                />
-                <input
-                  className="min-w-0 flex-1 rounded border px-2 py-1 text-sm focus:border-indigo-500 focus:outline-none"
+              <Box sx={{ flex: 1, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 1 }}>
+                <TextField
+                  select
+                  size="small"
+                  sx={{ flex: 1, minWidth: 0 }}
                   value={approverEmail}
                   onChange={(e) => setApproverEmail(e.target.value)}
-                  placeholder="email@wso2.com"
-                />
-                <button
-                  type="button"
-                  onClick={() => saveApprover.mutate({ name: approverName.trim(), email: approverEmail.trim() })}
-                  disabled={saveApprover.isPending}
-                  className="rounded bg-indigo-600 px-2 py-1 text-xs font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+                >
+                  <MenuItem value="">— Select approver —</MenuItem>
+                  {approverOptions.map((u) => (
+                    <MenuItem key={u.id} value={u.email}>
+                      {u.name ? `${u.name} (${u.email})` : u.email}
+                    </MenuItem>
+                  ))}
+                </TextField>
+                <Button
+                  variant="contained"
+                  size="small"
+                  onClick={() => saveSelectedApprover(approverEmail.trim())}
+                  disabled={saveApprover.isPending || !approverEmail.trim()}
                 >
                   Save
-                </button>
-                <button
-                  type="button"
+                </Button>
+                <Button
+                  variant="outlined"
+                  color="inherit"
+                  size="small"
                   onClick={() => {
                     setEditingApprover(false);
-                    setApproverName(prApproverName ?? "");
                     setApproverEmail(prApproverEmail ?? "");
                   }}
-                  className="rounded border px-2 py-1 text-xs text-slate-600 hover:bg-slate-50"
                 >
                   Cancel
-                </button>
-              </div>
+                </Button>
+              </Box>
             ) : (
               <>
-                <span className="text-slate-700">
-                  {prApproverName || prApproverEmail
-                    ? `${prApproverName || ""}${prApproverEmail ? ` · ${prApproverEmail}` : ""}`
-                    : "—"}
-                </span>
+                <Typography variant="body2" sx={{ color: "text.primary" }}>
+                  {namedApproverText}
+                </Typography>
                 {procurement && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setApproverName(prApproverName ?? "");
-                      setApproverEmail(prApproverEmail ?? "");
-                      setEditingApprover(true);
-                    }}
-                    title="Edit the budget approver"
-                    className="text-slate-400 hover:text-slate-600"
+                  <Tooltip title="Change the budget approver">
+                    <IconButton
+                      size="small"
+                      onClick={() => {
+                        setApproverEmail(prApproverEmail ?? "");
+                        setEditingApprover(true);
+                      }}
+                      sx={{ color: "text.secondary" }}
+                    >
+                      <Pencil size={14} />
+                    </IconButton>
+                  </Tooltip>
+                )}
+                {procurement && (prApproverEmail ?? "").trim() !== "" && !approval.approved && (
+                  <Button
+                    variant="outlined"
+                    color="inherit"
+                    size="small"
+                    sx={{ ml: "auto" }}
+                    onClick={() => notifyBudgetMutation.mutate()}
+                    disabled={notifyBudgetMutation.isPending}
                   >
-                    <span aria-hidden>✎</span>
-                  </button>
+                    {notified ? "Notified ✓" : "Notify approver"}
+                  </Button>
                 )}
               </>
             )}
-          </div>
+          </Box>
+        </Box>
+      )}
 
-          {/* Mismatch highlight + use-designated action */}
-          {approverMismatch && !editingApprover && (
-            <div className="flex flex-wrap items-center gap-2 rounded border border-amber-300 bg-amber-50 px-2 py-1.5 text-xs text-amber-800">
-              <span>
-                Differs from the designated approver{designated.length > 1 ? "s" : ""}:{" "}
-                <span className="font-medium">{designated.map((u) => u.name || u.email).join(", ")}</span>
-              </span>
-              {procurement && (
-                <button
-                  type="button"
-                  onClick={useDesignatedApprover}
-                  disabled={saveApprover.isPending}
-                  className="ml-auto inline-flex items-center gap-1 rounded border border-amber-300 bg-white px-2 py-0.5 font-medium text-amber-800 hover:bg-amber-100 disabled:opacity-50"
-                >
-                  <span aria-hidden>↻</span> Use designated approver
-                </button>
-              )}
-            </div>
-          )}
-
-          {/* Designated approver(s), derived from the recommendation's estimated value */}
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">Designated</span>
-            <button
-              type="button"
-              onClick={() => refetchApprovers()}
-              disabled={approversFetching}
-              title="Re-check the designated approver(s) from the recommendation's estimated value"
-              className={`text-slate-400 hover:text-slate-600 disabled:opacity-40 ${approversFetching ? "animate-spin" : ""}`}
-            >
-              <span aria-hidden>↻</span>
-            </button>
-            <span className="text-slate-700">
-              {designated.length === 0
-                ? "None configured for this value"
-                : designated.map((u) => u.name || u.email).join(", ")}
-            </span>
-            {procurement && designated.length > 0 && !approval.approved && (
-              <button
-                type="button"
-                onClick={() => notifyBudgetMutation.mutate()}
-                disabled={notifyBudgetMutation.isPending}
-                className="ml-auto rounded border px-2 py-1 text-xs text-slate-600 hover:bg-slate-50 disabled:opacity-50"
-              >
-                {notified ? "Notified ✓" : "Notify approvers"}
-              </button>
-            )}
-          </div>
-        </div>
+      {/* Serial budget approval chain */}
+      {isBudget && (
+        <BudgetChain
+          prId={prId}
+          steps={approval.budget_steps ?? []}
+          procurement={procurement}
+          baseApproverText={namedApproverText}
+        />
       )}
 
       {/* Assignee (legal/security) */}
       {assignable && (approval.assignee || approval.can_assign) && (
-        <div className="flex flex-wrap items-center gap-2 border-t border-slate-100 bg-white px-4 py-2.5 text-sm">
-          <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">Assignee</span>
+        <Box
+          sx={{
+            display: "flex",
+            flexWrap: "wrap",
+            alignItems: "center",
+            gap: 1,
+            borderTop: 1,
+            borderColor: "divider",
+            bgcolor: "background.paper",
+            px: 2,
+            py: 1.25,
+          }}
+        >
+          <Typography
+            variant="caption"
+            sx={{ fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", color: "text.secondary" }}
+          >
+            Assignee
+          </Typography>
           {approval.can_assign ? (
-            <select
-              className="rounded border px-2 py-1 text-sm focus:border-indigo-500 focus:outline-none"
+            <TextField
+              select
+              size="small"
               value={approval.assignee_id ?? ""}
               disabled={assignMutation.isPending}
               onChange={(e) => onPickAssignee(e.target.value)}
+              sx={{ minWidth: 180 }}
             >
-              <option value="">Unassigned</option>
+              <MenuItem value="">Unassigned</MenuItem>
               {members.map((m) => (
-                <option key={m.id} value={m.id}>
+                <MenuItem key={m.id} value={m.id}>
                   {m.email || m.name || `#${m.id}`}
-                </option>
+                </MenuItem>
               ))}
               {/* Keep a stale assignee (no longer a team member) visible/selected. */}
               {approval.assignee && !members.some((m) => m.id === approval.assignee_id) && (
-                <option value={approval.assignee_id ?? ""}>
+                <MenuItem value={approval.assignee_id ?? ""}>
                   {approval.assignee.email || approval.assignee.name}
-                </option>
+                </MenuItem>
               )}
-            </select>
+            </TextField>
           ) : (
-            <span className="text-gray-700">
+            <Typography variant="body2" sx={{ color: "text.primary" }}>
               {approval.assignee
                 ? reviewerLabel(approval.assignee.name, approval.assignee.email)
                 : "Unassigned"}
-            </span>
+            </Typography>
           )}
           {approval.assignee && approval.can_assign && (
-            <button
-              type="button"
+            <Button
+              variant="outlined"
+              size="small"
               disabled={remindMutation.isPending || assignMutation.isPending}
               onClick={() => {
                 setReminded(false);
                 remindMutation.mutate();
               }}
-              className="rounded border px-2 py-1 text-xs text-indigo-600 hover:bg-indigo-50 disabled:opacity-50"
             >
               {remindMutation.isPending ? "Sending…" : reminded ? "Reminder sent ✓" : "Send reminder"}
-            </button>
+            </Button>
           )}
-          {error && <span className="text-xs text-red-600">{error}</span>}
-        </div>
+          {error && (
+            <Typography variant="caption" sx={{ color: "error.main" }}>
+              {error}
+            </Typography>
+          )}
+        </Box>
       )}
 
       {pending && (
@@ -1183,127 +1364,668 @@ function ApprovalCard({
           confirmLabel="Assign"
           busy={assignMutation.isPending}
           message={
-            <div className="space-y-3">
+            <Stack spacing={1.5}>
               <p>
                 Assign the {REC_APPROVAL_LABELS[t]} approval to{" "}
-                <span className="font-medium text-gray-800">
-                  {reviewerLabel(pending.name, pending.email)}
-                </span>
-                ?
+                <span style={{ fontWeight: 600 }}>{reviewerLabel(pending.name, pending.email)}</span>?
               </p>
-              <label className="flex items-center gap-2 text-sm text-gray-700">
-                <input
-                  type="checkbox"
-                  checked={notify}
-                  onChange={(e) => setNotify(e.target.checked)}
-                />
-                Email them a link to this request (CC the team email)
-              </label>
-            </div>
+              <FormControlLabel
+                control={
+                  <Checkbox
+                    size="small"
+                    checked={notify}
+                    onChange={(e) => setNotify(e.target.checked)}
+                  />
+                }
+                label="Email them a link to this request (CC the team email)"
+              />
+            </Stack>
           }
           onConfirm={() => assignMutation.mutate({ id: pending.id, doNotify: notify })}
           onCancel={() => setPending(null)}
         />
       )}
 
-      {/* Comments */}
-      {(approval.comments.length > 0 || approval.can_comment) && (
+      {/* Comments (legal/security card-level; budget comments live on each step) */}
+      {!isBudget && (approval.comments.length > 0 || approval.can_comment) && (
         <SubCardBody>
           {approval.comments.length > 0 && (
-            <ul className="space-y-2">
+            <Stack component="ul" spacing={1} sx={{ listStyle: "none", m: 0, p: 0 }}>
               {approval.comments.map((c) => (
-                <li key={c.id} className="rounded-md border bg-white px-3 py-2 text-sm shadow-sm">
-                  <div className="flex items-baseline justify-between gap-2">
-                    <span className="font-medium text-gray-700">
-                      {reviewerLabel(c.author?.name, c.author?.email, c.author_id)}
-                    </span>
-                    <span className="shrink-0 text-[11px] text-gray-400">
-                      {new Date(c.created_at).toLocaleString()}
-                    </span>
-                  </div>
-                  {c.comment && <p className="mt-1 whitespace-pre-wrap text-gray-700">{c.comment}</p>}
-                  {c.documents.length > 0 && (
-                    <div className="mt-1.5 flex flex-wrap gap-1.5">
-                      {c.documents.map((d: Document) => (
-                        <button
-                          key={d.id}
-                          type="button"
-                          className="inline-flex items-center gap-1 rounded-full border bg-gray-50 px-2 py-0.5 text-xs text-indigo-600 hover:bg-gray-100"
-                          onClick={() => downloadRecCommentDocument(prId, c.id, d)}
-                        >
-                          <span aria-hidden>📎</span>
-                          {d.filename}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </li>
+                <CommentItem key={c.id} prId={prId} comment={c} />
               ))}
-            </ul>
+            </Stack>
           )}
 
           {approval.can_comment &&
             (open ? (
-              <div className="mt-3 space-y-2">
-                <textarea
-                  className={inputCls}
-                  rows={2}
+              <Stack spacing={1} sx={{ mt: 1.5 }}>
+                <TextField
+                  size="small"
+                  fullWidth
+                  multiline
+                  minRows={2}
                   value={comment}
                   onChange={(e) => setComment(e.target.value)}
                   placeholder="Comment"
                 />
-                <div>
-                  <label className="cursor-pointer text-sm text-indigo-600">
-                    + Attach documents
+                <Box>
+                  <Button variant="text" component="label" startIcon={<Paperclip size={16} />}>
+                    Attach documents
                     <input
                       type="file"
                       multiple
-                      className="hidden"
+                      hidden
                       onChange={(e) => setFiles(Array.from(e.target.files ?? []))}
                     />
-                  </label>
+                  </Button>
                   {files.length > 0 && (
-                    <ul className="mt-1 text-xs text-gray-600">
+                    <Box component="ul" sx={{ mt: 0.5, pl: 2, color: "text.secondary" }}>
                       {files.map((f, i) => (
-                        <li key={i}>{f.name}</li>
+                        <Typography component="li" variant="caption" key={i}>
+                          {f.name}
+                        </Typography>
                       ))}
-                    </ul>
+                    </Box>
                   )}
-                </div>
-                {error && <p className="text-sm text-red-600">{error}</p>}
-                <div className="flex gap-2">
-                  <button
-                    type="button"
+                </Box>
+                {error && <InlineError>{error}</InlineError>}
+                <Stack direction="row" spacing={1}>
+                  <Button
+                    variant="contained"
+                    size="small"
                     disabled={commentMutation.isPending || (comment.trim() === "" && files.length === 0)}
                     onClick={() => commentMutation.mutate()}
-                    className="rounded bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
                   >
                     {commentMutation.isPending ? "Saving…" : "Add comment"}
-                  </button>
-                  <button
-                    type="button"
+                  </Button>
+                  <Button
+                    variant="text"
+                    color="inherit"
+                    size="small"
                     onClick={() => {
                       setOpen(false);
                       setComment("");
                       setFiles([]);
                     }}
-                    className="rounded px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-50"
                   >
                     Cancel
-                  </button>
-                </div>
-              </div>
+                  </Button>
+                </Stack>
+              </Stack>
             ) : (
-              <button
-                type="button"
+              <Button
+                variant="text"
+                size="small"
+                startIcon={<Plus size={16} />}
                 onClick={() => setOpen(true)}
-                className={`text-sm text-indigo-600 hover:underline ${approval.comments.length > 0 ? "mt-3" : ""}`}
+                sx={{ mt: approval.comments.length > 0 ? 1.5 : 0 }}
               >
-                + Add comment
-              </button>
+                Add comment
+              </Button>
             ))}
         </SubCardBody>
       )}
     </SubCard>
+  );
+}
+
+// --- serial budget approval chain ---
+
+// CommentItem renders a single comment (author, timestamp, body, attachments).
+function CommentItem({ prId, comment: c }: { prId: number; comment: RecComment }) {
+  return (
+    <Card component="li" variant="outlined" sx={{ px: 1.5, py: 1 }}>
+      <Box sx={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 1 }}>
+        <Typography variant="body2" sx={{ fontWeight: 500 }}>
+          {reviewerLabel(c.author?.name, c.author?.email, c.author_id)}
+        </Typography>
+        <Typography variant="caption" sx={{ flexShrink: 0, color: "text.disabled" }}>
+          {new Date(c.created_at).toLocaleString()}
+        </Typography>
+      </Box>
+      {c.comment && (
+        <Typography variant="body2" sx={{ mt: 0.5, whiteSpace: "pre-wrap", color: "text.primary" }}>
+          {c.comment}
+        </Typography>
+      )}
+      {c.documents.length > 0 && (
+        <Box sx={{ mt: 0.75, display: "flex", flexWrap: "wrap", gap: 1 }}>
+          {c.documents.map((d: Document) => (
+            <Chip
+              key={d.id}
+              size="small"
+              variant="outlined"
+              color="primary"
+              clickable
+              icon={<Paperclip size={14} />}
+              label={d.filename}
+              onClick={() => downloadRecCommentDocument(prId, c.id, d)}
+            />
+          ))}
+        </Box>
+      )}
+    </Card>
+  );
+}
+
+// CommentThread renders a comment list plus an "add comment" form (text + file
+// attachments). onSubmit performs the add + uploads; the parent invalidates.
+function CommentThread({
+  prId,
+  comments,
+  canComment,
+  onSubmit,
+}: {
+  prId: number;
+  comments: RecComment[];
+  canComment: boolean;
+  onSubmit: (text: string, files: File[]) => Promise<void>;
+}) {
+  const [comment, setComment] = useState("");
+  const [files, setFiles] = useState<File[]>([]);
+  const [open, setOpen] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const mutation = useMutation({
+    mutationFn: () => onSubmit(comment.trim(), files),
+    onSuccess: () => {
+      setComment("");
+      setFiles([]);
+      setOpen(false);
+      setError(null);
+    },
+    onError: (e) => setError(e instanceof ApiError ? e.message : "Failed to add comment"),
+  });
+  if (comments.length === 0 && !canComment) return null;
+  return (
+    <Box>
+      {comments.length > 0 && (
+        <Stack component="ul" spacing={1} sx={{ listStyle: "none", m: 0, p: 0 }}>
+          {comments.map((c) => (
+            <CommentItem key={c.id} prId={prId} comment={c} />
+          ))}
+        </Stack>
+      )}
+      {canComment &&
+        (open ? (
+          <Stack spacing={1} sx={{ mt: 1.5 }}>
+            <TextField
+              size="small"
+              fullWidth
+              multiline
+              minRows={2}
+              value={comment}
+              onChange={(e) => setComment(e.target.value)}
+              placeholder="Comment"
+            />
+            <Box>
+              <Button variant="text" component="label" startIcon={<Paperclip size={16} />}>
+                Attach documents
+                <input
+                  type="file"
+                  multiple
+                  hidden
+                  onChange={(e) => setFiles(Array.from(e.target.files ?? []))}
+                />
+              </Button>
+              {files.length > 0 && (
+                <Box component="ul" sx={{ mt: 0.5, pl: 2, color: "text.secondary" }}>
+                  {files.map((f, i) => (
+                    <Typography component="li" variant="caption" key={i}>
+                      {f.name}
+                    </Typography>
+                  ))}
+                </Box>
+              )}
+            </Box>
+            {error && <InlineError>{error}</InlineError>}
+            <Stack direction="row" spacing={1}>
+              <Button
+                variant="contained"
+                size="small"
+                disabled={mutation.isPending || (comment.trim() === "" && files.length === 0)}
+                onClick={() => mutation.mutate()}
+              >
+                {mutation.isPending ? "Saving…" : "Add comment"}
+              </Button>
+              <Button
+                variant="text"
+                color="inherit"
+                size="small"
+                onClick={() => {
+                  setOpen(false);
+                  setComment("");
+                  setFiles([]);
+                }}
+              >
+                Cancel
+              </Button>
+            </Stack>
+          </Stack>
+        ) : (
+          <Button
+            variant="text"
+            size="small"
+            startIcon={<Plus size={16} />}
+            onClick={() => setOpen(true)}
+            sx={{ mt: comments.length > 0 ? 1.5 : 0 }}
+          >
+            Add comment
+          </Button>
+        ))}
+    </Box>
+  );
+}
+
+// Per-decision presentation for a budget step.
+const STEP_TONE: Record<
+  BudgetStep["decision"],
+  { color: "success" | "error" | "warning"; accent: string; label: string }
+> = {
+  approved: { color: "success", accent: "success.main", label: "Approved" },
+  rejected: { color: "error", accent: "error.main", label: "Rejected" },
+  pending: { color: "warning", accent: "divider", label: "Pending" },
+};
+
+// BudgetChain renders the base (default) budget approver plus, when present, the
+// ordered "Additional approvals" chain and — for procurement — the control to
+// append a new named step.
+function BudgetChain({
+  prId,
+  steps,
+  procurement,
+  baseApproverText,
+}: {
+  prId: number;
+  steps: BudgetStep[];
+  procurement: boolean;
+  baseApproverText: string;
+}) {
+  const qc = useQueryClient();
+  const invalidate = () => qc.invalidateQueries({ queryKey: ["purchase-requests", prId] });
+  const [adding, setAdding] = useState(false);
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const { data: directory, isLoading: dirLoading, refresh: refreshDir } = useDirectory(procurement && adding);
+  const add = useMutation({
+    mutationFn: () => addBudgetStep(prId, name.trim(), email.trim()),
+    onSuccess: () => {
+      invalidate();
+      setAdding(false);
+      setName("");
+      setEmail("");
+      setError(null);
+    },
+    onError: (e) => setError(e instanceof ApiError ? e.message : "Failed to add step"),
+  });
+  const ordered = [...steps].sort((a, b) => a.position - b.position);
+  const base = ordered.find((s) => s.is_base);
+  const additional = ordered.filter((s) => !s.is_base);
+  // An additional step is actionable only after every earlier step is approved.
+  const stepLocked = (s: BudgetStep) => {
+    const prior = ordered.filter((o) => o.position < s.position);
+    return s.decision === "pending" && prior.some((o) => o.decision !== "approved");
+  };
+  return (
+    <Stack spacing={1} sx={{ borderTop: 1, borderColor: "divider", bgcolor: "background.paper", px: 2, py: 1.25 }}>
+      {base && (
+        <Box component="ol" sx={{ listStyle: "none", m: 0, p: 0, display: "flex", flexDirection: "column", gap: 1 }}>
+          <BudgetStepCard
+            key={base.id}
+            prId={prId}
+            step={base}
+            title="Budget approver"
+            approverText={baseApproverText}
+            locked={false}
+          />
+        </Box>
+      )}
+
+      {additional.length > 0 && (
+        <Stack spacing={1} sx={{ pt: 0.5 }}>
+          <Typography
+            variant="caption"
+            sx={{ fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", color: "text.secondary" }}
+          >
+            Additional approvals
+          </Typography>
+          <Box component="ol" sx={{ listStyle: "none", m: 0, p: 0, display: "flex", flexDirection: "column", gap: 1 }}>
+            {additional.map((s, i) => (
+              <BudgetStepCard
+                key={s.id}
+                prId={prId}
+                step={s}
+                title={`Step ${i + 1}`}
+                locked={stepLocked(s)}
+              />
+            ))}
+          </Box>
+        </Stack>
+      )}
+
+      {procurement &&
+        (adding ? (
+          <Stack
+            spacing={1}
+            sx={{ borderRadius: 1.5, border: "1px dashed", borderColor: "divider", bgcolor: "action.hover", px: 1.5, py: 1.25 }}
+          >
+            <Typography variant="caption" sx={{ fontWeight: 500, color: "text.secondary" }}>
+              Add an approval step
+            </Typography>
+            <EmailAutocomplete
+              value={email}
+              onChange={(picked, u) => {
+                setEmail(picked);
+                // The approver's display name comes from the directory match (if
+                // any); a free-typed email is added name-less (the backend only
+                // requires the email).
+                setName(u?.name ?? "");
+              }}
+              directory={directory ?? []}
+              refresh={refreshDir}
+              loading={dirLoading}
+              placeholder="approver@wso2.com"
+              ariaLabel="Approver email"
+            />
+            {error && (
+              <Typography variant="caption" sx={{ color: "error.main" }}>
+                {error}
+              </Typography>
+            )}
+            <Stack direction="row" spacing={1}>
+              <Button
+                variant="contained"
+                size="small"
+                disabled={add.isPending || !email.trim().includes("@")}
+                onClick={() => add.mutate()}
+              >
+                {add.isPending ? "Adding…" : "Add step"}
+              </Button>
+              <Button
+                variant="outlined"
+                color="inherit"
+                size="small"
+                onClick={() => {
+                  setAdding(false);
+                  setName("");
+                  setEmail("");
+                  setError(null);
+                }}
+              >
+                Cancel
+              </Button>
+            </Stack>
+          </Stack>
+        ) : (
+          <Box>
+            <Button variant="text" size="small" startIcon={<Plus size={16} />} onClick={() => setAdding(true)}>
+              Add another approval step
+            </Button>
+          </Box>
+        ))}
+    </Stack>
+  );
+}
+
+// BudgetStepCard renders one step of the chain: its approver, decision state,
+// decision controls (for the step's approver), management controls (procurement),
+// and a comment thread.
+function BudgetStepCard({
+  prId,
+  step,
+  title,
+  approverText,
+  locked,
+}: {
+  prId: number;
+  step: BudgetStep;
+  title: string;
+  // Overrides the approver line (used for the base step to show the designated
+  // approver). Defaults to the step's named approver.
+  approverText?: string;
+  locked: boolean;
+}) {
+  const qc = useQueryClient();
+  const invalidate = () => qc.invalidateQueries({ queryKey: ["purchase-requests", prId] });
+  const [error, setError] = useState<string | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [name, setName] = useState(step.approver_name);
+  const [email, setEmail] = useState(step.approver_email);
+  const [reminded, setReminded] = useState(false);
+  const { data: directory, isLoading: dirLoading, refresh: refreshDir } = useDirectory(editing);
+  const tone = STEP_TONE[step.decision];
+
+  const decide = useMutation({
+    mutationFn: (d: "approve" | "reject" | "revert") => setBudgetStepDecision(prId, step.id, d),
+    onSuccess: invalidate,
+    onError: (e) => setError(e instanceof ApiError ? e.message : "Failed to record decision"),
+  });
+  const save = useMutation({
+    mutationFn: () => updateBudgetStep(prId, step.id, name.trim(), email.trim()),
+    onSuccess: () => {
+      invalidate();
+      setEditing(false);
+      setError(null);
+    },
+    onError: (e) => setError(e instanceof ApiError ? e.message : "Failed to update step"),
+  });
+  const remove = useMutation({
+    mutationFn: () => deleteBudgetStep(prId, step.id),
+    onSuccess: invalidate,
+    onError: (e) => setError(e instanceof ApiError ? e.message : "Failed to remove step"),
+  });
+  const remind = useMutation({
+    mutationFn: () => remindBudgetStep(prId, step.id),
+    onSuccess: () => setReminded(true),
+    onError: (e) => setError(e instanceof ApiError ? e.message : "Failed to send reminder"),
+  });
+
+  const shownApprover =
+    approverText ??
+    (step.approver_name || step.approver_email
+      ? `${step.approver_name || ""}${step.approver_email ? ` · ${step.approver_email}` : ""}`
+      : "—");
+
+  return (
+    <Card
+      component="li"
+      variant="outlined"
+      sx={{ borderLeft: 4, borderLeftColor: tone.accent, opacity: locked ? 0.6 : 1 }}
+    >
+      <Box sx={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 1, px: 1.5, py: 1 }}>
+        <Box
+          sx={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            flexShrink: 0,
+            width: 24,
+            height: 24,
+            borderRadius: "50%",
+            bgcolor: "action.hover",
+            color: "text.secondary",
+            fontSize: 12,
+            fontWeight: 600,
+          }}
+        >
+          {step.is_base ? "★" : step.position - 1}
+        </Box>
+        <Box sx={{ minWidth: 0 }}>
+          <Typography variant="caption" sx={{ fontWeight: 600, color: "text.secondary" }}>
+            {title}
+          </Typography>
+          {editing ? null : (
+            <Typography variant="body2" noWrap sx={{ color: "text.primary" }}>
+              {shownApprover}
+            </Typography>
+          )}
+        </Box>
+        <Box sx={{ ml: "auto", display: "flex", alignItems: "center", gap: 1, flexShrink: 0 }}>
+          <Chip size="small" variant="outlined" color={tone.color} label={tone.label} />
+        </Box>
+      </Box>
+
+      {/* Edit approver (additional steps, procurement) */}
+      {editing && (
+        <Box sx={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 1, borderTop: 1, borderColor: "divider", px: 1.5, py: 1 }}>
+          <TextField
+            size="small"
+            sx={{ flex: 1, minWidth: 0 }}
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="Approver name"
+          />
+          <Box sx={{ flex: 1, minWidth: 0 }}>
+            <EmailAutocomplete
+              value={email}
+              onChange={(picked, u) => {
+                setEmail(picked);
+                if (u && u.name) setName(u.name);
+              }}
+              directory={directory ?? []}
+              refresh={refreshDir}
+              loading={dirLoading}
+              placeholder="approver@wso2.com"
+              ariaLabel="Approver email"
+            />
+          </Box>
+          <Button
+            variant="contained"
+            size="small"
+            disabled={save.isPending || !email.trim().includes("@")}
+            onClick={() => save.mutate()}
+          >
+            Save
+          </Button>
+          <Button
+            variant="outlined"
+            color="inherit"
+            size="small"
+            onClick={() => {
+              setEditing(false);
+              setName(step.approver_name);
+              setEmail(step.approver_email);
+            }}
+          >
+            Cancel
+          </Button>
+        </Box>
+      )}
+
+      {/* Decision + management controls */}
+      <Box sx={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 1, borderTop: 1, borderColor: "divider", px: 1.5, py: 1 }}>
+        {step.decision !== "pending" && step.decider && (
+          <Typography variant="caption" sx={{ color: "text.secondary" }}>
+            {tone.label} by {reviewerLabel(step.decider.name, step.decider.email)}
+            {step.decided_at ? ` · ${new Date(step.decided_at).toLocaleDateString()}` : ""}
+          </Typography>
+        )}
+        {locked && step.decision === "pending" && (
+          <Typography variant="caption" sx={{ color: "text.disabled" }}>
+            Awaiting the previous step
+          </Typography>
+        )}
+        <Box sx={{ ml: "auto", display: "flex", alignItems: "center", gap: 1 }}>
+          {step.can_decide && step.decision === "pending" && (
+            <>
+              <Button
+                variant="contained"
+                color="success"
+                size="small"
+                disabled={decide.isPending}
+                onClick={() => decide.mutate("approve")}
+              >
+                Approve
+              </Button>
+              <Button
+                variant="outlined"
+                color="error"
+                size="small"
+                disabled={decide.isPending}
+                onClick={() => decide.mutate("reject")}
+              >
+                Reject
+              </Button>
+            </>
+          )}
+          {step.can_decide && step.decision !== "pending" && (
+            <Button
+              variant="outlined"
+              color="inherit"
+              size="small"
+              disabled={decide.isPending}
+              onClick={() => decide.mutate("revert")}
+            >
+              Reverse decision
+            </Button>
+          )}
+          {step.can_manage && !editing && (
+            <>
+              <Tooltip title="Edit approver">
+                <IconButton
+                  size="small"
+                  onClick={() => {
+                    setName(step.approver_name);
+                    setEmail(step.approver_email);
+                    setEditing(true);
+                  }}
+                  sx={{ color: "text.secondary" }}
+                >
+                  <Pencil size={14} />
+                </IconButton>
+              </Tooltip>
+              <Tooltip title="Remove step">
+                <span>
+                  <IconButton
+                    size="small"
+                    disabled={remove.isPending}
+                    onClick={() => remove.mutate()}
+                    sx={{ color: "text.secondary", "&:hover": { color: "error.main" } }}
+                  >
+                    <Trash2 size={14} />
+                  </IconButton>
+                </span>
+              </Tooltip>
+              {!step.is_base && (
+                <Button
+                  variant="outlined"
+                  size="small"
+                  disabled={remind.isPending}
+                  onClick={() => {
+                    setReminded(false);
+                    remind.mutate();
+                  }}
+                >
+                  {remind.isPending ? "Sending…" : reminded ? "Reminded ✓" : "Remind"}
+                </Button>
+              )}
+            </>
+          )}
+        </Box>
+      </Box>
+
+      {error && (
+        <Typography variant="caption" sx={{ display: "block", px: 1.5, pb: 1, color: "error.main" }}>
+          {error}
+        </Typography>
+      )}
+
+      {/* Comments on this step */}
+      {(step.comments.length > 0 || step.can_decide || step.can_manage) && (
+        <Box sx={{ borderTop: 1, borderColor: "divider", bgcolor: "action.hover", px: 1.5, py: 1 }}>
+          <CommentThread
+            prId={prId}
+            comments={step.comments}
+            canComment={step.can_decide || step.can_manage}
+            onSubmit={async (text, files) => {
+              const c = await addRecComment(prId, "budget", text, step.id);
+              for (const f of files) await uploadRecCommentDocument(prId, c.id, f);
+              invalidate();
+            }}
+          />
+        </Box>
+      )}
+    </Card>
   );
 }

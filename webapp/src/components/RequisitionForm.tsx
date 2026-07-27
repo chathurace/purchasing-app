@@ -1,44 +1,48 @@
 import { useState } from "react";
-import { useConfigLookup, optionsFor } from "../hooks/useConfigOptions";
-import { useBudgetUnitLookup, useBudgetUnitApprovers } from "../hooks/useBudgetUnits";
 import { useVendorLookup } from "../hooks/useVendors";
+import { useBusinessUnitApprovers, useBusinessUnitLookup } from "../hooks/useBusinessUnits";
+import { useDirectory } from "../hooks/useDirectory";
+import { EmailAutocomplete } from "./EmailAutocomplete";
 import { SupplierNameCombobox } from "./SupplierNameCombobox";
-import { CurrencyInput } from "./CurrencyInput";
 import type {
-  BudgetUnitSummary,
   PRCategory,
   PRDetails,
   PurchaseRequestInput,
-  UserSummary,
   VendorLookup,
   YesNo,
-  YesNoUnknown,
 } from "../types/api";
+import "./RequisitionForm.css";
 
-// approverEmailKey normalizes an approver-email string (a comma-separated list)
-// into a stable, order-independent key for comparing entered vs derived.
-const approverEmailKey = (emails: string) =>
-  emails
-    .split(",")
-    .map((s) => s.trim().toLowerCase())
-    .filter(Boolean)
-    .sort()
-    .join(",");
-
-// approverLabel renders a derived approver set as "Name (email), …".
-const approverLabel = (approvers: UserSummary[]) =>
-  approvers.map((u) => (u.name ? `${u.name} (${u.email})` : u.email)).join(", ");
-
-// isEmail is a lightweight sanity check for email inputs (non-empty local part,
-// an @, and a dotted domain) — the server is the source of truth.
+// isEmail is a lightweight sanity check for email inputs — the server is the
+// source of truth.
 const isEmail = (s: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.trim());
 
-const inputCls = "w-full rounded border px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none";
-const labelCls = "mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-500";
-const subCls =
-  "mb-4 rounded-r border-l-4 border-indigo-500 bg-gray-50 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-gray-600";
+const USAGE_PERIODS = [
+  "Trial / pilot (under 3 months)",
+  "Monthly plan",
+  "1 year",
+  "2 years",
+  "3+ years",
+  "Ongoing / perpetual",
+  "Other",
+];
 
-const STEPS = ["Requester", "Purchase", "Vendor & budget", "Review"];
+const INTEGRATION_KINDS = ["API integration", "SSO / identity", "Data sync / ETL", "Webhook", "Other"];
+
+// Step titles. Step 3's label is category-dependent (filled in at render).
+const STEP_TITLES = ["Requester details", "Procurement Category", "Requirement Details", "Vendor & budget", "Review & submit"];
+
+const CATEGORY_LABEL: Record<Exclude<PRCategory, "">, string> = {
+  IT: "IT Related Procurement",
+  "NON-IT": "Non-IT Related Procurement",
+  EVENTS: "Marketing & Events Procurement",
+};
+
+const DETAIL_LABEL: Record<Exclude<PRCategory, "">, string> = {
+  IT: "IT Requirement Details",
+  "NON-IT": "Non-IT Requirement Details",
+  EVENTS: "Event Requirement Details",
+};
 
 interface Props {
   value: PurchaseRequestInput;
@@ -48,6 +52,11 @@ interface Props {
   submitLabel: string;
   requireDeclaration?: boolean;
   error?: string | null;
+  // Supplier attachments staged during create; when provided, the file field is
+  // shown and the host page uploads them after the PR is created. Omitted in edit
+  // mode (the detail page's Documents card manages documents there).
+  attachments?: File[];
+  onAttachmentsChange?: (files: File[]) => void;
 }
 
 export function RequisitionForm({
@@ -58,30 +67,15 @@ export function RequisitionForm({
   submitLabel,
   requireDeclaration = false,
   error,
+  attachments,
+  onAttachmentsChange,
 }: Props) {
   const [step, setStep] = useState(1);
   const [declared, setDeclared] = useState(false);
   const [vErr, setVErr] = useState<string | null>(null);
 
-  const { data: config } = useConfigLookup();
-  const lists = config?.lists;
-  const { data: budgetUnits } = useBudgetUnitLookup();
-
-  // Budget approver(s) designated by the chosen budget unit + estimated value —
-  // shown as a reference next to the (editable) approver field, and flagged in
-  // the Review step when the entered approver differs.
-  const { data: budgetApprovers } = useBudgetUnitApprovers(
-    value.budget_unit_id,
-    value.estimated_value > 0 ? value.estimated_value : null,
-    value.currency,
-  );
-  const designatedApprovers = budgetApprovers ?? [];
-  const approverMismatch =
-    designatedApprovers.length > 0 &&
-    approverEmailKey(designatedApprovers.map((u) => u.email).join(",")) !==
-      approverEmailKey(value.budget_approver_email ?? "");
-
   const d: PRDetails = value.details ?? {};
+  const cat = value.category;
   const setTop = (patch: Partial<PurchaseRequestInput>) => onChange({ ...value, ...patch });
   const setD = (patch: Partial<PRDetails>) => onChange({ ...value, details: { ...d, ...patch } });
 
@@ -91,6 +85,8 @@ export function RequisitionForm({
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
+  const nonEmpty = (arr?: string[]) => (arr ?? []).map((s) => s.trim()).filter(Boolean);
+
   // Returns the labels of required fields missing on a given step.
   const missingOn = (n: number): string[] => {
     const need: [boolean, string][] = [];
@@ -99,39 +95,46 @@ export function RequisitionForm({
         [!d.date, "Date"],
         [!d.requester_name?.trim(), "Your full name"],
         [!d.requester_email?.trim(), "WSO2 email"],
-        [!value.budget_unit_id, "Budget unit"],
-        [!value.entity, "WSO2 entity"],
-        [!d.business_justification?.trim(), "Business justification"],
         [!value.team_lead_email?.trim(), "Team lead email"],
         [!!value.team_lead_email?.trim() && !isEmail(value.team_lead_email), "a valid team lead email"],
       );
     } else if (n === 2) {
-      if (!value.category) need.push([true, "Purchase type"]);
-      else if (value.category === "IT") {
+      need.push([!cat, "Procurement category"]);
+    } else if (n === 3) {
+      if (cat === "IT") {
         need.push(
-          [!d.it_category, "IT category"],
           [!d.it_product?.trim(), "Product / solution name"],
-          [!d.it_description?.trim(), "Description"],
           [!d.it_plan?.trim(), "Plan / tier"],
-          [!d.it_admins?.trim(), "Administrators"],
-          [!d.it_usage?.trim(), "Day-to-day usage"],
+          [!d.it_description?.trim(), "Description"],
+          [!d.it_user_count?.trim(), "Number of users"],
+          [nonEmpty(d.it_user_names).length === 0, "Names of users / teams"],
+          [!d.it_admin_count?.trim(), "Number of administrators"],
+          [nonEmpty(d.it_admin_names).length === 0, "Names of administrators"],
+          [!d.it_usage, "Expected usage period"],
+          [!d.business_justification?.trim(), "Business justification"],
           [!d.sec_sensitive, "Sensitive data answer"],
           [!d.sec_external_pii, "External PII answer"],
+          [d.sec_external_pii === "yes" && !d.sec_external_pii_detail?.trim(), "External PII detail"],
           [!d.sec_employee_pii, "Employee PII answer"],
+          [d.sec_employee_pii === "yes" && !d.sec_employee_pii_detail?.trim(), "Employee PII detail"],
           [!d.sec_integrates, "Integration answer"],
+          [d.sec_integrates === "yes" && !d.sec_integration_systems?.trim(), "Integration systems"],
+          [d.sec_integrates === "yes" && !d.sec_integration_kind, "Integration type"],
+          [d.sec_integrates === "yes" && !d.sec_vendor_docs, "Vendor documentation answer"],
+          [d.sec_integrates === "yes" && d.sec_vendor_docs === "yes" && !d.sec_vendor_docs_link?.trim(), "Documentation link"],
         );
-      } else {
-        need.push([!d.nit_category, "Non-IT category"], [!d.nit_description?.trim(), "Details of goods / services"]);
+      } else if (cat === "NON-IT") {
+        need.push([!d.nit_description?.trim(), "Details of goods / services"], [!d.business_justification?.trim(), "Business justification"]);
       }
-    } else if (n === 3) {
-      // Proposed supplier & commercial details are optional sections; only the
-      // budget-coding fields are required. The budget approver defaults to the
-      // one designated by the budget unit + estimated value.
-      need.push(
-        [!d.budget_category, "Budget category"],
-        [!d.budget_product, "Product"],
-        [!d.budget_region, "Region"],
-      );
+      // EVENTS: under development — nothing to validate.
+    } else if (n === 4) {
+      if (cat === "IT" || cat === "NON-IT") {
+        need.push(
+          [!value.business_unit_id, "Business unit"],
+          [!value.budget_approver_email?.trim(), "Budget approver"],
+        );
+      }
+      // EVENTS: under development — nothing to validate.
     }
     return need.filter(([bad]) => bad).map(([, label]) => label);
   };
@@ -146,7 +149,7 @@ export function RequisitionForm({
   };
 
   const submit = () => {
-    for (let n = 1; n <= 3; n++) {
+    for (let n = 1; n <= 4; n++) {
       const missing = missingOn(n);
       if (missing.length) {
         setStep(n);
@@ -155,64 +158,63 @@ export function RequisitionForm({
       }
     }
     if (requireDeclaration && !declared) {
-      setStep(4);
+      setStep(5);
       setVErr("Please confirm the declaration before submitting.");
       return;
     }
-    // Any budget-approver mismatch is surfaced (non-blocking) in the Review step;
-    // clicking Save just submits — no extra prompt.
     setVErr(null);
     onSubmit();
   };
 
-  return (
-    <div className="rounded border bg-white">
-      <Stepper step={step} onStep={goTo} />
+  const detailLabel = cat ? DETAIL_LABEL[cat] : "Requirement Details";
 
-      <div className="p-6">
-        {step === 1 && <StepRequester value={value} d={d} setTop={setTop} setD={setD} lists={lists} budgetUnits={budgetUnits} />}
-        {step === 2 && <StepPurchase value={value} d={d} setTop={setTop} setD={setD} lists={lists} />}
-        {step === 3 && <StepVendor value={value} d={d} setTop={setTop} setD={setD} lists={lists} designatedApprovers={designatedApprovers} />}
+  return (
+    <div className="proq-req">
+      <Hero step={step} detailLabel={detailLabel} onStep={goTo} />
+
+      <div className="form-card">
+        {step === 1 && <StepRequester value={value} d={d} setTop={setTop} setD={setD} />}
+        {step === 2 && <StepCategory cat={cat} setTop={setTop} />}
+        {step === 3 && <StepRequirement cat={cat} d={d} setD={setD} setTop={setTop} detailLabel={detailLabel} />}
         {step === 4 && (
+          <StepVendorBudget
+            cat={cat}
+            value={value}
+            d={d}
+            setTop={setTop}
+            setD={setD}
+            attachments={attachments}
+            onAttachmentsChange={onAttachmentsChange}
+          />
+        )}
+        {step === 5 && (
           <StepReview
             value={value}
             d={d}
-            budgetUnits={budgetUnits}
+            onStep={goTo}
             requireDeclaration={requireDeclaration}
             declared={declared}
             setDeclared={setDeclared}
-            approverMismatch={approverMismatch}
-            designatedLabel={approverLabel(designatedApprovers)}
           />
         )}
 
-        {(vErr || error) && <p className="mt-4 text-sm text-red-600">{vErr || error}</p>}
+        {(vErr || error) && <div className="error-msg">⚠ {vErr || error}</div>}
 
-        <div className="mt-6 flex justify-between border-t pt-4">
-          <button
-            type="button"
-            onClick={() => goTo(step - 1)}
-            disabled={step === 1}
-            className="rounded border px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-40"
-          >
-            Back
-          </button>
-          {step < 4 ? (
-            <button
-              type="button"
-              onClick={next}
-              className="rounded bg-indigo-600 px-5 py-2 text-sm font-medium text-white hover:bg-indigo-700"
-            >
-              {step === 3 ? "Review" : "Next"}
+        <div className="form-actions">
+          {step > 1 ? (
+            <button type="button" className="btn btn-ghost" onClick={() => goTo(step - 1)}>
+              ← Back
             </button>
           ) : (
-            <button
-              type="button"
-              onClick={submit}
-              disabled={submitting}
-              className="rounded bg-indigo-600 px-5 py-2 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-50"
-            >
-              {submitting ? "Submitting…" : submitLabel}
+            <span />
+          )}
+          {step < 5 ? (
+            <button type="button" className="btn btn-primary" onClick={next}>
+              {step === 4 ? "Next → Review" : step === 2 && cat ? `Continue to ${detailLabel} →` : "Continue →"}
+            </button>
+          ) : (
+            <button type="button" className="btn btn-submit" onClick={submit} disabled={submitting}>
+              {submitting ? "Submitting…" : `✓ ${submitLabel}`}
             </button>
           )}
         </div>
@@ -221,43 +223,35 @@ export function RequisitionForm({
   );
 }
 
-// --- stepper header ---
+// --- hero + stepper ---
 
-function Stepper({ step, onStep }: { step: number; onStep: (n: number) => void }) {
+function Hero({ step, detailLabel, onStep }: { step: number; detailLabel: string; onStep: (n: number) => void }) {
+  const labels = [...STEP_TITLES];
+  labels[2] = detailLabel;
   return (
-    <div>
-      <div className="flex border-b">
-        {STEPS.map((label, i) => {
-          const n = i + 1;
-          const active = n === step;
-          const done = n < step;
-          return (
-            <button
-              type="button"
-              key={label}
-              onClick={() => onStep(n)}
-              className={`flex flex-1 items-center justify-center gap-2 border-r px-2 py-3 text-xs font-medium last:border-r-0 ${
-                active ? "bg-white text-gray-900" : "bg-gray-50 text-gray-500 hover:text-gray-700"
-              }`}
-            >
-              <span
-                className={`flex h-5 w-5 items-center justify-center rounded-full text-[11px] font-semibold ${
-                  active
-                    ? "bg-indigo-600 text-white"
-                    : done
-                      ? "bg-green-100 text-green-700"
-                      : "bg-gray-200 text-gray-500"
-                }`}
-              >
-                {done ? "✓" : n}
-              </span>
-              <span className="hidden sm:inline">{label}</span>
-            </button>
-          );
-        })}
+    <div className="page-hero">
+      <div className="page-hero-inner page-hero-top">
+        <div className="crumb">Requests / New</div>
+        <h1>New Purchase Requisition (PR)</h1>
+        <p className="sub">
+          This is the first step of WSO2's supply chain cycle. Complete the short steps below — once you submit, the
+          WSO2 Procurement team takes over and manages your request through the full procurement lifecycle.
+        </p>
       </div>
-      <div className="h-0.5 bg-gray-200">
-        <div className="h-full bg-indigo-600 transition-all" style={{ width: `${(step / 4) * 100}%` }} />
+      <div className="hero-divider" />
+      <div className="page-hero-inner page-hero-bottom">
+        <div className="stepper" role="tablist">
+          {labels.map((label, i) => {
+            const n = i + 1;
+            const cls = n === step ? "current" : n < step ? "done reached" : "";
+            return (
+              <button type="button" key={label} className={`step-tab ${cls}`} onClick={() => onStep(n)} role="tab">
+                <span className="n">{n < step ? "✓" : n}</span>
+                {label}
+              </button>
+            );
+          })}
+        </div>
       </div>
     </div>
   );
@@ -267,20 +261,45 @@ function Stepper({ step, onStep }: { step: number; onStep: (n: number) => void }
 
 function Field({ label, required, hint, children }: { label: string; required?: boolean; hint?: string; children: React.ReactNode }) {
   return (
-    <div>
-      <label className={labelCls}>
-        {label}
-        {required && <span className="ml-0.5 text-indigo-600">*</span>}
+    <div className="field">
+      <label>
+        {label} {required && <b>*</b>}
       </label>
       {children}
-      {hint && <p className="mt-1 text-xs italic text-gray-400">{hint}</p>}
+      {hint && <div className="help">{hint}</div>}
+    </div>
+  );
+}
+
+function SectionBand({ children }: { children: React.ReactNode }) {
+  return <div className="section-band">{children}</div>;
+}
+
+function DevNote({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="dev-note">
+      <span className="icon">🚧</span>
+      <span>{children}</span>
+    </div>
+  );
+}
+
+function YNField({ value, onChange }: { value?: YesNo; onChange: (v: YesNo) => void }) {
+  return (
+    <div className="yn">
+      <button type="button" className={value === "yes" ? "on-yes" : ""} onClick={() => onChange("yes")}>
+        Yes
+      </button>
+      <button type="button" className={value === "no" ? "on-no" : ""} onClick={() => onChange("no")}>
+        No
+      </button>
     </div>
   );
 }
 
 function Select({ value, onChange, options, placeholder }: { value?: string; onChange: (v: string) => void; options: string[]; placeholder: string }) {
   return (
-    <select className={inputCls} value={value ?? ""} onChange={(e) => onChange(e.target.value)}>
+    <select value={value ?? ""} onChange={(e) => onChange(e.target.value)}>
       <option value="">{placeholder}</option>
       {options.map((o) => (
         <option key={o} value={o}>
@@ -291,335 +310,301 @@ function Select({ value, onChange, options, placeholder }: { value?: string; onC
   );
 }
 
-function YesNoField({ value, onChange }: { value?: YesNo; onChange: (v: YesNo) => void }) {
-  const base = "flex-1 rounded border px-3 py-2 text-sm font-medium transition";
+// NameList edits a string[] of names, with a count field that pre-seeds rows.
+function NameList({
+  names,
+  count,
+  placeholder,
+  onNames,
+  onCount,
+}: {
+  names: string[];
+  count: string;
+  placeholder: string;
+  onNames: (next: string[]) => void;
+  onCount: (v: string) => void;
+}) {
+  const rows = names.length ? names : [""];
+  const setAt = (i: number, v: string) => {
+    const next = [...rows];
+    next[i] = v;
+    onNames(next);
+  };
+  const remove = (i: number) => {
+    if (rows.length <= 1) {
+      onNames([""]);
+      return;
+    }
+    onNames(rows.filter((_, j) => j !== i));
+  };
+  const add = () => onNames([...rows, ""]);
+  const syncCount = (v: string) => {
+    onCount(v);
+    const c = parseInt(v, 10);
+    if (c > rows.length) {
+      onNames([...rows, ...Array(c - rows.length).fill("")]);
+    }
+  };
   return (
-    <div className="flex gap-2">
-      <button
-        type="button"
-        onClick={() => onChange("yes")}
-        className={`${base} ${value === "yes" ? "border-green-600 bg-green-50 text-green-700" : "border-gray-200 text-gray-500 hover:border-indigo-400"}`}
-      >
-        Yes
+    <>
+      <input type="number" min={1} value={count} onChange={(e) => syncCount(e.target.value)} placeholder="e.g. 5" />
+      <div className="name-list" style={{ marginTop: 10 }}>
+        {rows.map((name, i) => (
+          <div className="name-row" key={i}>
+            <input type="text" value={name} onChange={(e) => setAt(i, e.target.value)} placeholder={placeholder} />
+            <button type="button" className="name-remove" onClick={() => remove(i)} aria-label="Remove">
+              ×
+            </button>
+          </div>
+        ))}
+      </div>
+      <button type="button" className="name-add" onClick={add}>
+        + Add name
       </button>
-      <button
-        type="button"
-        onClick={() => onChange("no")}
-        className={`${base} ${value === "no" ? "border-red-500 bg-red-50 text-red-600" : "border-gray-200 text-gray-500 hover:border-indigo-400"}`}
-      >
-        No
-      </button>
-    </div>
+    </>
   );
 }
 
-// Three-way variant of YesNoField, used for "within approved budget?" where the
-// requester may genuinely not know yet.
-function YesNoUnknownField({ value, onChange }: { value?: YesNoUnknown; onChange: (v: YesNoUnknown) => void }) {
-  const base = "flex-1 rounded border px-3 py-2 text-sm font-medium transition";
-  const opts: [YesNoUnknown, string, string][] = [
-    ["yes", "Yes", "border-green-600 bg-green-50 text-green-700"],
-    ["no", "No", "border-red-500 bg-red-50 text-red-600"],
-    ["unknown", "Don't know", "border-amber-500 bg-amber-50 text-amber-700"],
-  ];
-  return (
-    <div className="flex gap-2">
-      {opts.map(([v, label, on]) => (
-        <button
-          key={v}
-          type="button"
-          onClick={() => onChange(v)}
-          className={`${base} ${value === v ? on : "border-gray-200 text-gray-500 hover:border-indigo-400"}`}
-        >
-          {label}
-        </button>
-      ))}
-    </div>
-  );
-}
-
-// Collapsible groups an optional section behind a <details> disclosure, collapsed
-// by default. The chevron rotates open via the group-open utility.
-function Collapsible({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <details className="group rounded border border-gray-200">
-      <summary className="flex cursor-pointer list-none items-center justify-between px-3 py-2 text-xs font-semibold uppercase tracking-wide text-gray-600">
-        <span>
-          {title} <span className="ml-1 normal-case tracking-normal text-gray-400">(optional)</span>
-        </span>
-        <span className="text-gray-400 transition group-open:rotate-90">▶</span>
-      </summary>
-      <div className="space-y-4 border-t border-gray-100 p-3">{children}</div>
-    </details>
-  );
-}
-
-interface StepProps {
-  value: PurchaseRequestInput;
+interface DetailProps {
+  cat: PRCategory;
   d: PRDetails;
-  setTop: (patch: Partial<PurchaseRequestInput>) => void;
   setD: (patch: Partial<PRDetails>) => void;
-  lists?: Record<string, string[]>;
-  budgetUnits?: BudgetUnitSummary[];
-  designatedApprovers?: UserSummary[];
-}
-
-// BudgetUnitSelect binds the requisition's budget_unit_id to a managed budget
-// unit. If the PR already references a unit that is no longer in the active
-// lookup, it is still shown so editing an existing PR never silently drops the
-// selection.
-function BudgetUnitSelect({
-  value,
-  budgetUnits,
-  onChange,
-}: {
-  value: number | null;
-  budgetUnits?: BudgetUnitSummary[];
-  onChange: (bu: BudgetUnitSummary | null) => void;
-}) {
-  const options = budgetUnits ?? [];
-  const label = (c: BudgetUnitSummary) => (c.code ? `${c.code} — ${c.name}` : c.name);
-  const missingCurrent = value != null && !options.some((c) => c.id === value);
-  return (
-    <select
-      className={inputCls}
-      value={value ?? ""}
-      onChange={(e) => {
-        const id = e.target.value ? Number(e.target.value) : null;
-        onChange(options.find((c) => c.id === id) ?? null);
-      }}
-    >
-      <option value="">Select budget unit</option>
-      {missingCurrent && <option value={value}>{`Budget unit #${value}`}</option>}
-      {options.map((c) => (
-        <option key={c.id} value={c.id}>
-          {label(c)}
-        </option>
-      ))}
-    </select>
-  );
-}
-
-// BudgetApproverReference renders the designated budget approver(s) for the
-// chosen budget unit + estimated value as a reference next to the editable
-// approver field, with an "update" icon that copies them into the field.
-// Informational only — the actual approver is recomputed at the recommendation stage.
-function BudgetApproverReference({
-  budgetUnitId,
-  estimatedValue,
-  designatedApprovers,
-  enteredEmails,
-  onUseDesignated,
-}: {
-  budgetUnitId: number | null;
-  estimatedValue: number;
-  designatedApprovers: UserSummary[];
-  enteredEmails: string;
-  onUseDesignated: () => void;
-}) {
-  if (budgetUnitId == null) {
-    return <p className="text-sm text-gray-400">Select a budget unit in step 1 to see the designated approver.</p>;
-  }
-  const label = approverLabel(designatedApprovers);
-  const mismatch =
-    designatedApprovers.length > 0 &&
-    approverEmailKey(designatedApprovers.map((u) => u.email).join(",")) !== approverEmailKey(enteredEmails);
-  return (
-    <div className="rounded border border-indigo-100 bg-indigo-50 px-3 py-2 text-sm">
-      <div className="flex items-center justify-between gap-2">
-        <span className="text-xs font-semibold uppercase tracking-wide text-indigo-700">
-          Designated approver{designatedApprovers.length > 1 ? "s" : ""} (reference)
-        </span>
-        <button
-          type="button"
-          onClick={onUseDesignated}
-          disabled={designatedApprovers.length === 0}
-          title="Use the designated approver(s) in the field above"
-          className="inline-flex items-center gap-1 rounded border border-indigo-200 bg-white px-2 py-0.5 text-xs font-medium text-indigo-700 hover:bg-indigo-50 disabled:opacity-40"
-        >
-          <span aria-hidden>↻</span> Use designated
-        </button>
-      </div>
-      <div className="mt-0.5 text-gray-800">
-        {label || "No approver configured for this value — will use the budget unit's default approver."}
-      </div>
-      {estimatedValue <= 0 && (
-        <div className="mt-1 text-xs text-gray-500">
-          No estimated value entered — this resolves to the budget unit's default approver.
-        </div>
-      )}
-      {mismatch && (
-        <div className="mt-1 text-xs font-medium text-amber-700">
-          The approver entered above differs from the designated approver(s).
-        </div>
-      )}
-    </div>
-  );
+  setTop: (patch: Partial<PurchaseRequestInput>) => void;
 }
 
 // --- step 1 ---
 
-function StepRequester({ value, d, setTop, setD, lists, budgetUnits }: StepProps) {
+function StepRequester({
+  value,
+  d,
+  setTop,
+  setD,
+}: {
+  value: PurchaseRequestInput;
+  d: PRDetails;
+  setTop: (patch: Partial<PurchaseRequestInput>) => void;
+  setD: (patch: Partial<PRDetails>) => void;
+}) {
+  const { data: directory, isLoading: dirLoading, refresh: refreshDir } = useDirectory();
   return (
-    <div className="space-y-4">
-      <SectionTitle title="Requester details" desc="Tell us who you are and why this purchase is needed." />
-      <div className="grid gap-4 sm:grid-cols-3">
+    <>
+      <div className="pane-title">Requester details</div>
+      <p className="pane-sub">Confirm who's raising this request. The procurement category and requirement details are captured in the next steps.</p>
+      <div className="grid-3">
         <Field label="Date" required>
-          <input type="date" className={inputCls} value={d.date ?? ""} onChange={(e) => setD({ date: e.target.value })} />
+          <input type="date" value={d.date ?? ""} onChange={(e) => setD({ date: e.target.value })} />
         </Field>
         <Field label="Your full name" required>
-          <input className={inputCls} value={d.requester_name ?? ""} onChange={(e) => setD({ requester_name: e.target.value })} placeholder="First and last name" />
+          <input type="text" value={d.requester_name ?? ""} onChange={(e) => setD({ requester_name: e.target.value })} placeholder="e.g. Chamika Karunarathne" />
         </Field>
         <Field label="WSO2 email" required>
-          <input type="email" className={inputCls} value={d.requester_email ?? ""} onChange={(e) => setD({ requester_email: e.target.value })} placeholder="you@wso2.com" />
+          <input type="email" value={d.requester_email ?? ""} onChange={(e) => setD({ requester_email: e.target.value })} placeholder="you@wso2.com" />
         </Field>
       </div>
-      <div className="grid gap-4 sm:grid-cols-2">
-        <Field label="Budget unit" required hint="Determines the budget approver, based on the estimated value you enter in step 3.">
-          <BudgetUnitSelect
-            value={value.budget_unit_id}
-            budgetUnits={budgetUnits}
-            onChange={(bu) => setTop({ budget_unit_id: bu?.id ?? null })}
-          />
-        </Field>
-        <Field label="WSO2 entity" required>
-          <Select value={value.entity} onChange={(entity) => setTop({ entity })} options={optionsFor(lists, "entity", value.entity)} placeholder="Select entity" />
-        </Field>
+      <div className="help" style={{ margin: "-8px 0 18px" }}>
+        Name and email are pulled from your WSO2 SSO login — edit only if you're raising this requisition on someone else's behalf.
       </div>
-      <Field label="Business justification" required>
-        <textarea className={`${inputCls} min-h-[90px]`} value={d.business_justification ?? ""} onChange={(e) => setD({ business_justification: e.target.value })} placeholder="Why is this purchase needed? What problem does it solve?" />
-      </Field>
       <Field label="Team lead (for approval)" required hint="Your team lead must approve this request before procurement can start working on it.">
-        <input
-          type="email"
-          className={inputCls}
+        <EmailAutocomplete
           value={value.team_lead_email ?? ""}
-          onChange={(e) => setTop({ team_lead_email: e.target.value })}
+          onChange={(email) => setTop({ team_lead_email: email })}
+          directory={directory ?? []}
+          refresh={refreshDir}
+          loading={dirLoading}
+          inputClassName=""
           placeholder="teamlead@wso2.com"
+          ariaLabel="Team lead email"
         />
       </Field>
-    </div>
+    </>
   );
 }
 
 // --- step 2 ---
 
-function StepPurchase({ value, d, setTop, setD, lists }: StepProps) {
-  const cat = value.category;
-  const catBtn = (c: PRCategory, title: string, sub: string) => (
-    <button
-      type="button"
-      onClick={() => setTop({ category: c })}
-      className={`flex-1 rounded border px-4 py-3 text-left transition ${
-        cat === c ? "border-indigo-600 bg-indigo-50" : "border-gray-200 hover:border-indigo-400"
-      }`}
-    >
-      <div className="text-sm font-semibold text-gray-900">{title}</div>
-      <div className="text-xs text-gray-500">{sub}</div>
+function StepCategory({ cat, setTop }: { cat: PRCategory; setTop: (patch: Partial<PurchaseRequestInput>) => void }) {
+  const card = (c: Exclude<PRCategory, "">, icon: string, title: string, desc: string) => (
+    <button type="button" className={`type-card ${cat === c ? "selected" : ""}`} onClick={() => setTop({ category: c })}>
+      <span className="tick">✓</span>
+      <h3>
+        {icon} {title}
+      </h3>
+      <p>{desc}</p>
     </button>
   );
-
   return (
-    <div className="space-y-4">
-      <SectionTitle title="Purchase details" desc="Pick the type of purchase and complete the relevant section." />
-      <div className="flex gap-3">
-        {catBtn("IT", "IT solution", "Software, SaaS, cloud, hardware")}
-        {catBtn("NON-IT", "Non-IT solution", "Facilities, insurance, goods, services")}
+    <>
+      <div className="pane-title">Procurement Category</div>
+      <p className="pane-sub">Choose the category that best matches your request — ProQ will then ask only the questions relevant to your selection, on the next page.</p>
+      <div className="type-cards">
+        {card("IT", "💻", "IT Related Procurement", "Software, SaaS subscriptions, cloud infrastructure, hardware, and other technology purchases.")}
+        {card("NON-IT", "🏢", "Non-IT Related Procurement", "Facilities, insurance, office goods, consumables, and general professional services.")}
+        {card("EVENTS", "🎤", "Marketing & Events Procurement", "Conferences, sponsorships, venues, AV production, and vendor services for WSO2 events and campaigns.")}
       </div>
-
-      {cat === "IT" && (
-        <div className="space-y-4">
-          <div className={subCls}>Section A — IT solution details</div>
-          <div className="grid gap-4 sm:grid-cols-2">
-            <Field label="IT category" required>
-              <Select value={d.it_category} onChange={(v) => setD({ it_category: v })} options={optionsFor(lists, "it_category", d.it_category)} placeholder="Select category" />
-            </Field>
-            <Field label="Product / solution name" required>
-              <input className={inputCls} value={d.it_product ?? ""} onChange={(e) => setD({ it_product: e.target.value })} placeholder="e.g. Salesforce, GitHub Enterprise" />
-            </Field>
-          </div>
-          <Field label="Description of the solution" required>
-            <textarea className={`${inputCls} min-h-[80px]`} value={d.it_description ?? ""} onChange={(e) => setD({ it_description: e.target.value })} placeholder="What does it do and how will WSO2 use it?" />
-          </Field>
-          <div className="grid gap-4 sm:grid-cols-2">
-            <Field label="Plan / subscription tier" required>
-              <input className={inputCls} value={d.it_plan ?? ""} onChange={(e) => setD({ it_plan: e.target.value })} placeholder="e.g. Enterprise, Pro" />
-            </Field>
-            <Field label="Expected number of users">
-              <input className={inputCls} value={d.it_users ?? ""} onChange={(e) => setD({ it_users: e.target.value })} placeholder="e.g. 20 — Sales team" />
-            </Field>
-          </div>
-          <div className="grid gap-4 sm:grid-cols-2">
-            <Field label="Administrators (names & count)" required>
-              <input className={inputCls} value={d.it_admins ?? ""} onChange={(e) => setD({ it_admins: e.target.value })} placeholder="e.g. 2 — John S., Maria L." />
-            </Field>
-            <Field label="Expected day-to-day usage" required>
-              <input className={inputCls} value={d.it_usage ?? ""} onChange={(e) => setD({ it_usage: e.target.value })} placeholder="How will this be used?" />
-            </Field>
-          </div>
-
-          <div className={subCls}>Data &amp; security assessment</div>
-          <div className="grid gap-4 sm:grid-cols-2">
-            <Field label="Stores / processes sensitive WSO2 data?" required>
-              <YesNoField value={d.sec_sensitive} onChange={(v) => setD({ sec_sensitive: v })} />
-            </Field>
-            <Field label="Captures external PII (customers / prospects)?" required>
-              <YesNoField value={d.sec_external_pii} onChange={(v) => setD({ sec_external_pii: v })} />
-              {d.sec_external_pii === "yes" && (
-                <input className={`${inputCls} mt-2`} value={d.sec_external_pii_detail ?? ""} onChange={(e) => setD({ sec_external_pii_detail: e.target.value })} placeholder="Specify what PII will be captured" />
-              )}
-            </Field>
-          </div>
-          <div className="grid gap-4 sm:grid-cols-2">
-            <Field label="Captures internal employee PII?" required>
-              <YesNoField value={d.sec_employee_pii} onChange={(v) => setD({ sec_employee_pii: v })} />
-            </Field>
-            <Field label="Integrates with WSO2 internal systems?" required>
-              <YesNoField value={d.sec_integrates} onChange={(v) => setD({ sec_integrates: v })} />
-              {d.sec_integrates === "yes" && (
-                <textarea className={`${inputCls} mt-2 min-h-[60px]`} value={d.sec_integration_detail ?? ""} onChange={(e) => setD({ sec_integration_detail: e.target.value })} placeholder="Which systems? What kind of integration (API, SSO, data sync)?" />
-              )}
-            </Field>
-          </div>
-        </div>
-      )}
-
-      {cat === "NON-IT" && (
-        <div className="space-y-4">
-          <div className={subCls}>Section B — Non-IT solution details</div>
-          <Field label="Non-IT category" required>
-            <Select value={d.nit_category} onChange={(v) => setD({ nit_category: v })} options={optionsFor(lists, "nonit_category", d.nit_category)} placeholder="Select category" />
-          </Field>
-          <Field label="Details of goods / services required" required>
-            <textarea className={`${inputCls} min-h-[90px]`} value={d.nit_description ?? ""} onChange={(e) => setD({ nit_description: e.target.value })} placeholder="Describe what you need: quantities, specifications, relevant details…" />
-          </Field>
-          <Field label="Additional specifications or document links">
-            <textarea className={`${inputCls} min-h-[60px]`} value={d.nit_specs ?? ""} onChange={(e) => setD({ nit_specs: e.target.value })} placeholder="Any links, spec sheets, or context…" />
-          </Field>
-        </div>
-      )}
-
-      {!cat && <p className="text-sm text-gray-400">Select a purchase type above to continue.</p>}
-    </div>
+      {!cat && <p className="type-hint">Select a procurement category above to continue.</p>}
+    </>
   );
 }
 
 // --- step 3 ---
 
-function StepVendor({ value, d, setTop, setD, lists, designatedApprovers = [] }: StepProps) {
+function StepRequirement({ cat, d, setD, detailLabel }: DetailProps & { detailLabel: string }) {
+  return (
+    <>
+      <div className="pane-title">{detailLabel}</div>
+      <p className="pane-sub">Complete the details below for your selected category.</p>
+
+      {cat === "IT" && (
+        <>
+          <div className="grid-2">
+            <Field label="Product / solution name" required>
+              <input type="text" value={d.it_product ?? ""} onChange={(e) => setD({ it_product: e.target.value })} placeholder="e.g. Salesforce, GitHub Enterprise" />
+            </Field>
+            <Field label="Plan / subscription tier" required>
+              <input type="text" value={d.it_plan ?? ""} onChange={(e) => setD({ it_plan: e.target.value })} placeholder="e.g. Enterprise, Pro" />
+            </Field>
+          </div>
+          <Field label="Description of the product / solution" required>
+            <textarea value={d.it_description ?? ""} onChange={(e) => setD({ it_description: e.target.value })} placeholder="What does it do, and how will WSO2 use it?" />
+          </Field>
+          <div className="grid-2">
+            <Field label="Users — count &amp; names" required>
+              <NameList
+                names={d.it_user_names ?? []}
+                count={d.it_user_count ?? ""}
+                placeholder="e.g. Jane Silva — Sales team"
+                onNames={(it_user_names) => setD({ it_user_names })}
+                onCount={(it_user_count) => setD({ it_user_count })}
+              />
+            </Field>
+            <Field label="Administrators — count &amp; names" required>
+              <NameList
+                names={d.it_admin_names ?? []}
+                count={d.it_admin_count ?? ""}
+                placeholder="e.g. John Perera"
+                onNames={(it_admin_names) => setD({ it_admin_names })}
+                onCount={(it_admin_count) => setD({ it_admin_count })}
+              />
+            </Field>
+          </div>
+          <Field label="Expected usage period" required>
+            <Select value={d.it_usage} onChange={(it_usage) => setD({ it_usage })} options={USAGE_PERIODS} placeholder="Select duration" />
+          </Field>
+          <Field label="Business justification" required>
+            <textarea
+              value={d.business_justification ?? ""}
+              onChange={(e) => setD({ business_justification: e.target.value })}
+              placeholder="Why is this purchase needed? What problem does it solve, and what happens if we don't buy it?"
+            />
+          </Field>
+
+          <SectionBand>Data &amp; security assessment</SectionBand>
+          <Field label="Will this platform store or process sensitive or confidential WSO2 data?" required>
+            <YNField value={d.sec_sensitive} onChange={(sec_sensitive) => setD({ sec_sensitive })} />
+          </Field>
+          <Field label="Will this platform store or process external PII (customers, prospects, leads, or third parties)?" required>
+            <YNField value={d.sec_external_pii} onChange={(sec_external_pii) => setD({ sec_external_pii })} />
+          </Field>
+          {d.sec_external_pii === "yes" && (
+            <div className="followup">
+              <Field label="What data would this include?" required>
+                <input type="text" value={d.sec_external_pii_detail ?? ""} onChange={(e) => setD({ sec_external_pii_detail: e.target.value })} placeholder="e.g. names, emails, phone numbers, payment details" />
+              </Field>
+            </div>
+          )}
+          <Field label="Will this platform store or process internal employee PII?" required>
+            <YNField value={d.sec_employee_pii} onChange={(sec_employee_pii) => setD({ sec_employee_pii })} />
+          </Field>
+          {d.sec_employee_pii === "yes" && (
+            <div className="followup">
+              <Field label="What data would this include?" required>
+                <input type="text" value={d.sec_employee_pii_detail ?? ""} onChange={(e) => setD({ sec_employee_pii_detail: e.target.value })} placeholder="e.g. employee ID, payroll data, performance records" />
+              </Field>
+            </div>
+          )}
+          <Field label="Will this integrate with WSO2 internal systems?" required>
+            <YNField value={d.sec_integrates} onChange={(sec_integrates) => setD({ sec_integrates })} />
+          </Field>
+          {d.sec_integrates === "yes" && (
+            <div className="followup">
+              <div className="grid-2">
+                <Field label="Which systems?" required>
+                  <input type="text" value={d.sec_integration_systems ?? ""} onChange={(e) => setD({ sec_integration_systems: e.target.value })} placeholder="e.g. WSO2 Identity Server, Google Workspace" />
+                </Field>
+                <Field label="What kind of integration?" required>
+                  <Select value={d.sec_integration_kind} onChange={(sec_integration_kind) => setD({ sec_integration_kind })} options={INTEGRATION_KINDS} placeholder="Select type" />
+                </Field>
+              </div>
+              <Field label="Has the vendor provided guidelines / documentation on this integration?" required>
+                <YNField value={d.sec_vendor_docs} onChange={(sec_vendor_docs) => setD({ sec_vendor_docs })} />
+              </Field>
+              {d.sec_vendor_docs === "yes" && (
+                <div className="followup">
+                  <Field label="Documentation link(s)" required>
+                    <input type="text" value={d.sec_vendor_docs_link ?? ""} onChange={(e) => setD({ sec_vendor_docs_link: e.target.value })} placeholder="Paste link(s), separated by commas" />
+                  </Field>
+                </div>
+              )}
+            </div>
+          )}
+        </>
+      )}
+
+      {cat === "NON-IT" && (
+        <>
+          <Field label="Details of goods / services required" required>
+            <textarea value={d.nit_description ?? ""} onChange={(e) => setD({ nit_description: e.target.value })} placeholder="Describe what's needed, including quantities — e.g. 40 ergonomic office chairs for the Colombo office" />
+          </Field>
+          <Field label="Additional specifications or document links">
+            <textarea value={d.nit_specs ?? ""} onChange={(e) => setD({ nit_specs: e.target.value })} placeholder="Any additional specifications, or links to spec sheets / vendor quotes, if available" />
+          </Field>
+          <Field label="Business justification" required>
+            <textarea value={d.business_justification ?? ""} onChange={(e) => setD({ business_justification: e.target.value })} placeholder="Why is this purchase needed? What problem does it solve, and what happens if we don't buy it?" />
+          </Field>
+        </>
+      )}
+
+      {cat === "EVENTS" && (
+        <DevNote>
+          <strong>This procurement category is under development.</strong> The Marketing &amp; Events requirement questions are still being finalized. Please continue for now — the WSO2 Procurement team will follow up with you directly for any additional details needed.
+        </DevNote>
+      )}
+    </>
+  );
+}
+
+// --- step 4 ---
+
+function StepVendorBudget({
+  cat,
+  value,
+  d,
+  setTop,
+  setD,
+  attachments,
+  onAttachmentsChange,
+}: DetailProps & {
+  value: PurchaseRequestInput;
+  attachments?: File[];
+  onAttachmentsChange?: (files: File[]) => void;
+}) {
   const { data: vendorOptions } = useVendorLookup();
+  const { data: businessUnits } = useBusinessUnitLookup();
+  const { data: buApprovers } = useBusinessUnitApprovers(value.business_unit_id);
 
-  // Copy the designated approver(s) into the editable budget-approver field.
-  const useDesignatedApprover = () =>
+  // Selecting a business unit resets the budget approver (its approver list
+  // changes). Picking an approver fills in the free-text name/email fields that
+  // the backend matches on.
+  const selectBusinessUnit = (id: number | null) =>
+    setTop({ business_unit_id: id, budget_approver_name: "", budget_approver_email: "" });
+  const selectBudgetApprover = (email: string) => {
+    const u = (buApprovers ?? []).find((a) => a.email === email);
     setTop({
-      budget_approver_name: designatedApprovers.map((u) => u.name || u.email).join(", "),
-      budget_approver_email: designatedApprovers.map((u) => u.email).join(", "),
+      budget_approver_email: email,
+      budget_approver_name: u ? u.name || "" : "",
     });
+  };
 
-  // The supplier name is an editable combobox over the vendor master. Picking
-  // (or typing the exact name of) a known vendor auto-fills the other supplier
-  // fields and records the vendor id; any other text is a free-typed supplier
-  // and is never added to the vendor master.
   const selectVendor = (v: VendorLookup) =>
     setD({
       supplier_name: v.name,
@@ -630,196 +615,241 @@ function StepVendor({ value, d, setTop, setD, lists, designatedApprovers = [] }:
     });
 
   const typeSupplierName = (name: string) => {
-    const match = vendorOptions?.find(
-      (v) => v.name.toLowerCase() === name.trim().toLowerCase(),
-    );
+    const match = vendorOptions?.find((v) => v.name.toLowerCase() === name.trim().toLowerCase());
     if (match) selectVendor(match);
     else setD({ supplier_name: name, supplier_vendor_id: null });
   };
 
+  if (cat === "EVENTS") {
+    return (
+      <>
+        <div className="pane-title">Vendor &amp; budget</div>
+        <p className="pane-sub">Tell us about the proposed supplier, then complete the budget details for this purchase.</p>
+        <DevNote>
+          <strong>This procurement category is under development.</strong> Vendor and budget questions for Marketing &amp; Events requests are still being finalized. Please continue — the WSO2 Procurement team will coordinate vendor and budget details with you directly.
+        </DevNote>
+      </>
+    );
+  }
+
   return (
-    <div className="space-y-4">
-      <SectionTitle title="Vendor & budget" desc="The proposed supplier and the budget owner for this purchase." />
+    <>
+      <div className="pane-title">Vendor &amp; budget</div>
+      <p className="pane-sub">Tell us about the proposed supplier, then complete the budget details for this purchase.</p>
 
-      <Collapsible title="Proposed supplier">
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Field
-            label="Supplier name"
-            hint="Pick an existing vendor to auto-fill its details, or type a new supplier."
+      <SectionBand>Proposed vendor</SectionBand>
+      <div className="grid-2">
+        <Field label="Proposed supplier name (if any)" hint="Pick an existing vendor to auto-fill its details, or type a new supplier.">
+          <SupplierNameCombobox value={d.supplier_name ?? ""} options={vendorOptions ?? []} onType={typeSupplierName} onSelect={selectVendor} />
+          {d.supplier_vendor_id != null && <div className="help" style={{ color: "#0e9f6e" }}>✓ Linked to an existing vendor</div>}
+        </Field>
+        <Field label="Proposed supplier's website">
+          <input type="text" value={d.supplier_website ?? ""} onChange={(e) => setD({ supplier_website: e.target.value })} placeholder="e.g. https://www.supplier.com" />
+        </Field>
+      </div>
+      <div className={cat === "NON-IT" ? "grid-3" : "grid-2"}>
+        <Field label="Contact name">
+          <input type="text" value={d.supplier_contact ?? ""} onChange={(e) => setD({ supplier_contact: e.target.value })} placeholder="e.g. Jane Smith" />
+        </Field>
+        <Field label="Contact email">
+          <input type="email" value={d.supplier_email ?? ""} onChange={(e) => setD({ supplier_email: e.target.value })} placeholder="contact@supplier.com" />
+        </Field>
+        {cat === "NON-IT" && (
+          <Field label="Contact number">
+            <input type="text" value={d.supplier_phone ?? ""} onChange={(e) => setD({ supplier_phone: e.target.value })} placeholder="e.g. +94 77 123 4567" />
+          </Field>
+        )}
+      </div>
+      {onAttachmentsChange && (
+        <Field label="Attach proposal, quotation, or supporting documents" hint="Optional — PDF, DOCX, PPTX, or similar.">
+          <input type="file" multiple onChange={(e) => onAttachmentsChange(Array.from(e.target.files ?? []))} />
+          {attachments && attachments.length > 0 && (
+            <div className="help">
+              {attachments.length} file{attachments.length > 1 ? "s" : ""} selected: {attachments.map((f) => f.name).join(", ")}
+            </div>
+          )}
+        </Field>
+      )}
+      <div className="info-note">
+        <span className="icon">🤝</span>
+        <span>Once submitted, the WSO2 Procurement team will contact this supplier directly and assess whether to proceed, in line with the Global Supply Chain Management Policy.</span>
+      </div>
+
+      <SectionBand>Budget details</SectionBand>
+      <div className="grid-2">
+        <Field label="Budget category">
+          <input type="text" value={d.budget_category ?? ""} onChange={(e) => setD({ budget_category: e.target.value })} placeholder="e.g. Software & SaaS, Hardware & Equipment" />
+        </Field>
+        <Field label="Product">
+          <input type="text" value={d.budget_product ?? ""} onChange={(e) => setD({ budget_product: e.target.value })} placeholder="e.g. WSO2 Identity Server, Choreo, Corporate / shared" />
+        </Field>
+        <Field label="Region">
+          <input type="text" value={d.budget_region ?? ""} onChange={(e) => setD({ budget_region: e.target.value })} placeholder="e.g. APAC — Sri Lanka, EMEA — UK, Global" />
+        </Field>
+      </div>
+      <Field label="Engagement code" hint="Finance / NetSuite cost-center code, if known.">
+        <input type="text" value={d.engagement_code ?? ""} onChange={(e) => setD({ engagement_code: e.target.value })} placeholder="e.g. ENG-1001, if known" />
+      </Field>
+
+      <SectionBand>Budget approval</SectionBand>
+      <div className="grid-2">
+        <Field label="Business unit" required hint="The business unit whose budget funds this purchase.">
+          <select
+            value={value.business_unit_id ?? ""}
+            onChange={(e) => selectBusinessUnit(e.target.value === "" ? null : Number(e.target.value))}
           >
-            <SupplierNameCombobox
-              value={d.supplier_name ?? ""}
-              options={vendorOptions ?? []}
-              onType={typeSupplierName}
-              onSelect={selectVendor}
-            />
-            {d.supplier_vendor_id != null && (
-              <p className="mt-1 text-xs text-green-700">✓ Linked to an existing vendor</p>
-            )}
-          </Field>
-          <Field label="Supplier website">
-            <input className={inputCls} value={d.supplier_website ?? ""} onChange={(e) => setD({ supplier_website: e.target.value })} placeholder="https://…" />
-          </Field>
-        </div>
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Supplier contact person">
-            <input className={inputCls} value={d.supplier_contact ?? ""} onChange={(e) => setD({ supplier_contact: e.target.value })} placeholder="Account manager / sales rep" />
-          </Field>
-          <Field label="Supplier contact email">
-            <input type="email" className={inputCls} value={d.supplier_email ?? ""} onChange={(e) => setD({ supplier_email: e.target.value })} placeholder="contact@supplier.com" />
-          </Field>
-        </div>
-        <Field label="Has this supplier worked with WSO2 before?" hint="New vendors must complete an RFI — the Procurement Team will guide you.">
-          <YesNoField value={d.supplier_existing} onChange={(v) => setD({ supplier_existing: v })} />
+            <option value="">— Select business unit —</option>
+            {(businessUnits ?? []).map((b) => (
+              <option key={b.id} value={b.id}>
+                {b.name}
+              </option>
+            ))}
+          </select>
         </Field>
-      </Collapsible>
-
-      <Collapsible title="Commercial details">
-        <div className="grid gap-4 sm:grid-cols-3">
-          <Field label="Estimated value">
-            <input type="number" min={0} step="0.01" className={inputCls} value={value.estimated_value || ""} onChange={(e) => setTop({ estimated_value: Number(e.target.value) })} placeholder="0.00" />
-          </Field>
-          <Field label="Currency">
-            <CurrencyInput className={inputCls} value={value.currency} onChange={(currency) => setTop({ currency })} maxLength={3} options={optionsFor(lists, "currency", value.currency)} />
-          </Field>
-          <Field label="Engagement type">
-            <Select value={d.engagement_type} onChange={(v) => setD({ engagement_type: v })} options={optionsFor(lists, "engagement_type", d.engagement_type)} placeholder="Select" />
-          </Field>
-        </div>
-        <Field label="Is this within the approved budget?">
-          <YesNoUnknownField value={d.within_budget} onChange={(v) => setD({ within_budget: v })} />
-        </Field>
-      </Collapsible>
-
-      <div className={subCls}>Budget approval</div>
-      <div className="grid gap-4 sm:grid-cols-2">
-        <Field label="Budget approver's name">
-          <input
-            className={inputCls}
-            value={value.budget_approver_name ?? ""}
-            onChange={(e) => setTop({ budget_approver_name: e.target.value })}
-            placeholder="Name of the budget approver"
-          />
-        </Field>
-        <Field label="Budget approver's email">
-          <input
-            className={inputCls}
+        <Field label="Budget approver" required hint="Chosen from the selected business unit's approvers.">
+          <select
             value={value.budget_approver_email ?? ""}
-            onChange={(e) => setTop({ budget_approver_email: e.target.value })}
-            placeholder="approver@wso2.com"
-          />
+            onChange={(e) => selectBudgetApprover(e.target.value)}
+            disabled={!value.business_unit_id}
+          >
+            <option value="">
+              {!value.business_unit_id ? "Select a business unit first" : "— Select approver —"}
+            </option>
+            {(buApprovers ?? []).map((u) => (
+              <option key={u.id} value={u.email}>
+                {u.name ? `${u.name} (${u.email})` : u.email}
+              </option>
+            ))}
+          </select>
         </Field>
       </div>
-      <BudgetApproverReference
-        budgetUnitId={value.budget_unit_id}
-        estimatedValue={value.estimated_value}
-        designatedApprovers={designatedApprovers}
-        enteredEmails={value.budget_approver_email ?? ""}
-        onUseDesignated={useDesignatedApprover}
-      />
 
-      <div className={subCls}>Budget coding</div>
-      <div className="grid gap-4 sm:grid-cols-2">
-        <Field label="Budget category" required>
-          <Select value={d.budget_category} onChange={(v) => setD({ budget_category: v })} options={optionsFor(lists, "budget_category", d.budget_category)} placeholder="Select category" />
-        </Field>
-        <Field label="Product" required>
-          <Select value={d.budget_product} onChange={(v) => setD({ budget_product: v })} options={optionsFor(lists, "product", d.budget_product)} placeholder="Select product" />
-        </Field>
-        <Field label="Region" required>
-          <Select value={d.budget_region} onChange={(v) => setD({ budget_region: v })} options={optionsFor(lists, "region", d.budget_region)} placeholder="Select region" />
-        </Field>
-      </div>
-      <Field label="Engagement code" hint="Finance / NetSuite cost-centre code, if known.">
-        <Select value={d.engagement_code} onChange={(v) => setD({ engagement_code: v })} options={optionsFor(lists, "engagement_code", d.engagement_code)} placeholder="Select code" />
+      <SectionBand>Notes for the Procurement team</SectionBand>
+      <Field label="">
+        <textarea value={d.notes ?? ""} onChange={(e) => setD({ notes: e.target.value })} placeholder="Anything else Procurement should know — deadlines, existing quotes, contract references…" />
       </Field>
-      <Field label="Notes for the Procurement Team">
-        <textarea className={`${inputCls} min-h-[60px]`} value={d.notes ?? ""} onChange={(e) => setD({ notes: e.target.value })} placeholder="Urgency, context, vendor commitments, special considerations…" />
-      </Field>
-    </div>
+    </>
   );
 }
 
-// --- step 4 ---
+// --- step 5 ---
+
+function ReviewBlock({ title, stepN, onStep, rows }: { title: string; stepN: number; onStep: (n: number) => void; rows: [string, string][] }) {
+  return (
+    <div className="review-block">
+      <header>
+        <h4>{title}</h4>
+        <button type="button" onClick={() => onStep(stepN)}>
+          Edit
+        </button>
+      </header>
+      <div className="review-rows">
+        {rows.map(([k, v], i) => (
+          <div className="review-row" key={i}>
+            <span className="k">{k}</span>
+            <span className="v">{v}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 function StepReview({
   value,
   d,
-  budgetUnits,
+  onStep,
   requireDeclaration,
   declared,
   setDeclared,
-  approverMismatch,
-  designatedLabel,
 }: {
   value: PurchaseRequestInput;
   d: PRDetails;
-  budgetUnits?: BudgetUnitSummary[];
+  onStep: (n: number) => void;
   requireDeclaration: boolean;
   declared: boolean;
   setDeclared: (b: boolean) => void;
-  approverMismatch: boolean;
-  designatedLabel: string;
 }) {
-  const bu = (budgetUnits ?? []).find((c) => c.id === value.budget_unit_id);
-  const buLabel = bu ? (bu.code ? `${bu.code} — ${bu.name}` : bu.name) : "—";
-  const rows: [string, string][] = [
-    ["Requester", d.requester_name || "—"],
-    ["Date", d.date || "—"],
-    ["Budget unit", buLabel],
-    ["Entity", value.entity || "—"],
-    ["Type", value.category === "IT" ? "IT solution" : value.category === "NON-IT" ? "Non-IT solution" : "—"],
-    ["Solution", value.category === "IT" ? d.it_product || "—" : d.nit_category || "—"],
-    ["Supplier", d.supplier_name || "—"],
-    ["Vendor status", d.supplier_existing === "yes" ? "Registered vendor" : d.supplier_existing === "no" ? "New vendor (RFI)" : "—"],
-    ["Estimated value", value.estimated_value ? `${value.currency} ${value.estimated_value.toLocaleString()}` : "—"],
-    [
-      "Budget approver",
-      value.budget_approver_name || value.budget_approver_email
-        ? `${value.budget_approver_name || ""}${value.budget_approver_email ? ` · ${value.budget_approver_email}` : ""}`
-        : "—",
-    ],
-    ["Budget category", d.budget_category || "—"],
-    ["Product", d.budget_product || "—"],
-    ["Region", d.budget_region || "—"],
-  ];
+  const cat = value.category;
+  const { data: businessUnits } = useBusinessUnitLookup();
+  const businessUnitName =
+    (businessUnits ?? []).find((b) => b.id === value.business_unit_id)?.name ?? "";
+  const nonEmpty = (arr?: string[]) => (arr ?? []).map((s) => s.trim()).filter(Boolean);
+  const yn = (v?: YesNo) => (v ? v.toUpperCase() : "");
+
+  const requirementRows: [string, string][] = [];
+  if (cat === "IT") {
+    requirementRows.push(
+      ["Product / solution name", d.it_product ?? ""],
+      ["Plan / subscription tier", d.it_plan ?? ""],
+      ["Description", d.it_description ?? ""],
+      ["Users", [d.it_user_count, nonEmpty(d.it_user_names).join(", ")].filter(Boolean).join(" — ")],
+      ["Administrators", [d.it_admin_count, nonEmpty(d.it_admin_names).join(", ")].filter(Boolean).join(" — ")],
+      ["Expected usage period", d.it_usage ?? ""],
+      ["Business justification", d.business_justification ?? ""],
+      ["Sensitive / confidential data", yn(d.sec_sensitive)],
+      ["External PII", yn(d.sec_external_pii) + (d.sec_external_pii === "yes" ? ` — ${d.sec_external_pii_detail ?? ""}` : "")],
+      ["Internal employee PII", yn(d.sec_employee_pii) + (d.sec_employee_pii === "yes" ? ` — ${d.sec_employee_pii_detail ?? ""}` : "")],
+      [
+        "WSO2 system integrations",
+        d.sec_integrates === "yes"
+          ? `YES — ${d.sec_integration_systems ?? ""} (${d.sec_integration_kind ?? ""}); vendor docs: ${yn(d.sec_vendor_docs)}${d.sec_vendor_docs === "yes" ? ` — ${d.sec_vendor_docs_link ?? ""}` : ""}`
+          : yn(d.sec_integrates),
+      ],
+    );
+  } else if (cat === "NON-IT") {
+    requirementRows.push(
+      ["Goods / services required", d.nit_description ?? ""],
+      ["Additional specifications / links", d.nit_specs ?? ""],
+      ["Business justification", d.business_justification ?? ""],
+    );
+  } else if (cat === "EVENTS") {
+    requirementRows.push(["Status", "Marketing & Events requirement form is under development — the Procurement team will follow up directly."]);
+  }
+
+  const budgetRows: [string, string][] = [];
+  if (cat === "IT" || cat === "NON-IT") {
+    budgetRows.push(
+      ["Proposed supplier", [d.supplier_name, d.supplier_website].filter(Boolean).join(" — ")],
+      ["Supplier contact", [d.supplier_contact, d.supplier_email, d.supplier_phone].filter(Boolean).join(" — ")],
+      ["Budget coding", [d.budget_category, d.budget_product, d.budget_region, d.engagement_code].filter(Boolean).join(" · ")],
+      ["Business unit", businessUnitName],
+      ["Budget approver", [value.budget_approver_name, value.budget_approver_email].filter(Boolean).join(" — ")],
+      ["Notes to Procurement", d.notes ?? ""],
+    );
+  } else if (cat === "EVENTS") {
+    budgetRows.push(["Status", "Vendor and budget details for Marketing & Events are under development — Procurement will coordinate directly."]);
+  }
+
   return (
-    <div className="space-y-4">
-      <SectionTitle title="Review & submit" desc="Check the details before sending to the Procurement Team." />
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-        {rows.map(([l, v]) => (
-          <div key={l} className="rounded bg-gray-50 px-3 py-2">
-            <div className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">{l}</div>
-            <div className="mt-0.5 break-words text-sm text-gray-900">{v}</div>
-          </div>
-        ))}
-      </div>
+    <>
+      <div className="pane-title">Review &amp; submit</div>
+      <p className="pane-sub">Please confirm everything below is correct. On submission your requisition receives a PR reference and is routed for approval.</p>
+
+      <ReviewBlock
+        title="1 · Requester details"
+        stepN={1}
+        onStep={onStep}
+        rows={[
+          ["Date", d.date ?? ""],
+          ["Full name", d.requester_name ?? ""],
+          ["WSO2 email", d.requester_email ?? ""],
+          ["Team lead", value.team_lead_email ?? ""],
+        ]}
+      />
+      <ReviewBlock title="2 · Procurement Category" stepN={2} onStep={onStep} rows={[["Procurement category", cat ? CATEGORY_LABEL[cat] : ""]]} />
+      <ReviewBlock title="3 · Requirement Details" stepN={3} onStep={onStep} rows={requirementRows} />
+      <ReviewBlock title="4 · Vendor & budget" stepN={4} onStep={onStep} rows={budgetRows} />
+
       {requireDeclaration && (
-        <label className="flex items-start gap-2 rounded border bg-gray-50 p-4 text-sm text-gray-700">
-          <input type="checkbox" className="mt-0.5 accent-indigo-600" checked={declared} onChange={(e) => setDeclared(e.target.checked)} />
+        <label className="declaration">
+          <input type="checkbox" checked={declared} onChange={(e) => setDeclared(e.target.checked)} />
           <span>
-            I confirm the information is accurate and complete, and authorise the Procurement Team to proceed.
-            No commitment may be made to a vendor until a formal Purchase Order is issued.
+            I confirm the information is accurate and complete, and authorise the Procurement Team to proceed. No commitment may be made to a vendor until a formal Purchase Order is issued.
           </span>
         </label>
       )}
-      {approverMismatch && (
-        <div className="rounded border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-          <span className="font-semibold">Heads up:</span> the budget approver you entered doesn't match
-          the designated approver{designatedLabel ? ` (${designatedLabel})` : ""}. You can still submit —
-          the Procurement Team can reconcile it later.
-        </div>
-      )}
-    </div>
-  );
-}
-
-function SectionTitle({ title, desc }: { title: string; desc: string }) {
-  return (
-    <div>
-      <h2 className="inline-block border-b-2 border-indigo-500 pb-1 text-base font-semibold text-gray-900">{title}</h2>
-      <p className="mt-2 text-sm text-gray-500">{desc}</p>
-    </div>
+    </>
   );
 }
 
@@ -828,7 +858,7 @@ export function emptyRequisition(name = "", email = ""): PurchaseRequestInput {
   const today = new Date().toISOString().slice(0, 10);
   return {
     title: "",
-    budget_unit_id: null,
+    business_unit_id: null,
     comments: "",
     items: [],
     links: [],
@@ -847,7 +877,8 @@ export function emptyRequisition(name = "", email = ""): PurchaseRequestInput {
 // requisitionTitle derives a list/summary title from the form contents.
 export function requisitionTitle(value: PurchaseRequestInput): string {
   const d = value.details ?? {};
-  if (value.category === "IT") return d.it_product?.trim() || d.it_category || "IT requisition";
-  if (value.category === "NON-IT") return d.nit_category || "Non-IT requisition";
+  if (value.category === "IT") return d.it_product?.trim() || "IT requisition";
+  if (value.category === "NON-IT") return d.nit_description?.trim()?.slice(0, 80) || "Non-IT requisition";
+  if (value.category === "EVENTS") return "Marketing & Events requisition";
   return "Purchase requisition";
 }

@@ -1,5 +1,6 @@
 import { Fragment } from "react";
 import { Link } from "react-router-dom";
+import { Box, Chip, Link as MuiLink, Typography } from "@wso2/oxygen-ui";
 import { useProcurementAccess } from "../hooks/useProcurementAccess";
 import { useRelatedDocuments } from "../hooks/usePurchaseRequests";
 import { buildSteps } from "../lib/caseGraph";
@@ -16,42 +17,77 @@ export function ChainStepper({ prId, current }: { prId: number; current: CaseCur
 
   const steps = buildSteps(data, current);
   return (
-    <nav className="mb-4 flex flex-wrap items-center gap-x-1 gap-y-1 rounded border bg-white px-3 py-2">
+    <Box
+      component="nav"
+      sx={{
+        mb: 2,
+        display: "flex",
+        flexWrap: "wrap",
+        alignItems: "center",
+        gap: 0.5,
+        px: 1.5,
+        py: 1,
+        border: 1,
+        borderColor: "divider",
+        borderRadius: 1,
+        bgcolor: "background.paper",
+      }}
+    >
       {steps.map((step, i) => (
         <Fragment key={step.kind}>
-          {i > 0 && <span className="px-0.5 text-gray-300">›</span>}
+          {i > 0 && (
+            <Typography component="span" sx={{ px: 0.25, color: "text.disabled" }}>
+              ›
+            </Typography>
+          )}
           <Step step={step} />
         </Fragment>
       ))}
-    </nav>
+    </Box>
   );
 }
 
 function Step({ step }: { step: StepView }) {
-  const base = "rounded px-2 py-0.5 text-xs font-medium";
   if (step.state === "current") {
     return (
-      <span className={`${base} bg-indigo-600 text-white`}>
-        {step.label}
-        {step.ref ? ` · ${step.ref}` : ""}
-      </span>
+      <Chip
+        size="small"
+        color="primary"
+        label={`${step.label}${step.ref ? ` · ${step.ref}` : ""}`}
+      />
     );
   }
   if (step.state === "ancestor") {
     if (!step.to) {
-      return <span className={`${base} text-gray-400`}>{step.label} · —</span>;
+      return (
+        <Typography variant="caption" sx={{ fontWeight: 500, color: "text.disabled" }}>
+          {step.label} · —
+        </Typography>
+      );
     }
     return (
-      <Link to={step.to} className={`${base} text-indigo-700 hover:bg-indigo-50`}>
+      <MuiLink
+        component={Link}
+        to={step.to}
+        sx={{
+          fontSize: 12,
+          fontWeight: 500,
+          px: 1,
+          py: 0.25,
+          borderRadius: 1,
+          textDecoration: "none",
+          "&:hover": { bgcolor: "action.hover" },
+        }}
+      >
         {step.label} · {step.ref}
-      </Link>
+      </MuiLink>
     );
   }
   // descendant
   return (
-    <span className={`${base} font-normal text-gray-400`}>
+    <Typography variant="caption" sx={{ color: "text.disabled" }}>
       {step.label}
       {step.count ? ` · ${step.count}` : ""}
-    </span>
+    </Typography>
   );
 }

@@ -1,4 +1,5 @@
 import { Link } from "react-router-dom";
+import { Alert, Box, Link as MuiLink } from "@wso2/oxygen-ui";
 import { vendorRef } from "../types/api";
 
 // Shown on the entity list pages when they are filtered to a single vendor via
@@ -13,14 +14,19 @@ export function VendorFilterNotice({
   basePath: string;
 }) {
   return (
-    <div className="mb-4 flex items-center justify-between rounded border border-indigo-200 bg-indigo-50 px-4 py-2 text-sm">
-      <span className="text-indigo-800">
-        Showing records for{" "}
-        <span className="font-medium">{vendorName || vendorRef(vendorId)}</span>
-      </span>
-      <Link to={basePath} className="text-indigo-600 hover:underline">
-        Show all
-      </Link>
-    </div>
+    <Alert
+      severity="info"
+      sx={{ mb: 2, alignItems: "center" }}
+      action={
+        <MuiLink component={Link} to={basePath} variant="body2">
+          Show all
+        </MuiLink>
+      }
+    >
+      Showing records for{" "}
+      <Box component="span" sx={{ fontWeight: 600 }}>
+        {vendorName || vendorRef(vendorId)}
+      </Box>
+    </Alert>
   );
 }

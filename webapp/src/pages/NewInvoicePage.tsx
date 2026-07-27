@@ -1,6 +1,19 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import {
+  Alert,
+  Box,
+  Breadcrumbs,
+  Button,
+  Card,
+  CardContent,
+  IconButton,
+  Link as MuiLink,
+  Stack,
+  Typography,
+} from "@wso2/oxygen-ui";
+import { X } from "@wso2/oxygen-ui-icons-react";
 import { useContract } from "../hooks/useContracts";
 import { InvoiceFields } from "../components/InvoiceFields";
 import { createInvoice, uploadInvoiceDocument } from "../api/invoices";
@@ -41,8 +54,8 @@ export function NewInvoicePage() {
       setValue((v) => ({
         ...v,
         currency: c.currency,
-        cost_allocations: c.budget_unit
-          ? [{ budget_unit_id: c.budget_unit.id, value: 100 }]
+        cost_allocations: c.business_unit
+          ? [{ business_unit_id: c.business_unit.id, value: 100 }]
           : v.cost_allocations,
       }));
       setPrefilled(true);
@@ -87,74 +100,93 @@ export function NewInvoicePage() {
   };
 
   return (
-    <div className="mx-auto max-w-2xl">
-      <div className="mb-4 flex items-center gap-2 text-sm text-gray-500">
-        <Link to="/contracts" className="text-indigo-600">
+    <Box sx={{ maxWidth: 672, mx: "auto", p: { xs: 2, md: 4 } }}>
+      <Breadcrumbs sx={{ mb: 2 }} separator="/">
+        <MuiLink component={Link} to="/contracts" color="primary" underline="hover">
           Contracts
-        </Link>
-        <span>/</span>
-        <Link to={`/contracts/${conId}`} className="text-indigo-600">
+        </MuiLink>
+        <MuiLink component={Link} to={`/contracts/${conId}`} color="primary" underline="hover">
           {conRef(conId)}
-        </Link>
-        <span>/</span>
-        <span>New invoice</span>
-      </div>
-      <h1 className="mb-1 text-xl font-semibold text-gray-900">New invoice</h1>
-      <p className="mb-6 text-sm text-gray-500">
+        </MuiLink>
+        <Typography color="text.secondary">New invoice</Typography>
+      </Breadcrumbs>
+
+      <Typography variant="h5" sx={{ fontWeight: 600 }}>
+        New invoice
+      </Typography>
+      <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5, mb: 3 }}>
         Recording an invoice against {c?.vendor?.name ? `${c.vendor.name}'s ` : "the "}contract {conRef(conId)}.
-      </p>
+      </Typography>
 
-      <div className="rounded border bg-white p-6">
-        <InvoiceFields value={value} onChange={setValue} />
+      <Card variant="outlined">
+        <CardContent>
+          <InvoiceFields value={value} onChange={setValue} />
 
-        <div className="mt-5">
-          <label className="mb-1 block text-sm font-medium text-gray-700">
-            Documents (PDF or DOCX)
-          </label>
-          <input
-            type="file"
-            multiple
-            accept=".pdf,.docx"
-            onChange={(e) => onPickFiles(e.target.files)}
-            className="text-sm"
-          />
-          {files.length > 0 && (
-            <ul className="mt-2 space-y-1 text-sm text-gray-600">
-              {files.map((f, i) => (
-                <li key={i} className="flex items-center justify-between rounded bg-gray-50 px-2 py-1">
-                  <span>{f.name}</span>
-                  <button
-                    type="button"
-                    className="text-gray-400 hover:text-red-600"
-                    onClick={() => setFiles((prev) => prev.filter((_, idx) => idx !== i))}
+          <Box sx={{ mt: 2.5 }}>
+            <Typography variant="subtitle2" sx={{ mb: 1 }}>
+              Documents (PDF or DOCX)
+            </Typography>
+            <input
+              type="file"
+              multiple
+              accept=".pdf,.docx"
+              onChange={(e) => onPickFiles(e.target.files)}
+            />
+            {files.length > 0 && (
+              <Stack spacing={1} sx={{ mt: 2 }}>
+                {files.map((f, i) => (
+                  <Box
+                    key={i}
+                    sx={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      gap: 1,
+                      px: 1,
+                      py: 0.5,
+                      borderRadius: 1,
+                      bgcolor: "action.hover",
+                    }}
                   >
-                    Remove
-                  </button>
-                </li>
-              ))}
-            </ul>
+                    <Typography variant="body2">{f.name}</Typography>
+                    <IconButton
+                      size="small"
+                      aria-label="Remove"
+                      onClick={() => setFiles((prev) => prev.filter((_, idx) => idx !== i))}
+                    >
+                      <X size={16} />
+                    </IconButton>
+                  </Box>
+                ))}
+              </Stack>
+            )}
+          </Box>
+
+          {error && (
+            <Alert severity="error" sx={{ mt: 2 }}>
+              {error}
+            </Alert>
           )}
-        </div>
 
-        {error && <p className="mt-4 text-sm text-red-600">{error}</p>}
-
-        <div className="mt-6 flex gap-2">
-          <button
-            onClick={() => mutation.mutate()}
-            disabled={mutation.isPending || !allocOk}
-            title={allocOk ? undefined : "Assign budget units that add up before saving"}
-            className="rounded bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
-          >
-            {mutation.isPending ? "Saving…" : "Create invoice"}
-          </button>
-          <button
-            onClick={() => navigate(`/contracts/${conId}`)}
-            className="rounded border px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
-          >
-            Cancel
-          </button>
-        </div>
-      </div>
-    </div>
+          <Stack direction="row" spacing={1} sx={{ mt: 3 }}>
+            <Button
+              variant="contained"
+              onClick={() => mutation.mutate()}
+              disabled={mutation.isPending || !allocOk}
+              title={allocOk ? undefined : "Assign budget units that add up before saving"}
+            >
+              {mutation.isPending ? "Saving…" : "Create invoice"}
+            </Button>
+            <Button
+              variant="outlined"
+              color="inherit"
+              onClick={() => navigate(`/contracts/${conId}`)}
+            >
+              Cancel
+            </Button>
+          </Stack>
+        </CardContent>
+      </Card>
+    </Box>
   );
 }

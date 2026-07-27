@@ -1,8 +1,7 @@
 import { useEffect, useRef, useState } from "react";
+import { Box, IconButton, InputAdornment, MenuItem, Paper, TextField, Typography } from "@wso2/oxygen-ui";
+import { ChevronDown } from "@wso2/oxygen-ui-icons-react";
 import type { VendorLookup } from "../types/api";
-
-const inputCls =
-  "w-full rounded border px-3 py-2 pr-9 text-sm focus:border-indigo-500 focus:outline-none";
 
 interface Props {
   value: string;
@@ -37,9 +36,10 @@ export function SupplierNameCombobox({ value, options, onType, onSelect }: Props
     : options;
 
   return (
-    <div ref={wrapRef} className="relative">
-      <input
-        className={inputCls}
+    <Box ref={wrapRef} sx={{ position: "relative" }}>
+      <TextField
+        size="small"
+        fullWidth
         value={value}
         onChange={(e) => {
           onType(e.target.value);
@@ -47,53 +47,67 @@ export function SupplierNameCombobox({ value, options, onType, onSelect }: Props
         }}
         onFocus={() => setOpen(true)}
         placeholder="Search vendors or type a new supplier"
-        role="combobox"
-        aria-expanded={open}
         autoComplete="off"
+        inputProps={{ role: "combobox", "aria-expanded": open }}
+        InputProps={{
+          endAdornment: (
+            <InputAdornment position="end">
+              <IconButton
+                size="small"
+                tabIndex={-1}
+                edge="end"
+                onClick={() => setOpen((o) => !o)}
+                aria-label="Toggle vendor list"
+              >
+                <ChevronDown size={16} />
+              </IconButton>
+            </InputAdornment>
+          ),
+        }}
       />
-      <button
-        type="button"
-        tabIndex={-1}
-        onClick={() => setOpen((o) => !o)}
-        className="absolute inset-y-0 right-0 flex items-center px-2 text-gray-400 hover:text-gray-600"
-        aria-label="Toggle vendor list"
-      >
-        <svg width="16" height="16" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-          <path
-            fillRule="evenodd"
-            d="M5.23 7.21a.75.75 0 011.06.02L10 11.06l3.71-3.83a.75.75 0 111.08 1.04l-4.25 4.39a.75.75 0 01-1.08 0L5.21 8.27a.75.75 0 01.02-1.06z"
-            clipRule="evenodd"
-          />
-        </svg>
-      </button>
 
       {open && (
-        <ul className="absolute z-20 mt-1 max-h-60 w-full overflow-auto rounded border bg-white py-1 text-sm shadow-lg">
+        <Paper
+          variant="outlined"
+          sx={{
+            position: "absolute",
+            zIndex: 20,
+            mt: 0.5,
+            width: "100%",
+            maxHeight: 240,
+            overflow: "auto",
+            py: 0.5,
+          }}
+        >
           {filtered.length === 0 ? (
-            <li className="px-3 py-2 text-gray-400">
-              No matching vendors — “{value.trim() || "…"}” will be added as a new supplier.
-            </li>
+            <Box sx={{ px: 1.5, py: 1 }}>
+              <Typography variant="body2" color="text.secondary">
+                No matching vendors — “{value.trim() || "…"}” will be added as a new supplier.
+              </Typography>
+            </Box>
           ) : (
             filtered.map((v) => (
-              <li key={v.id}>
-                <button
-                  type="button"
-                  onClick={() => {
-                    onSelect(v);
-                    setOpen(false);
-                  }}
-                  className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left hover:bg-indigo-50"
-                >
-                  <span className="text-gray-900">{v.name}</span>
-                  {!v.registered && (
-                    <span className="shrink-0 text-xs text-gray-400">unregistered</span>
-                  )}
-                </button>
-              </li>
+              <MenuItem
+                key={v.id}
+                onClick={() => {
+                  onSelect(v);
+                  setOpen(false);
+                }}
+                sx={{ display: "flex", justifyContent: "space-between", gap: 1 }}
+              >
+                <Typography variant="body2" color="text.primary">
+                  {v.name}
+                </Typography>
+                {!v.registered && (
+                  <Typography variant="caption" color="text.secondary" sx={{ flexShrink: 0 }}>
+                    unregistered
+                  </Typography>
+                )}
+              </MenuItem>
             ))
           )}
-        </ul>
+        </Paper>
       )}
-    </div>
+    </Box>
   );
 }

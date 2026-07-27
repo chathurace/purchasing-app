@@ -1,11 +1,50 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import {
+  Alert,
+  Box,
+  Button,
+  Card,
+  CardContent,
+  Chip,
+  CircularProgress,
+  MenuItem,
+  Paper,
+  Stack,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
+  TextField,
+  Typography,
+} from "@wso2/oxygen-ui";
 import { useUsers } from "../hooks/useUsers";
 import { useIsAdmin } from "../hooks/useIsAdmin";
 import { useMe } from "../hooks/useMe";
 import { addUserRole, createUser, removeUserRole, setUserActive, updateUser } from "../api/users";
 import { ApiError } from "../api/client";
+import { useDirectory } from "../hooks/useDirectory";
+import { EmailAutocomplete } from "../components/EmailAutocomplete";
 import { ASSIGNABLE_ROLES, ROLE_LABELS, type AdminUser, type Role } from "../types/api";
+
+// A user is "invited" (pending, never signed in), "active" (signed in and
+// enabled), or "deactivated" (login blocked) — matching the Status column badges.
+type UserStatusFilter = "all" | "invited" | "active" | "deactivated";
+
+function matchesStatus(u: AdminUser, f: UserStatusFilter): boolean {
+  switch (f) {
+    case "invited":
+      return u.is_active && u.pending;
+    case "active":
+      return u.is_active && !u.pending;
+    case "deactivated":
+      return !u.is_active;
+    default:
+      return true;
+  }
+}
 
 export function UserManagementPage() {
   const isAdmin = useIsAdmin();
@@ -15,8 +54,24 @@ export function UserManagementPage() {
 
   const [email, setEmail] = useState("");
   const [name, setName] = useState("");
+  const { data: directory, isLoading: dirLoading, refresh: refreshDir } = useDirectory(isAdmin);
   const [formError, setFormError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+
+  // Filters (client-side — the whole list is already loaded for admins).
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState<UserStatusFilter>("all");
+
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return (users ?? [])
+      .filter((u) => matchesStatus(u, statusFilter))
+      .filter((u) =>
+        q === ""
+          ? true
+          : u.name.toLowerCase().includes(q) || u.email.toLowerCase().includes(q),
+      );
+  }, [users, search, statusFilter]);
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ["users"] });
   const onActionError = (e: unknown) =>
@@ -56,83 +111,138 @@ export function UserManagementPage() {
 
   if (!isAdmin) {
     return (
-      <div className="rounded border border-dashed bg-white p-8 text-center text-gray-500">
-        You need the admin role to manage users.
-      </div>
+      <Box sx={{ maxWidth: 1200, mx: "auto", p: { xs: 2, md: 4 } }}>
+        <Card variant="outlined" sx={{ borderStyle: "dashed" }}>
+          <CardContent sx={{ p: 4, textAlign: "center" }}>
+            <Typography color="text.secondary">
+              You need the admin role to manage users.
+            </Typography>
+          </CardContent>
+        </Card>
+      </Box>
     );
   }
 
   return (
-    <div>
-      <h1 className="mb-1 text-xl font-semibold text-gray-900">Users</h1>
-      <p className="mb-6 text-sm text-gray-500">
+    <Box sx={{ maxWidth: 1200, mx: "auto", p: { xs: 2, md: 4 } }}>
+      <Typography variant="h5" sx={{ fontWeight: 600 }}>
+        Users
+      </Typography>
+      <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5, mb: 3 }}>
         Add people by email and manage their roles. Anyone can sign in and starts as staff; adding
         them here lets you assign roles before their first login. Deactivating a user blocks them
         from signing in without losing their history.
-      </p>
+      </Typography>
 
       {/* Add user */}
-      <form
-        onSubmit={(e) => {
+      <Card
+        variant="outlined"
+        component="form"
+        onSubmit={(e: React.FormEvent) => {
           e.preventDefault();
           create.mutate();
         }}
-        className="mb-6 rounded border bg-white p-4"
+        sx={{ mb: 3 }}
       >
-        <div className="flex flex-wrap items-end gap-3">
-          <label className="flex flex-col text-sm">
-            <span className="mb-1 font-medium text-gray-700">Email</span>
-            <input
-              type="email"
-              required
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="person@company.com"
-              className="w-64 rounded border px-3 py-1.5 text-sm"
-            />
-          </label>
-          <label className="flex flex-col text-sm">
-            <span className="mb-1 font-medium text-gray-700">Name (optional)</span>
-            <input
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="Jane Doe"
-              className="w-48 rounded border px-3 py-1.5 text-sm"
-            />
-          </label>
-          <button
-            type="submit"
-            disabled={create.isPending || email.trim() === ""}
-            className="rounded bg-indigo-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
-          >
-            {create.isPending ? "Adding…" : "Add user"}
-          </button>
-        </div>
-        {formError && <p className="mt-2 text-sm text-red-600">{formError}</p>}
-      </form>
+        <CardContent>
+          <Stack direction="row" spacing={1.5} sx={{ flexWrap: "wrap", alignItems: "flex-end" }}>
+            <Box>
+              <Typography variant="caption" sx={{ fontWeight: 500, display: "block", mb: 0.5 }}>
+                Email
+              </Typography>
+              <Box sx={{ width: 256 }}>
+                <EmailAutocomplete
+                  value={email}
+                  onChange={(picked, u) => {
+                    setEmail(picked);
+                    if (u && u.name) setName(u.name);
+                  }}
+                  directory={directory ?? []}
+                  refresh={refreshDir}
+                  loading={dirLoading}
+                  placeholder="person@company.com"
+                  ariaLabel="User email"
+                />
+              </Box>
+            </Box>
+            <Box>
+              <Typography variant="caption" sx={{ fontWeight: 500, display: "block", mb: 0.5 }}>
+                Name (optional)
+              </Typography>
+              <TextField
+                size="small"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="Jane Doe"
+                sx={{ width: 192 }}
+              />
+            </Box>
+            <Button
+              type="submit"
+              variant="contained"
+              disabled={create.isPending || email.trim() === ""}
+            >
+              {create.isPending ? "Adding…" : "Add user"}
+            </Button>
+          </Stack>
+          {formError && (
+            <Typography variant="body2" color="error.main" sx={{ mt: 1 }}>
+              {formError}
+            </Typography>
+          )}
+        </CardContent>
+      </Card>
 
       {actionError && (
-        <div className="mb-4 rounded border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-700">
+        <Alert severity="error" sx={{ mb: 2 }}>
           {actionError}
-        </div>
+        </Alert>
       )}
 
-      {isLoading && <p className="text-gray-500">Loading…</p>}
-      {error && <p className="text-red-600">Failed to load users.</p>}
+      <Stack direction="row" spacing={1.5} sx={{ mb: 2, flexWrap: "wrap", alignItems: "center" }}>
+        <TextField
+          size="small"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search by name or email…"
+          sx={{ width: 288 }}
+        />
+        <TextField
+          select
+          size="small"
+          value={statusFilter}
+          onChange={(e) => setStatusFilter(e.target.value as UserStatusFilter)}
+        >
+          <MenuItem value="all">All statuses</MenuItem>
+          <MenuItem value="invited">Invited</MenuItem>
+          <MenuItem value="active">Active</MenuItem>
+          <MenuItem value="deactivated">Deactivated</MenuItem>
+        </TextField>
+      </Stack>
+
+      {isLoading && <CircularProgress size={24} />}
+      {error && <Alert severity="error">Failed to load users.</Alert>}
 
       {users && (
-        <div className="overflow-hidden rounded border bg-white">
-          <table className="w-full text-sm">
-            <thead className="border-b bg-gray-50 text-left text-gray-500">
-              <tr>
-                <th className="px-4 py-2 font-medium">User</th>
-                <th className="px-4 py-2 font-medium">Status</th>
-                <th className="px-4 py-2 font-medium">Roles</th>
-                <th className="px-4 py-2 font-medium text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {users.map((u) => (
+        <TableContainer component={Paper} variant="outlined">
+          <Table size="small">
+            <TableHead>
+              <TableRow>
+                <TableCell>User</TableCell>
+                <TableCell>Status</TableCell>
+                <TableCell>Roles</TableCell>
+                <TableCell align="right">Actions</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {filtered.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={4} align="center" sx={{ py: 4, color: "text.secondary" }}>
+                    No users match.
+                  </TableCell>
+                </TableRow>
+              )}
+              {filtered.map((u) => (
                 <UserRow
                   key={u.id}
                   user={u}
@@ -143,11 +253,11 @@ export function UserManagementPage() {
                   onSave={(email, name) => update.mutateAsync({ id: u.id, email, name })}
                 />
               ))}
-            </tbody>
-          </table>
-        </div>
+            </TableBody>
+          </Table>
+        </TableContainer>
       )}
-    </div>
+    </Box>
   );
 }
 
@@ -193,133 +303,138 @@ function UserRow({
   };
 
   return (
-    <tr className={`border-b last:border-0 ${user.is_active ? "" : "bg-gray-50"}`}>
-      <td className="px-4 py-3 align-top">
+    <TableRow sx={{ bgcolor: user.is_active ? "transparent" : "action.hover" }}>
+      <TableCell sx={{ verticalAlign: "top" }}>
         {editing ? (
-          <div className="flex flex-col gap-2">
-            <input
+          <Stack spacing={1}>
+            <TextField
+              size="small"
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               placeholder="person@company.com"
-              className="w-64 rounded border px-2 py-1 text-sm"
+              sx={{ width: 256 }}
             />
-            <input
+            <TextField
+              size="small"
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder="Name (optional)"
-              className="w-64 rounded border px-2 py-1 text-sm"
+              sx={{ width: 256 }}
             />
-            {editError && <p className="text-xs text-red-600">{editError}</p>}
-          </div>
+            {editError && (
+              <Typography variant="caption" color="error.main">
+                {editError}
+              </Typography>
+            )}
+          </Stack>
         ) : (
           <>
-            <div className="font-medium text-gray-900">{user.email || "(no email)"}</div>
-            {user.name && <div className="text-gray-500">{user.name}</div>}
+            <Typography variant="body2" sx={{ fontWeight: 500 }}>
+              {user.email || "(no email)"}
+            </Typography>
+            {user.name && (
+              <Typography variant="body2" color="text.secondary">
+                {user.name}
+              </Typography>
+            )}
           </>
         )}
-      </td>
-      <td className="px-4 py-3 align-top">
+      </TableCell>
+      <TableCell sx={{ verticalAlign: "top" }}>
         {!user.is_active ? (
-          <span className="rounded bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700">
-            Deactivated
-          </span>
+          <Chip size="small" variant="outlined" color="error" label="Deactivated" />
         ) : user.pending ? (
-          <span className="rounded bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">
-            Invited
-          </span>
+          <Chip size="small" variant="outlined" color="warning" label="Invited" />
         ) : (
-          <span className="rounded bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700">
-            Active
-          </span>
+          <Chip size="small" variant="outlined" color="success" label="Active" />
         )}
-      </td>
-      <td className="px-4 py-3 align-top">
-        <div className="flex flex-wrap items-center gap-1.5">
-          {user.roles.length === 0 && <span className="text-gray-400">—</span>}
+      </TableCell>
+      <TableCell sx={{ verticalAlign: "top" }}>
+        <Stack direction="row" spacing={0.75} sx={{ flexWrap: "wrap", alignItems: "center", gap: 0.75 }}>
+          {user.roles.length === 0 && (
+            <Typography variant="body2" color="text.secondary">
+              —
+            </Typography>
+          )}
           {user.roles.map((r) => (
-            <span
+            <Chip
               key={r}
-              className="inline-flex items-center gap-1 rounded bg-gray-100 px-2 py-0.5 text-xs text-gray-700"
-            >
-              {ROLE_LABELS[r] ?? r}
-              {r !== "staff" && (
-                <button
-                  type="button"
-                  onClick={() => onRemoveRole(r)}
-                  title={`Remove ${ROLE_LABELS[r] ?? r}`}
-                  className="text-gray-400 hover:text-red-600"
-                >
-                  ×
-                </button>
-              )}
-            </span>
+              size="small"
+              label={ROLE_LABELS[r] ?? r}
+              onDelete={r !== "staff" ? () => onRemoveRole(r) : undefined}
+            />
           ))}
           {addable.length > 0 && (
-            <select
+            <TextField
+              select
+              size="small"
               value=""
               onChange={(e) => {
                 if (e.target.value) onAddRole(e.target.value as Role);
-                e.target.value = "";
               }}
-              className="rounded border border-dashed px-2 py-0.5 text-xs text-gray-600"
+              SelectProps={{ displayEmpty: true }}
+              sx={{ minWidth: 120 }}
             >
-              <option value="">+ Add role</option>
+              <MenuItem value="">+ Add role</MenuItem>
               {addable.map((r) => (
-                <option key={r} value={r}>
+                <MenuItem key={r} value={r}>
                   {ROLE_LABELS[r] ?? r}
-                </option>
+                </MenuItem>
               ))}
-            </select>
+            </TextField>
           )}
-        </div>
-      </td>
-      <td className="px-4 py-3 text-right align-top">
-        <div className="flex justify-end gap-2">
+        </Stack>
+      </TableCell>
+      <TableCell align="right" sx={{ verticalAlign: "top" }}>
+        <Stack direction="row" spacing={1} sx={{ justifyContent: "flex-end" }}>
           {editing ? (
             <>
-              <button
-                type="button"
+              <Button
+                size="small"
+                variant="contained"
                 onClick={save}
                 disabled={saving || email.trim() === ""}
-                className="rounded bg-indigo-600 px-3 py-1 text-xs font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
               >
                 {saving ? "Saving…" : "Save"}
-              </button>
-              <button
-                type="button"
+              </Button>
+              <Button
+                size="small"
+                variant="outlined"
+                color="inherit"
                 onClick={() => setEditing(false)}
                 disabled={saving}
-                className="rounded border px-3 py-1 text-xs text-gray-700 hover:bg-gray-50"
               >
                 Cancel
-              </button>
+              </Button>
             </>
           ) : (
             <>
               {user.pending && (
-                <button
-                  type="button"
+                <Button
+                  size="small"
+                  variant="outlined"
+                  color="inherit"
                   onClick={startEdit}
                   title="Edit this invited user's email or name (available until their first sign-in)"
-                  className="rounded border px-3 py-1 text-xs text-gray-700 hover:bg-gray-50"
                 >
                   Edit
-                </button>
+                </Button>
               )}
-              <button
-                type="button"
+              <Button
+                size="small"
+                variant="outlined"
+                color="inherit"
                 onClick={onToggleActive}
                 disabled={isSelf}
                 title={isSelf ? "You cannot deactivate your own account" : undefined}
-                className="rounded border px-3 py-1 text-xs text-gray-700 hover:bg-gray-50 disabled:opacity-40"
               >
                 {user.is_active ? "Deactivate" : "Reactivate"}
-              </button>
+              </Button>
             </>
           )}
-        </div>
-      </td>
-    </tr>
+        </Stack>
+      </TableCell>
+    </TableRow>
   );
 }

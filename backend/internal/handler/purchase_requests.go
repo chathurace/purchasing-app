@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cs/purchasing-app/internal/directory"
 	"github.com/cs/purchasing-app/internal/email"
 	"github.com/cs/purchasing-app/internal/middleware"
 	"github.com/cs/purchasing-app/internal/model"
@@ -30,6 +31,7 @@ type PurchaseRequestsHandler struct {
 	Repo       *repository.Repository
 	Storage    storage.Store
 	Mailer     email.Mailer
+	Directory  *directory.Service
 	AppBaseURL string
 	Log        zerolog.Logger
 }
@@ -47,12 +49,12 @@ type linkInput struct {
 }
 
 type prInput struct {
-	Title        string      `json:"title"`
-	BudgetUnitID *int64      `json:"budget_unit_id"`
-	Comments     string      `json:"comments"`
-	Items        []itemInput `json:"items"`
-	Links        []linkInput `json:"links"`
-	ApproverIDs  []int64     `json:"approver_ids"`
+	Title          string      `json:"title"`
+	BusinessUnitID *int64      `json:"business_unit_id"`
+	Comments       string      `json:"comments"`
+	Items          []itemInput `json:"items"`
+	Links          []linkInput `json:"links"`
+	ApproverIDs    []int64     `json:"approver_ids"`
 	// Requisition form fields.
 	Team                string          `json:"team"`
 	Entity              string          `json:"entity"`
@@ -68,7 +70,7 @@ type prInput struct {
 func (in prInput) toRepo() repository.PurchaseRequestInput {
 	out := repository.PurchaseRequestInput{
 		Title:               strings.TrimSpace(in.Title),
-		BudgetUnitID:        in.BudgetUnitID,
+		BusinessUnitID:      in.BusinessUnitID,
 		Comments:            in.Comments,
 		Team:                strings.TrimSpace(in.Team),
 		Entity:              strings.TrimSpace(in.Entity),
@@ -135,6 +137,11 @@ func (h *PurchaseRequestsHandler) callerCanView(r *http.Request, pr *repository.
 				return true
 			}
 		}
+		// A named budget-step approver (email match) can view the PR awaiting them,
+		// even though they are not a budget-unit approver.
+		if user != nil && callerIsBudgetStepApprover(user, pr.Recommendation) {
+			return true
+		}
 	}
 	return false
 }
@@ -147,6 +154,28 @@ func (h *PurchaseRequestsHandler) callerIsTeamLead(user *repository.User, pr *re
 		return false
 	}
 	return strings.EqualFold(strings.TrimSpace(user.Email), pr.TeamLeadEmail)
+}
+
+// callerIsBudgetStepApprover reports whether the user is the named approver of any
+// additional budget step (case-insensitive email match) on the recommendation.
+// Such an approver is not necessarily a budget-unit approver, so this widens view
+// access to the PR awaiting their step.
+func callerIsBudgetStepApprover(user *repository.User, rec *repository.Recommendation) bool {
+	email := strings.TrimSpace(user.Email)
+	if email == "" {
+		return false
+	}
+	for i := range rec.Approvals {
+		if rec.Approvals[i].ApprovalType != model.RecApprovalBudget {
+			continue
+		}
+		for _, s := range rec.Approvals[i].BudgetSteps {
+			if s.ApproverEmail != "" && strings.EqualFold(email, strings.TrimSpace(s.ApproverEmail)) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // canActOnRecType reports whether the caller has a stake in a recommendation
@@ -215,19 +244,50 @@ func (h *PurchaseRequestsHandler) attachRecActionable(r *http.Request, pr *repos
 	if pr == nil || pr.Recommendation == nil {
 		return
 	}
+	ctx := r.Context()
+	isAdmin := middleware.HasRole(ctx, model.RoleAdmin)
+	user := middleware.UserFromCtx(ctx)
 	actionable := []string{}
 	for i := range pr.Recommendation.Approvals {
 		a := &pr.Recommendation.Approvals[i]
-		if ok, _ := h.canActOnRecType(r, pr, a.ApprovalType); ok {
+		canAct, _ := h.canActOnRecType(r, pr, a.ApprovalType)
+		if canAct {
 			a.CanComment = true
 			actionable = append(actionable, a.ApprovalType)
 		}
 		if ok, _ := h.canApproveRecType(r, pr, a); ok {
 			a.CanApprove = true
 		}
-		a.CanAssign = h.canAssignRecType(r.Context(), a.ApprovalType)
+		a.CanAssign = h.canAssignRecType(ctx, a.ApprovalType)
+		if a.ApprovalType == model.RecApprovalBudget {
+			// canAct here is "qualified budget approver of the unit, or admin" — i.e.
+			// exactly the identity that governs the base step.
+			h.attachBudgetStepActionable(pr, a, canAct, isAdmin, user)
+		}
 	}
 	pr.Recommendation.MyActionableTypes = actionable
+}
+
+// attachBudgetStepActionable fills each budget step's CanDecide / CanManage flags
+// for the caller. baseQualified is canActOnRecType("budget") — the budget-unit /
+// admin identity that governs the base step; additional steps match on the step's
+// named approver email (admin passes). CanDecide layers the serial rule on top: the
+// previous step must be approved and the next step must still be pending (a step
+// locks once the following one decides). CanManage lets procurement edit/remove a
+// still-pending additional step.
+func (h *PurchaseRequestsHandler) attachBudgetStepActionable(pr *repository.PurchaseRequest, a *repository.RecApproval, baseQualified, isAdmin bool, user *repository.User) {
+	canManageChain := pr.MyCanWork // procurement, assigned — set by attachAssignmentActionable
+	for si := range a.BudgetSteps {
+		s := &a.BudgetSteps[si]
+		qualified := baseQualified
+		if !s.IsBase {
+			qualified = isAdmin || (user != nil && strings.EqualFold(strings.TrimSpace(user.Email), strings.TrimSpace(s.ApproverEmail)) && s.ApproverEmail != "")
+		}
+		prevApproved := si == 0 || a.BudgetSteps[si-1].Decision == "approved"
+		nextDecided := si+1 < len(a.BudgetSteps) && a.BudgetSteps[si+1].Decision != "pending"
+		s.CanDecide = qualified && prevApproved && !nextDecided
+		s.CanManage = canManageChain && !s.IsBase && s.Decision == "pending"
+	}
 }
 
 // attachTeamLeadActionable sets my_team_lead_actionable for the caller (true when
@@ -272,9 +332,20 @@ func (h *PurchaseRequestsHandler) List(w http.ResponseWriter, r *http.Request) {
 		scope = repository.PRScopeApprovals
 	}
 
+	// Optional server-side filters (Purchase-requests page controls): ?status=,
+	// ?business_unit_id=, ?vendor_id= (recommended vendor), ?requester_id=,
+	// ?assignee_id=. Bad numeric values are ignored (treated as "no filter")
+	// rather than erroring.
+	q := r.URL.Query()
+	filter := repository.PRListFilter{Status: q.Get("status")}
+	filter.BusinessUnitID = parseInt64Param(q.Get("business_unit_id"))
+	filter.VendorID = parseInt64Param(q.Get("vendor_id"))
+	filter.RequesterID = parseInt64Param(q.Get("requester_id"))
+	filter.AssigneeID = parseInt64Param(q.Get("assignee_id"))
+
 	prs, err := h.Repo.ListPurchaseRequests(ctx, user.ID, user.Email, seesAll,
 		middleware.HasRole(ctx, model.RoleAdmin),
-		middleware.HasRole(ctx, model.RoleLegal), middleware.HasRole(ctx, model.RoleSecurity), scope)
+		middleware.HasRole(ctx, model.RoleLegal), middleware.HasRole(ctx, model.RoleSecurity), scope, filter)
 	if err != nil {
 		reqLog(r).Error().Err(err).Msg("list purchase requests")
 		writeError(w, http.StatusInternalServerError, "failed to list requests")
@@ -374,9 +445,9 @@ func (h *PurchaseRequestsHandler) Get(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "not allowed to view this request")
 		return
 	}
+	h.attachAssignmentActionable(r, pr)
 	h.attachRecActionable(r, pr)
 	h.attachTeamLeadActionable(r, pr)
-	h.attachAssignmentActionable(r, pr)
 	writeJSON(w, http.StatusOK, pr)
 }
 
@@ -866,9 +937,9 @@ func (h *PurchaseRequestsHandler) reloadPR(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusInternalServerError, "failed to reload request")
 		return
 	}
+	h.attachAssignmentActionable(r, pr)
 	h.attachRecActionable(r, pr)
 	h.attachTeamLeadActionable(r, pr)
-	h.attachAssignmentActionable(r, pr)
 	writeJSON(w, http.StatusOK, pr)
 }
 
@@ -989,15 +1060,35 @@ func actorEmail(r *http.Request) string {
 	return ""
 }
 
-func actorName(r *http.Request) string {
+func actorName(r *http.Request, dir *directory.Service) string {
 	u := middleware.UserFromCtx(r.Context())
 	if u == nil {
 		return "Someone"
 	}
-	if strings.TrimSpace(u.Name) != "" {
-		return u.Name
+	return resolveDisplayName(r.Context(), dir, u.Name, u.Email)
+}
+
+// resolveDisplayName returns the best full name to show for a person in
+// notification mail: the identity server's directory display name (matched by
+// email, case-insensitively) when available — which is the authoritative full
+// name even when the stored name is only a username — else the supplied stored
+// name, else the email itself. Directory lookups are served from cache and are
+// best-effort (a miss or error just falls through to the stored name).
+func resolveDisplayName(ctx context.Context, dir *directory.Service, name, email string) string {
+	email = strings.TrimSpace(email)
+	if dir != nil && email != "" {
+		if users, err := dir.List(ctx, false); err == nil {
+			for _, u := range users {
+				if strings.EqualFold(strings.TrimSpace(u.Email), email) && strings.TrimSpace(u.Name) != "" {
+					return u.Name
+				}
+			}
+		}
 	}
-	return u.Email
+	if strings.TrimSpace(name) != "" {
+		return name
+	}
+	return email
 }
 
 // prTitleOrRef is the human label for a PR in notification text.
@@ -1017,7 +1108,7 @@ func (h *PurchaseRequestsHandler) notifyPRSubmitted(r *http.Request, pr *reposit
 	body := fmt.Sprintf(
 		"Hi,\n\n%s has submitted a new purchase request %s — \"%s\". It will be ready for "+
 			"procurement once the team lead approves it.\n\nView it here:\n%s\n",
-		actorName(r), prDisplayRef(pr), title, h.prURL(pr))
+		actorName(r, h.Directory), prDisplayRef(pr), title, h.prURL(pr))
 	notifyPRActivity(r.Context(), h.Repo, h.Mailer, h.Log, pr, actorEmail(r), subject, body)
 }
 
@@ -1029,7 +1120,7 @@ func (h *PurchaseRequestsHandler) notifyTeamLeadRejected(r *http.Request, pr *re
 	body := fmt.Sprintf(
 		"Hi,\n\n%s has rejected purchase request %s — \"%s\" — as team lead, so it will not "+
 			"proceed to procurement.\n",
-		actorName(r), prDisplayRef(pr), title)
+		actorName(r, h.Directory), prDisplayRef(pr), title)
 	if notes != "" {
 		body += fmt.Sprintf("\nNotes:\n%s\n", notes)
 	}
@@ -1045,7 +1136,7 @@ func (h *PurchaseRequestsHandler) notifyRecApproval(r *http.Request, pr *reposit
 	subject := fmt.Sprintf("%s approval granted: %s", label, title)
 	body := fmt.Sprintf(
 		"Hi,\n\n%s has approved the %s card on purchase request %s — \"%s\".\n\nView it here:\n%s\n",
-		actorName(r), approvalType, prDisplayRef(pr), title, h.prURL(pr))
+		actorName(r, h.Directory), approvalType, prDisplayRef(pr), title, h.prURL(pr))
 	notifyPRActivity(r.Context(), h.Repo, h.Mailer, h.Log, pr, actorEmail(r), subject, body)
 }
 
@@ -1056,7 +1147,7 @@ func (h *PurchaseRequestsHandler) notifyRecComment(r *http.Request, pr *reposito
 	subject := fmt.Sprintf("New %s comment: %s", approvalType, title)
 	body := fmt.Sprintf(
 		"Hi,\n\n%s commented on the %s card of purchase request %s — \"%s\".\n",
-		actorName(r), approvalType, prDisplayRef(pr), title)
+		actorName(r, h.Directory), approvalType, prDisplayRef(pr), title)
 	if comment != "" {
 		body += fmt.Sprintf("\nComment:\n%s\n", comment)
 	}
@@ -1072,7 +1163,7 @@ func (h *PurchaseRequestsHandler) notifyRecommendationCreated(r *http.Request, p
 	body := fmt.Sprintf(
 		"Hi,\n\n%s added a procurement recommendation to purchase request %s — \"%s\".\n\n"+
 			"View it here:\n%s\n",
-		actorName(r), prDisplayRef(pr), title, h.prURL(pr))
+		actorName(r, h.Directory), prDisplayRef(pr), title, h.prURL(pr))
 	notifyPRActivity(r.Context(), h.Repo, h.Mailer, h.Log, pr, actorEmail(r), subject, body)
 }
 
@@ -1083,7 +1174,7 @@ func (h *PurchaseRequestsHandler) notifyContractAdded(r *http.Request, pr *repos
 	subject := fmt.Sprintf("Contract added: %s", title)
 	body := fmt.Sprintf(
 		"Hi,\n\n%s added a contract to purchase request %s — \"%s\".\n\nView it here:\n%s\n",
-		actorName(r), prDisplayRef(pr), title, h.prURL(pr))
+		actorName(r, h.Directory), prDisplayRef(pr), title, h.prURL(pr))
 	notifyPRActivity(r.Context(), h.Repo, h.Mailer, h.Log, pr, actorEmail(r), subject, body)
 }
 
@@ -1112,10 +1203,10 @@ func (h *PurchaseRequestsHandler) notifyPRAssignment(r *http.Request, pr *reposi
 	var subject, lead string
 	if role == "collaborator" {
 		subject = fmt.Sprintf("Added as collaborator: %s", title)
-		lead = fmt.Sprintf("%s has added you as a collaborator on", actorName(r))
+		lead = fmt.Sprintf("%s has added you as a collaborator on", actorName(r, h.Directory))
 	} else {
 		subject = fmt.Sprintf("Assigned to you: %s", title)
-		lead = fmt.Sprintf("%s has assigned you to", actorName(r))
+		lead = fmt.Sprintf("%s has assigned you to", actorName(r, h.Directory))
 	}
 	body := fmt.Sprintf(
 		"Hi,\n\n%s purchase request %s — \"%s\". You can now work on it as part of the "+
@@ -1135,10 +1226,7 @@ func (h *PurchaseRequestsHandler) notifyApprovalRequested(pr *repository.Purchas
 	if title == "" {
 		title = prDisplayRef(pr)
 	}
-	who := requester.Name
-	if who == "" {
-		who = requester.Email
-	}
+	who := resolveDisplayName(context.Background(), h.Directory, requester.Name, requester.Email)
 	subject := fmt.Sprintf("Approval requested: %s", title)
 	for _, a := range approvals {
 		if a.Approver == nil {
@@ -1162,10 +1250,7 @@ func (h *PurchaseRequestsHandler) notifyTeamLeadRequested(pr *repository.Purchas
 	if title == "" {
 		title = prDisplayRef(pr)
 	}
-	who := requester.Name
-	if who == "" {
-		who = requester.Email
-	}
+	who := resolveDisplayName(context.Background(), h.Directory, requester.Name, requester.Email)
 	subject := fmt.Sprintf("Team lead approval requested: %s", title)
 	body := fmt.Sprintf(
 		"Hi,\n\n%s has submitted purchase request %s — \"%s\" — and named you as their "+
@@ -1209,10 +1294,7 @@ func (h *PurchaseRequestsHandler) notifyProcurementTeamOfApproval(r *http.Reques
 	if title == "" {
 		title = prDisplayRef(pr)
 	}
-	who := approver.Name
-	if who == "" {
-		who = approver.Email
-	}
+	who := resolveDisplayName(r.Context(), h.Directory, approver.Name, approver.Email)
 	subject := fmt.Sprintf("Ready for procurement — team lead approved: %s", title)
 	body := fmt.Sprintf(
 		"Hi,\n\n%s has approved purchase request %s — \"%s\" — as team lead. "+
@@ -1231,10 +1313,7 @@ func (h *PurchaseRequestsHandler) notifyDecision(pr *repository.PurchaseRequest,
 	if title == "" {
 		title = prDisplayRef(pr)
 	}
-	who := approver.Name
-	if who == "" {
-		who = approver.Email
-	}
+	who := resolveDisplayName(context.Background(), h.Directory, approver.Name, approver.Email)
 	verb := "approved"
 	if status == model.PRApprovalRejected {
 		verb = "rejected"
@@ -1281,14 +1360,7 @@ func (h *PurchaseRequestsHandler) notifyAssignee(r *http.Request, pr *repository
 	if title == "" {
 		title = prDisplayRef(pr)
 	}
-	actor := middleware.UserFromCtx(r.Context())
-	who := ""
-	if actor != nil {
-		who = actor.Name
-		if who == "" {
-			who = actor.Email
-		}
-	}
+	who := actorName(r, h.Directory)
 	label := strings.ToUpper(approvalType[:1]) + approvalType[1:]
 	subject := fmt.Sprintf("%s review requested: %s", label, title)
 	body := fmt.Sprintf(
@@ -1324,6 +1396,51 @@ func (h *PurchaseRequestsHandler) notifyBudgetApprovers(r *http.Request, pr *rep
 		if a != nil && strings.TrimSpace(a.Email) != "" {
 			h.sendAsync(a.Email, subject, body)
 		}
+	}
+}
+
+// notifyBudgetStepApprover emails an additional budget step's named approver that
+// their sign-off is requested. Best-effort; no-op without an email.
+func (h *PurchaseRequestsHandler) notifyBudgetStepApprover(r *http.Request, pr *repository.PurchaseRequest, step *repository.BudgetStep) {
+	if step == nil || strings.TrimSpace(step.ApproverEmail) == "" {
+		return
+	}
+	title := pr.Title
+	if title == "" {
+		title = prDisplayRef(pr)
+	}
+	subject := fmt.Sprintf("Budget approval requested: %s", title)
+	body := fmt.Sprintf(
+		"Hi,\n\nYour budget approval (step %d) is requested for purchase request %s — \"%s\".\n\n"+
+			"Please review and approve it here:\n%s\n",
+		step.Position, prDisplayRef(pr), title, h.prURL(pr))
+	h.sendAsync(step.ApproverEmail, subject, body)
+}
+
+// notifyBudgetStepIfCurrent notifies the approver of the step at the given position
+// only when it is now the current (actionable) step — i.e. it exists and is still
+// pending. Reloads the chain fresh so it reflects the just-committed decision. The
+// base step (position 1) is fanned out via notifyBudgetApprovers instead.
+func (h *PurchaseRequestsHandler) notifyBudgetStepIfCurrent(r *http.Request, pr *repository.PurchaseRequest, position int) {
+	rec, err := h.Repo.GetRecommendation(r.Context(), pr.ID)
+	if err != nil || rec == nil {
+		return
+	}
+	card := findApproval(rec, model.RecApprovalBudget)
+	if card == nil {
+		return
+	}
+	for i := range card.BudgetSteps {
+		s := &card.BudgetSteps[i]
+		if s.Position != position || s.Decision != "pending" {
+			continue
+		}
+		if s.IsBase {
+			h.notifyBudgetApprovers(r, pr)
+		} else {
+			h.notifyBudgetStepApprover(r, pr, s)
+		}
+		return
 	}
 }
 

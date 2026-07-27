@@ -1,4 +1,18 @@
 import { Link, useSearchParams } from "react-router-dom";
+import {
+  Alert,
+  Box,
+  CircularProgress,
+  Link as MuiLink,
+  Paper,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
+  Typography,
+} from "@wso2/oxygen-ui";
 import { useInvoices } from "../hooks/useInvoices";
 import { EntityStatusBadge } from "../components/EntityStatusBadge";
 import { VendorFilterNotice } from "../components/VendorFilterNotice";
@@ -12,64 +26,72 @@ export function InvoiceListPage() {
   const vendorName = rows.find((inv) => inv.vendor)?.vendor?.name;
 
   return (
-    <div>
-      <h1 className="mb-4 text-xl font-semibold text-gray-900">Invoices</h1>
+    <Box sx={{ maxWidth: 1200, mx: "auto", p: { xs: 2, md: 4 } }}>
+      <Typography variant="h5" sx={{ fontWeight: 600, mb: 3 }}>
+        Invoices
+      </Typography>
 
       {vendorFilter > 0 && (
         <VendorFilterNotice vendorId={vendorFilter} vendorName={vendorName} basePath="/invoices" />
       )}
 
-      {isLoading && <p className="text-gray-500">Loading…</p>}
-      {error && <p className="text-red-600">Failed to load invoices.</p>}
+      {isLoading && <CircularProgress size={24} />}
+      {error && <Alert severity="error">Failed to load invoices.</Alert>}
 
       {data && rows.length === 0 && (
-        <div className="rounded border border-dashed bg-white p-8 text-center text-gray-500">
-          {vendorFilter > 0 ? "No invoices for this vendor." : "No invoices yet. Record one from a signed contract."}
-        </div>
+        <Paper variant="outlined" sx={{ p: 6, textAlign: "center", borderStyle: "dashed" }}>
+          <Typography variant="body2" color="text.secondary">
+            {vendorFilter > 0 ? "No invoices for this vendor." : "No invoices yet. Record one from a signed contract."}
+          </Typography>
+        </Paper>
       )}
 
       {data && rows.length > 0 && (
-        <div className="overflow-hidden rounded border bg-white">
-          <table className="w-full text-sm">
-            <thead className="border-b bg-gray-50 text-left text-gray-500">
-              <tr>
-                <th className="px-4 py-2 font-medium">Ref</th>
-                <th className="px-4 py-2 font-medium">Vendor invoice no.</th>
-                <th className="px-4 py-2 font-medium">Vendor</th>
-                <th className="px-4 py-2 font-medium">Amount</th>
-                <th className="px-4 py-2 font-medium">Invoice date</th>
-                <th className="px-4 py-2 font-medium">Contract</th>
-                <th className="px-4 py-2 font-medium">Status</th>
-              </tr>
-            </thead>
-            <tbody>
+        <TableContainer component={Paper} variant="outlined">
+          <Table size="small">
+            <TableHead>
+              <TableRow>
+                <TableCell>Ref</TableCell>
+                <TableCell>Vendor invoice no.</TableCell>
+                <TableCell>Vendor</TableCell>
+                <TableCell>Amount</TableCell>
+                <TableCell>Invoice date</TableCell>
+                <TableCell>Contract</TableCell>
+                <TableCell>Status</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
               {rows.map((inv) => (
-                <tr key={inv.id} className="border-b last:border-0 hover:bg-gray-50">
-                  <td className="px-4 py-2">
-                    <Link to={`/invoices/${inv.id}`} className="font-medium text-indigo-600">
+                <TableRow key={inv.id} hover>
+                  <TableCell>
+                    <MuiLink component={Link} to={`/invoices/${inv.id}`} sx={{ fontWeight: 500 }}>
                       {invRef(inv.id)}
-                    </Link>
-                  </td>
-                  <td className="px-4 py-2 text-gray-700">
-                    {inv.vendor_invoice_no || <span className="text-gray-400">—</span>}
-                  </td>
-                  <td className="px-4 py-2 text-gray-700">{inv.vendor?.name ?? `Vendor #${inv.vendor_id}`}</td>
-                  <td className="px-4 py-2 text-gray-700">{formatMoney(inv.total_amount, inv.currency)}</td>
-                  <td className="px-4 py-2 text-gray-700">{inv.invoice_date}</td>
-                  <td className="px-4 py-2">
-                    <Link to={`/contracts/${inv.contract_id}`} className="text-indigo-600">
+                    </MuiLink>
+                  </TableCell>
+                  <TableCell>
+                    {inv.vendor_invoice_no || (
+                      <Typography component="span" color="text.disabled">
+                        —
+                      </Typography>
+                    )}
+                  </TableCell>
+                  <TableCell>{inv.vendor?.name ?? `Vendor #${inv.vendor_id}`}</TableCell>
+                  <TableCell>{formatMoney(inv.total_amount, inv.currency)}</TableCell>
+                  <TableCell>{inv.invoice_date}</TableCell>
+                  <TableCell>
+                    <MuiLink component={Link} to={`/contracts/${inv.contract_id}`}>
                       {conRef(inv.contract_id)}
-                    </Link>
-                  </td>
-                  <td className="px-4 py-2">
+                    </MuiLink>
+                  </TableCell>
+                  <TableCell>
                     <EntityStatusBadge status={inv.status} />
-                  </td>
-                </tr>
+                  </TableCell>
+                </TableRow>
               ))}
-            </tbody>
-          </table>
-        </div>
+            </TableBody>
+          </Table>
+        </TableContainer>
       )}
-    </div>
+    </Box>
   );
 }

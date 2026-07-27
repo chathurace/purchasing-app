@@ -1,12 +1,11 @@
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { Box, Button, MenuItem, Stack, TextField, Typography } from "@wso2/oxygen-ui";
 import { useVendors } from "../hooks/useVendors";
 import { createVendor } from "../api/vendors";
 import { ApiError } from "../api/client";
 import { emptyVendor } from "./VendorFields";
 import type { VendorInput } from "../types/api";
-
-const inputCls = "w-full rounded border px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none";
 
 interface Props {
   value: number; // selected vendor id (0 = none)
@@ -33,25 +32,25 @@ export function VendorSelect({ value, onChange }: Props) {
   });
 
   return (
-    <div>
-      <div className="flex items-center justify-between">
-        <label className="block text-sm font-medium text-gray-700 mb-1">Vendor</label>
-        <button
-          type="button"
-          className="text-sm text-indigo-600"
-          onClick={() => setAdding((a) => !a)}
-        >
+    <Box>
+      <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", mb: 0.5 }}>
+        <Typography component="label" variant="subtitle2" sx={{ fontWeight: 600 }}>
+          Vendor
+        </Typography>
+        <Button variant="text" size="small" onClick={() => setAdding((a) => !a)}>
           {adding ? "Cancel" : "+ New vendor"}
-        </button>
-      </div>
+        </Button>
+      </Box>
 
       {!adding && (
-        <select
-          className={inputCls}
+        <TextField
+          select
+          size="small"
+          fullWidth
           value={value || ""}
           onChange={(e) => onChange(Number(e.target.value))}
         >
-          <option value="">Select a vendor…</option>
+          <MenuItem value="">Select a vendor…</MenuItem>
           {vendors
             // Only active vendors can be picked for new records, but keep the
             // currently selected vendor visible even if it was deactivated.
@@ -62,48 +61,60 @@ export function VendorSelect({ value, onChange }: Props) {
                 !v.registered ? "unregistered" : null,
               ].filter(Boolean);
               return (
-                <option key={v.id} value={v.id}>
+                <MenuItem key={v.id} value={v.id}>
                   {v.name}
                   {tags.length ? ` (${tags.join(", ")})` : ""}
-                </option>
+                </MenuItem>
               );
             })}
-        </select>
+        </TextField>
       )}
 
       {adding && (
-        <div className="space-y-2 rounded border bg-gray-50 p-3">
-          <input
-            className={inputCls}
+        <Stack
+          spacing={1}
+          sx={{ p: 1.5, borderRadius: 1, bgcolor: "background.default", border: 1, borderColor: "divider" }}
+        >
+          <TextField
+            size="small"
+            fullWidth
             value={draft.name}
             onChange={(e) => setDraft({ ...draft, name: e.target.value })}
             placeholder="Vendor name *"
           />
-          <div className="flex gap-2">
-            <input
-              className={inputCls}
+          <Stack direction="row" spacing={1}>
+            <TextField
+              size="small"
+              fullWidth
               value={draft.contact_name}
               onChange={(e) => setDraft({ ...draft, contact_name: e.target.value })}
               placeholder="Contact name"
             />
-            <input
-              className={inputCls}
+            <TextField
+              size="small"
+              fullWidth
               value={draft.email}
               onChange={(e) => setDraft({ ...draft, email: e.target.value })}
               placeholder="Email"
             />
-          </div>
-          {error && <p className="text-sm text-red-600">{error}</p>}
-          <button
-            type="button"
-            disabled={createMutation.isPending || draft.name.trim() === ""}
-            onClick={() => createMutation.mutate()}
-            className="rounded bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
-          >
-            {createMutation.isPending ? "Adding…" : "Add vendor"}
-          </button>
-        </div>
+          </Stack>
+          {error && (
+            <Typography variant="body2" color="error.main">
+              {error}
+            </Typography>
+          )}
+          <Box>
+            <Button
+              variant="contained"
+              size="small"
+              disabled={createMutation.isPending || draft.name.trim() === ""}
+              onClick={() => createMutation.mutate()}
+            >
+              {createMutation.isPending ? "Adding…" : "Add vendor"}
+            </Button>
+          </Box>
+        </Stack>
       )}
-    </div>
+    </Box>
   );
 }

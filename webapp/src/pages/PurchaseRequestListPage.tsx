@@ -1,103 +1,155 @@
-import { Link } from "react-router-dom";
-import { usePurchaseRequests } from "../hooks/usePurchaseRequests";
+import { useState } from "react";
+import { Navigate } from "react-router-dom";
+import { Box, Button, MenuItem, TextField } from "@wso2/oxygen-ui";
+import { useAllPurchaseRequests } from "../hooks/usePurchaseRequests";
+import { useProcurementAccess } from "../hooks/useProcurementAccess";
 import { useMe } from "../hooks/useMe";
-import { StatusBadge } from "../components/StatusBadge";
-import { prReference } from "../types/api";
+import { useBusinessUnitLookup } from "../hooks/useBusinessUnits";
+import { useVendorLookup } from "../hooks/useVendors";
+import { useUserLookup } from "../hooks/useUserLookup";
+import { PurchaseRequestsList } from "../components/PurchaseRequestsList";
+import { UserComboBox } from "../components/UserComboBox";
+import { PR_STATUS_LABELS, PR_STATUSES, type PRStatus } from "../types/api";
+import type { PRListFilters } from "../api/purchaseRequests";
 
+// A blank value in a <select> maps to "no filter" for that dimension.
+type NumOrBlank = number | "";
+
+// PurchaseRequestListPage is the full procurement queue ("Purchase requests"
+// tab). Only procurement/procurement_admin/admin may see it; everyone else is
+// redirected to their own "My requests" list. Procurement can narrow the queue
+// by status, business unit, recommended vendor, and requester (server-side).
 export function PurchaseRequestListPage() {
-  const { data, isLoading, error } = usePurchaseRequests();
+  const procurement = useProcurementAccess();
   const { data: me } = useMe();
 
+  const [status, setStatus] = useState<PRStatus | "">("");
+  const [businessUnitId, setBusinessUnitId] = useState<NumOrBlank>("");
+  const [vendorId, setVendorId] = useState<NumOrBlank>("");
+  const [requesterId, setRequesterId] = useState<NumOrBlank>("");
+  const [assigneeId, setAssigneeId] = useState<NumOrBlank>("");
+  // Bumped by "Clear filters" to remount the comboboxes so they wipe their text.
+  const [resetKey, setResetKey] = useState(0);
+
+  const filters: PRListFilters = {
+    status: status || undefined,
+    businessUnitId: businessUnitId || undefined,
+    vendorId: vendorId || undefined,
+    requesterId: requesterId || undefined,
+    assigneeId: assigneeId || undefined,
+  };
+  const filtersActive = !!(status || businessUnitId || vendorId || requesterId || assigneeId);
+
+  const { data, isLoading, error } = useAllPurchaseRequests(filters);
+  const { data: businessUnits } = useBusinessUnitLookup(procurement);
+  const { data: vendors } = useVendorLookup();
+  const { data: users } = useUserLookup(procurement);
+
+  if (me && !procurement) {
+    return <Navigate to="/my-requests" replace />;
+  }
+
+  const toolbar = (
+    <Box sx={{ mb: 2, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 1.5 }}>
+      <TextField
+        select
+        size="small"
+        label="Status"
+        value={status}
+        onChange={(e) => setStatus(e.target.value as PRStatus | "")}
+        aria-label="Filter by status"
+        sx={{ minWidth: 160 }}
+      >
+        <MenuItem value="">All statuses</MenuItem>
+        {PR_STATUSES.map((s) => (
+          <MenuItem key={s} value={s}>
+            {PR_STATUS_LABELS[s]}
+          </MenuItem>
+        ))}
+      </TextField>
+
+      <TextField
+        select
+        size="small"
+        label="Business unit"
+        value={businessUnitId}
+        onChange={(e) => setBusinessUnitId(e.target.value ? Number(e.target.value) : "")}
+        aria-label="Filter by business unit"
+        sx={{ minWidth: 180 }}
+      >
+        <MenuItem value="">All business units</MenuItem>
+        {(businessUnits ?? []).map((bu) => (
+          <MenuItem key={bu.id} value={bu.id}>
+            {bu.name}
+          </MenuItem>
+        ))}
+      </TextField>
+
+      <TextField
+        select
+        size="small"
+        label="Vendor"
+        value={vendorId}
+        onChange={(e) => setVendorId(e.target.value ? Number(e.target.value) : "")}
+        aria-label="Filter by recommended vendor"
+        sx={{ minWidth: 160 }}
+      >
+        <MenuItem value="">All vendors</MenuItem>
+        {(vendors ?? []).map((v) => (
+          <MenuItem key={v.id} value={v.id}>
+            {v.name}
+          </MenuItem>
+        ))}
+      </TextField>
+
+      <UserComboBox
+        key={`requester-${resetKey}`}
+        users={users ?? []}
+        value={requesterId}
+        onChange={setRequesterId}
+        label="Requester"
+        placeholder="Search…"
+        ariaLabel="Filter by requester"
+      />
+
+      <UserComboBox
+        key={`assignee-${resetKey}`}
+        users={users ?? []}
+        value={assigneeId}
+        onChange={setAssigneeId}
+        label="Assignee"
+        placeholder="Search…"
+        ariaLabel="Filter by assignee"
+      />
+
+      {filtersActive && (
+        <Button
+          variant="text"
+          onClick={() => {
+            setStatus("");
+            setBusinessUnitId("");
+            setVendorId("");
+            setRequesterId("");
+            setAssigneeId("");
+            setResetKey((k) => k + 1);
+          }}
+        >
+          Clear filters
+        </Button>
+      )}
+    </Box>
+  );
+
   return (
-    <div>
-      <div className="mb-6 flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Purchase requests</h1>
-          <p className="mt-1 text-sm text-slate-500">Track and manage your purchasing requests.</p>
-        </div>
-        <Link to="/requests/new" className="btn-primary">
-          <span className="text-base leading-none">+</span> New request
-        </Link>
-      </div>
-
-      {isLoading && <p className="text-slate-500">Loading…</p>}
-      {error && <p className="text-red-600">Failed to load requests.</p>}
-
-      {data && data.length === 0 && (
-        <div className="app-card border-dashed p-12 text-center">
-          <p className="text-sm font-medium text-slate-700">No purchase requests yet</p>
-          <p className="mt-1 text-sm text-slate-500">Create your first one to get started.</p>
-          <Link to="/requests/new" className="btn-primary mt-4">
-            <span className="text-base leading-none">+</span> New request
-          </Link>
-        </div>
-      )}
-
-      {data && data.length > 0 && (
-        <div className="app-card overflow-hidden">
-          <table className="w-full text-sm">
-            <thead className="border-b border-slate-200 bg-slate-50/70 text-left text-xs font-medium uppercase tracking-wide text-slate-500">
-              <tr>
-                <th className="px-4 py-3">Ref</th>
-                <th className="px-4 py-3">Title</th>
-                <th className="px-4 py-3">Status</th>
-                <th className="px-4 py-3">Assignee</th>
-                <th className="px-4 py-3">Approvals</th>
-                <th className="px-4 py-3">Created</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {data.map((pr) => (
-                <tr key={pr.id} className="transition-colors hover:bg-slate-50/70">
-                  <td className="px-4 py-3">
-                    <Link to={`/requests/${pr.id}`} className="font-medium text-indigo-600 hover:text-indigo-700 hover:underline">
-                      {prReference(pr)}
-                    </Link>
-                  </td>
-                  <td className="px-4 py-3 text-slate-700">{pr.title || <span className="text-slate-400">—</span>}</td>
-                  <td className="px-4 py-3">
-                    <StatusBadge status={pr.status} />
-                  </td>
-                  <td className="px-4 py-3">
-                    {me && pr.assignee_id === me.id ? (
-                      <span className="badge bg-indigo-50 text-indigo-700 ring-indigo-600/20">
-                        <span className="h-1.5 w-1.5 rounded-full bg-indigo-500" />
-                        Assigned to you
-                      </span>
-                    ) : pr.assignee ? (
-                      <span className="text-xs text-slate-600">{pr.assignee.name || pr.assignee.email}</span>
-                    ) : pr.team_lead_status === "approved" ? (
-                      <span className="badge bg-amber-50 text-amber-700 ring-amber-600/20">
-                        <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
-                        Unassigned
-                      </span>
-                    ) : (
-                      <span className="text-slate-400">—</span>
-                    )}
-                  </td>
-                  <td className="px-4 py-3">
-                    {pr.my_approval_status === "pending" ? (
-                      <span className="badge bg-amber-50 text-amber-700 ring-amber-600/20">
-                        <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
-                        Awaiting you
-                      </span>
-                    ) : pr.approvals_total > 0 ? (
-                      <span className="text-xs text-slate-500">
-                        {pr.approvals_approved}/{pr.approvals_total} approved
-                      </span>
-                    ) : (
-                      <span className="text-slate-400">—</span>
-                    )}
-                  </td>
-                  <td className="px-4 py-3 text-slate-500">
-                    {new Date(pr.created_at).toLocaleDateString()}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </div>
+    <PurchaseRequestsList
+      title="Purchase requests"
+      subtitle="All purchasing requests ready for procurement."
+      data={data}
+      isLoading={isLoading}
+      error={error}
+      me={me}
+      toolbar={toolbar}
+      filtersActive={filtersActive}
+    />
   );
 }

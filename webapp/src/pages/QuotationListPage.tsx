@@ -1,4 +1,18 @@
 import { Link, useSearchParams } from "react-router-dom";
+import {
+  Alert,
+  Box,
+  CircularProgress,
+  Link as MuiLink,
+  Paper,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
+  Typography,
+} from "@wso2/oxygen-ui";
 import { useQuotations } from "../hooks/useQuotations";
 import { EntityStatusBadge } from "../components/EntityStatusBadge";
 import { VendorFilterNotice } from "../components/VendorFilterNotice";
@@ -12,60 +26,64 @@ export function QuotationListPage() {
   const vendorName = rows.find((q) => q.vendor)?.vendor?.name;
 
   return (
-    <div>
-      <h1 className="mb-4 text-xl font-semibold text-gray-900">Quotations</h1>
+    <Box sx={{ maxWidth: 1200, mx: "auto", p: { xs: 2, md: 4 } }}>
+      <Typography variant="h5" sx={{ fontWeight: 600, mb: 3 }}>
+        Quotations
+      </Typography>
 
       {vendorFilter > 0 && (
         <VendorFilterNotice vendorId={vendorFilter} vendorName={vendorName} basePath="/quotations" />
       )}
 
-      {isLoading && <p className="text-gray-500">Loading…</p>}
-      {error && <p className="text-red-600">Failed to load quotations.</p>}
+      {isLoading && <CircularProgress size={24} />}
+      {error && <Alert severity="error">Failed to load quotations.</Alert>}
 
       {data && rows.length === 0 && (
-        <div className="rounded border border-dashed bg-white p-8 text-center text-gray-500">
-          {vendorFilter > 0 ? "No quotations for this vendor." : "No quotations yet. Open a purchase request to add one."}
-        </div>
+        <Paper variant="outlined" sx={{ p: 6, textAlign: "center", borderStyle: "dashed" }}>
+          <Typography variant="body2" color="text.secondary">
+            {vendorFilter > 0
+              ? "No quotations for this vendor."
+              : "No quotations yet. Open a purchase request to add one."}
+          </Typography>
+        </Paper>
       )}
 
       {data && rows.length > 0 && (
-        <div className="overflow-hidden rounded border bg-white">
-          <table className="w-full text-sm">
-            <thead className="border-b bg-gray-50 text-left text-gray-500">
-              <tr>
-                <th className="px-4 py-2 font-medium">Ref</th>
-                <th className="px-4 py-2 font-medium">Vendor</th>
-                <th className="px-4 py-2 font-medium">Amount</th>
-                <th className="px-4 py-2 font-medium">Request</th>
-                <th className="px-4 py-2 font-medium">Status</th>
-              </tr>
-            </thead>
-            <tbody>
+        <TableContainer component={Paper} variant="outlined">
+          <Table size="small">
+            <TableHead>
+              <TableRow>
+                <TableCell>Ref</TableCell>
+                <TableCell>Vendor</TableCell>
+                <TableCell>Amount</TableCell>
+                <TableCell>Request</TableCell>
+                <TableCell>Status</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
               {rows.map((q) => (
-                <tr key={q.id} className="border-b last:border-0 hover:bg-gray-50">
-                  <td className="px-4 py-2">
-                    <Link to={`/quotations/${q.id}`} className="font-medium text-indigo-600">
+                <TableRow key={q.id} hover>
+                  <TableCell>
+                    <MuiLink component={Link} to={`/quotations/${q.id}`} sx={{ fontWeight: 500 }}>
                       {quoRef(q.id)}
-                    </Link>
-                  </td>
-                  <td className="px-4 py-2 text-gray-700">
-                    {q.vendor?.name ?? `Vendor #${q.vendor_id}`}
-                  </td>
-                  <td className="px-4 py-2 text-gray-700">{formatMoney(q.total_amount, q.currency)}</td>
-                  <td className="px-4 py-2">
-                    <Link to={`/requests/${q.purchase_request_id}`} className="text-indigo-600">
+                    </MuiLink>
+                  </TableCell>
+                  <TableCell>{q.vendor?.name ?? `Vendor #${q.vendor_id}`}</TableCell>
+                  <TableCell>{formatMoney(q.total_amount, q.currency)}</TableCell>
+                  <TableCell>
+                    <MuiLink component={Link} to={`/requests/${q.purchase_request_id}`}>
                       {`#${q.purchase_request_id}`}
-                    </Link>
-                  </td>
-                  <td className="px-4 py-2">
+                    </MuiLink>
+                  </TableCell>
+                  <TableCell>
                     <EntityStatusBadge status={q.status} />
-                  </td>
-                </tr>
+                  </TableCell>
+                </TableRow>
               ))}
-            </tbody>
-          </table>
-        </div>
+            </TableBody>
+          </Table>
+        </TableContainer>
       )}
-    </div>
+    </Box>
   );
 }

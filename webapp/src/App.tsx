@@ -3,7 +3,9 @@ import { RequireAuth } from "./auth/RequireAuth";
 import { Layout } from "./components/Layout";
 import { LoginPage } from "./pages/LoginPage";
 import { CallbackPage } from "./pages/CallbackPage";
+import { HomePage } from "./pages/HomePage";
 import { PurchaseRequestListPage } from "./pages/PurchaseRequestListPage";
+import { MyRequestsPage } from "./pages/MyRequestsPage";
 import { NewPurchaseRequestPage } from "./pages/NewPurchaseRequestPage";
 import { PurchaseRequestDetailPage } from "./pages/PurchaseRequestDetailPage";
 import { ApprovalsListPage } from "./pages/ApprovalsListPage";
@@ -18,10 +20,11 @@ import { NewInvoicePage } from "./pages/NewInvoicePage";
 import { InvoiceDetailPage } from "./pages/InvoiceDetailPage";
 import { InvoiceListPage } from "./pages/InvoiceListPage";
 import { UserManagementPage } from "./pages/UserManagementPage";
+import { AuditEventsPage } from "./pages/AuditEventsPage";
 import { VendorListPage } from "./pages/VendorListPage";
 import { VendorDetailPage } from "./pages/VendorDetailPage";
-import { BudgetUnitListPage } from "./pages/BudgetUnitListPage";
-import { BudgetUnitDetailPage } from "./pages/BudgetUnitDetailPage";
+import { BusinessUnitListPage } from "./pages/BusinessUnitListPage";
+import { BusinessUnitDetailPage } from "./pages/BusinessUnitDetailPage";
 import { SettingsPage } from "./pages/SettingsPage";
 
 export default function App() {
@@ -36,7 +39,9 @@ export default function App() {
           </RequireAuth>
         }
       >
-        <Route path="/" element={<Navigate to="/requests" replace />} />
+        {/* Role-based home/dashboard — the post-login landing page. */}
+        <Route path="/" element={<HomePage />} />
+        <Route path="/my-requests" element={<MyRequestsPage />} />
         <Route path="/requests" element={<PurchaseRequestListPage />} />
         <Route path="/requests/new" element={<NewPurchaseRequestPage />} />
         <Route path="/requests/:id" element={<PurchaseRequestDetailPage />} />
@@ -60,13 +65,14 @@ export default function App() {
         <Route path="/vendors" element={<VendorListPage />} />
         <Route path="/vendors/:id" element={<VendorDetailPage />} />
 
-        <Route path="/budget-units" element={<BudgetUnitListPage />} />
-        <Route path="/budget-units/:id" element={<BudgetUnitDetailPage />} />
+        <Route path="/business-units" element={<BusinessUnitListPage />} />
+        <Route path="/business-units/:id" element={<BusinessUnitDetailPage />} />
 
         <Route path="/users" element={<UserManagementPage />} />
+        <Route path="/audit" element={<AuditEventsPage />} />
         <Route path="/settings" element={<SettingsPage />} />
       </Route>
-      <Route path="*" element={<Navigate to="/requests" replace />} />
+      <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );
 }

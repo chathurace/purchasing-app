@@ -1,4 +1,18 @@
 import { Link, useSearchParams } from "react-router-dom";
+import {
+  Alert,
+  Box,
+  CircularProgress,
+  Link as MuiLink,
+  Paper,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
+  Typography,
+} from "@wso2/oxygen-ui";
 import { useContracts } from "../hooks/useContracts";
 import { EntityStatusBadge } from "../components/EntityStatusBadge";
 import { VendorFilterNotice } from "../components/VendorFilterNotice";
@@ -12,67 +26,75 @@ export function ContractListPage() {
   const vendorName = rows.find((c) => c.vendor)?.vendor?.name;
 
   return (
-    <div>
-      <div className="mb-6">
-        <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Contracts</h1>
-        <p className="mt-1 text-sm text-slate-500">Vendor contracts across all purchase requests.</p>
-      </div>
+    <Box sx={{ maxWidth: 1200, mx: "auto", p: { xs: 2, md: 4 } }}>
+      <Box sx={{ mb: 3 }}>
+        <Typography variant="h5" sx={{ fontWeight: 600 }}>
+          Contracts
+        </Typography>
+        <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+          Vendor contracts across all purchase requests.
+        </Typography>
+      </Box>
 
       {vendorFilter > 0 && (
         <VendorFilterNotice vendorId={vendorFilter} vendorName={vendorName} basePath="/contracts" />
       )}
 
-      {isLoading && <p className="text-slate-500">Loading…</p>}
-      {error && <p className="text-red-600">Failed to load contracts.</p>}
+      {isLoading && <CircularProgress size={24} />}
+      {error && <Alert severity="error">Failed to load contracts.</Alert>}
 
       {data && rows.length === 0 && (
-        <div className="app-card border-dashed p-12 text-center text-slate-500">
-          {vendorFilter > 0 ? "No contracts for this vendor." : "No contracts yet. Create one from a quotation."}
-        </div>
+        <Paper variant="outlined" sx={{ p: 6, textAlign: "center", borderStyle: "dashed" }}>
+          <Typography variant="body2" color="text.secondary">
+            {vendorFilter > 0 ? "No contracts for this vendor." : "No contracts yet. Create one from a quotation."}
+          </Typography>
+        </Paper>
       )}
 
       {data && rows.length > 0 && (
-        <div className="app-card overflow-hidden">
-          <table className="w-full text-sm">
-            <thead className="border-b border-slate-200 bg-slate-50/70 text-left text-xs font-medium uppercase tracking-wide text-slate-500">
-              <tr>
-                <th className="px-4 py-3">Ref</th>
-                <th className="px-4 py-3">Title</th>
-                <th className="px-4 py-3">Vendor</th>
-                <th className="px-4 py-3">Amount</th>
-                <th className="px-4 py-3">Request</th>
-                <th className="px-4 py-3">Status</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
+        <TableContainer component={Paper} variant="outlined">
+          <Table size="small">
+            <TableHead>
+              <TableRow>
+                <TableCell>Ref</TableCell>
+                <TableCell>Title</TableCell>
+                <TableCell>Vendor</TableCell>
+                <TableCell>Amount</TableCell>
+                <TableCell>Request</TableCell>
+                <TableCell>Status</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
               {rows.map((c) => (
-                <tr key={c.id} className="transition-colors hover:bg-slate-50/70">
-                  <td className="px-4 py-3">
-                    <Link to={`/contracts/${c.id}`} className="font-medium text-indigo-600 hover:text-indigo-700 hover:underline">
+                <TableRow key={c.id} hover>
+                  <TableCell>
+                    <MuiLink component={Link} to={`/contracts/${c.id}`} sx={{ fontWeight: 500 }}>
                       {conRef(c.id)}
-                    </Link>
-                  </td>
-                  <td className="px-4 py-3 text-slate-700">
-                    {c.title || <span className="text-slate-400">—</span>}
-                  </td>
-                  <td className="px-4 py-3 text-slate-700">
-                    {c.vendor?.name ?? `Vendor #${c.vendor_id}`}
-                  </td>
-                  <td className="px-4 py-3 text-slate-700">{formatMoney(c.total_amount, c.currency)}</td>
-                  <td className="px-4 py-3">
-                    <Link to={`/requests/${c.purchase_request_id}`} className="text-indigo-600 hover:underline">
+                    </MuiLink>
+                  </TableCell>
+                  <TableCell>
+                    {c.title || (
+                      <Typography component="span" color="text.disabled">
+                        —
+                      </Typography>
+                    )}
+                  </TableCell>
+                  <TableCell>{c.vendor?.name ?? `Vendor #${c.vendor_id}`}</TableCell>
+                  <TableCell>{formatMoney(c.total_amount, c.currency)}</TableCell>
+                  <TableCell>
+                    <MuiLink component={Link} to={`/requests/${c.purchase_request_id}`}>
                       {`#${c.purchase_request_id}`}
-                    </Link>
-                  </td>
-                  <td className="px-4 py-3">
+                    </MuiLink>
+                  </TableCell>
+                  <TableCell>
                     <EntityStatusBadge status={c.status} />
-                  </td>
-                </tr>
+                  </TableCell>
+                </TableRow>
               ))}
-            </tbody>
-          </table>
-        </div>
+            </TableBody>
+          </Table>
+        </TableContainer>
       )}
-    </div>
+    </Box>
   );
 }

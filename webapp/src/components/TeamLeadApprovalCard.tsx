@@ -1,5 +1,19 @@
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import {
+  Alert,
+  Box,
+  Button,
+  Card,
+  CardContent,
+  Chip,
+  IconButton,
+  Stack,
+  TextField,
+  Tooltip,
+  Typography,
+} from "@wso2/oxygen-ui";
+import { Pencil } from "@wso2/oxygen-ui-icons-react";
 import { ApiError } from "../api/client";
 import {
   moveTeamLeadToPending,
@@ -10,22 +24,16 @@ import {
 import { APPROVAL_STATUS_LABELS } from "../types/api";
 import type { ApprovalStatus, Me, PurchaseRequest } from "../types/api";
 import { ConfirmDialog } from "./ConfirmDialog";
+import { EmailAutocomplete } from "./EmailAutocomplete";
+import { useDirectory } from "../hooks/useDirectory";
 
-const statusCls: Record<ApprovalStatus, string> = {
-  pending: "bg-amber-100 text-amber-800",
-  approved: "bg-green-100 text-green-800",
-  rejected: "bg-red-100 text-red-800",
+type ChipColor = "default" | "success" | "error" | "warning";
+
+const statusColor: Record<ApprovalStatus, ChipColor> = {
+  pending: "warning",
+  approved: "success",
+  rejected: "error",
 };
-
-function PencilIcon() {
-  return (
-    <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth={1.8}
-      strokeLinecap="round" strokeLinejoin="round">
-      <path d="M12 20h9" />
-      <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
-    </svg>
-  );
-}
 
 // TeamLeadApprovalCard renders the single team-lead sign-off on a PR — the gate
 // that lets procurement see and act on it. The team lead (or an admin) records the
@@ -52,6 +60,7 @@ export function TeamLeadApprovalCard({ pr, me }: { pr: PurchaseRequest; me: Me |
 
   const [editingEmail, setEditingEmail] = useState(false);
   const [emailValue, setEmailValue] = useState(pr.team_lead_email ?? "");
+  const { data: directory, isLoading: dirLoading, refresh: refreshDir } = useDirectory(editingEmail);
   const [reminded, setReminded] = useState(false);
 
   // The decision form is shown while pending, or while the actor is editing a
@@ -116,180 +125,221 @@ export function TeamLeadApprovalCard({ pr, me }: { pr: PurchaseRequest; me: Me |
   };
 
   return (
-    <div className="mt-6 rounded border bg-white p-6">
-      <div className="mb-3 flex items-center justify-between">
-        <h2 className="font-medium text-gray-900">Team lead approval</h2>
-        <span className={`rounded px-2 py-0.5 text-xs font-medium ${statusCls[pr.team_lead_status]}`}>
-          {APPROVAL_STATUS_LABELS[pr.team_lead_status]}
-        </span>
-      </div>
-
-      {editingEmail ? (
-        <div className="flex flex-wrap items-center gap-2">
-          <label className="text-sm text-gray-600">Team lead:</label>
-          <input
-            type="email"
-            className="min-w-[16rem] flex-1 rounded border px-2 py-1 text-sm focus:border-indigo-500 focus:outline-none"
-            value={emailValue}
-            onChange={(e) => setEmailValue(e.target.value)}
-            placeholder="team.lead@example.com"
-            autoFocus
-          />
-          <button
-            type="button"
-            className="rounded bg-indigo-600 px-3 py-1 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
-            onClick={() => emailMutation.mutate()}
-            disabled={emailMutation.isPending || !emailValue.trim()}
-          >
-            {emailMutation.isPending ? "Saving…" : "Save"}
-          </button>
-          <button
-            type="button"
-            className="rounded border px-3 py-1 text-sm text-gray-700 hover:bg-gray-50"
-            onClick={() => {
-              setEditingEmail(false);
-              setEmailValue(pr.team_lead_email ?? "");
-              setError(null);
-            }}
-            disabled={emailMutation.isPending}
-          >
-            Cancel
-          </button>
-        </div>
-      ) : (
-        <p className="flex items-center gap-2 text-sm text-gray-600">
-          Team lead: <span className="font-medium text-gray-900">{pr.team_lead_email || "—"}</span>
-          {canEditEmail && !decided && (
-            <button
-              type="button"
-              className="text-gray-400 hover:text-indigo-600"
-              title="Change team lead"
-              onClick={() => {
-                setEmailValue(pr.team_lead_email ?? "");
-                setEditingEmail(true);
-              }}
-            >
-              <PencilIcon />
-            </button>
-          )}
-        </p>
-      )}
-
-      {canEditEmail && !decided && !editingEmail && pr.team_lead_email && (
-        <div className="mt-2">
-          <button
-            type="button"
-            disabled={reminderMutation.isPending}
-            onClick={() => {
-              setReminded(false);
-              reminderMutation.mutate();
-            }}
-            className="rounded border px-3 py-1 text-xs font-medium text-indigo-600 hover:bg-indigo-50 disabled:opacity-50"
-          >
-            {reminderMutation.isPending ? "Sending…" : reminded ? "Reminder sent ✓" : "Send reminder"}
-          </button>
-        </div>
-      )}
-
-      {decided && pr.team_lead_decided_at && (
-        <p className="mt-1 text-sm text-gray-500">
-          {pr.team_lead_status === "approved" ? "Approved" : "Rejected"} on{" "}
-          {new Date(pr.team_lead_decided_at).toLocaleString()}
-        </p>
-      )}
-      {decided && pr.team_lead_notes && !showForm && (
-        <p className="mt-2 whitespace-pre-wrap rounded bg-gray-50 p-3 text-sm text-gray-700">
-          {pr.team_lead_notes}
-        </p>
-      )}
-
-      {!actionable && !decided && (
-        <p className="mt-2 text-sm text-gray-400">Awaiting the team lead's decision.</p>
-      )}
-
-      {showForm && (
-        <div className="mt-4 space-y-3">
-          <textarea
-            className="min-h-[80px] w-full rounded border px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none"
-            value={notes}
-            onChange={(e) => setNotes(e.target.value)}
-            placeholder="Notes (required when rejecting)"
-          />
-          <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              className="rounded bg-green-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-green-700 disabled:opacity-50"
-              onClick={() => requestConfirm("approve")}
-              disabled={mutation.isPending || pendingMutation.isPending}
-            >
-              Approve
-            </button>
-            <button
-              type="button"
-              className="rounded bg-red-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
-              onClick={() => requestConfirm("reject")}
-              disabled={mutation.isPending || pendingMutation.isPending}
-            >
-              Reject
-            </button>
-            {decided && editing && (
-              <button
-                type="button"
-                className="rounded border border-amber-300 px-3 py-1.5 text-sm font-medium text-amber-700 hover:bg-amber-50 disabled:opacity-50"
-                onClick={() => pendingMutation.mutate()}
-                disabled={mutation.isPending || pendingMutation.isPending}
-              >
-                {pendingMutation.isPending ? "Working…" : "Move to pending"}
-              </button>
-            )}
-            {editing && (
-              <button
-                type="button"
-                className="rounded border px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50"
-                onClick={() => {
-                  setEditing(false);
-                  setNotes(pr.team_lead_notes ?? "");
-                  setError(null);
-                }}
-                disabled={mutation.isPending || pendingMutation.isPending}
-              >
-                Cancel
-              </button>
-            )}
-          </div>
-        </div>
-      )}
-
-      {actionable && decided && !editing && (
-        <button
-          type="button"
-          className="mt-4 text-sm font-medium text-indigo-600 hover:text-indigo-700"
-          onClick={() => {
-            setNotes(pr.team_lead_notes ?? "");
-            setEditing(true);
+    <Card variant="outlined" sx={{ mt: 3 }}>
+      <CardContent>
+        <Box
+          sx={{
+            mb: 1.5,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 1,
           }}
         >
-          Edit decision
-        </button>
-      )}
+          <Typography variant="h6">Team lead approval</Typography>
+          <Chip
+            size="small"
+            variant="outlined"
+            color={statusColor[pr.team_lead_status] ?? "default"}
+            label={APPROVAL_STATUS_LABELS[pr.team_lead_status]}
+          />
+        </Box>
 
-      {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
+        {editingEmail ? (
+          <Box sx={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 1 }}>
+            <Typography variant="body2" color="text.secondary">
+              Team lead:
+            </Typography>
+            <Box sx={{ minWidth: "16rem", flex: 1 }}>
+              <EmailAutocomplete
+                value={emailValue}
+                onChange={(email) => setEmailValue(email)}
+                directory={directory ?? []}
+                refresh={refreshDir}
+                loading={dirLoading}
+                placeholder="team.lead@example.com"
+                ariaLabel="Team lead email"
+              />
+            </Box>
+            <Button
+              variant="contained"
+              onClick={() => emailMutation.mutate()}
+              disabled={emailMutation.isPending || !emailValue.trim()}
+            >
+              {emailMutation.isPending ? "Saving…" : "Save"}
+            </Button>
+            <Button
+              variant="outlined"
+              color="inherit"
+              onClick={() => {
+                setEditingEmail(false);
+                setEmailValue(pr.team_lead_email ?? "");
+                setError(null);
+              }}
+              disabled={emailMutation.isPending}
+            >
+              Cancel
+            </Button>
+          </Box>
+        ) : (
+          <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+            <Typography variant="body2" color="text.secondary">
+              Team lead:{" "}
+              <Typography component="span" variant="body2" sx={{ fontWeight: 600 }} color="text.primary">
+                {pr.team_lead_email || "—"}
+              </Typography>
+            </Typography>
+            {canEditEmail && !decided && (
+              <Tooltip title="Change team lead">
+                <IconButton
+                  size="small"
+                  onClick={() => {
+                    setEmailValue(pr.team_lead_email ?? "");
+                    setEditingEmail(true);
+                  }}
+                >
+                  <Pencil size={16} />
+                </IconButton>
+              </Tooltip>
+            )}
+          </Box>
+        )}
 
-      {confirm && (
-        <ConfirmDialog
-          title={confirm === "approve" ? "Approve this request?" : "Reject this request?"}
-          message={
-            confirm === "approve"
-              ? "Approving lets procurement see and start working on this purchase request."
-              : "Rejecting keeps this request hidden from procurement. The requester can edit and resubmit it."
-          }
-          confirmLabel={confirm === "approve" ? "Approve" : "Reject"}
-          danger={confirm === "reject"}
-          busy={mutation.isPending}
-          onConfirm={() => mutation.mutate(confirm)}
-          onCancel={() => setConfirm(null)}
-        />
-      )}
-    </div>
+        {canEditEmail && !decided && !editingEmail && pr.team_lead_email && (
+          <Box sx={{ mt: 1 }}>
+            <Button
+              size="small"
+              variant="outlined"
+              disabled={reminderMutation.isPending}
+              onClick={() => {
+                setReminded(false);
+                reminderMutation.mutate();
+              }}
+            >
+              {reminderMutation.isPending ? "Sending…" : reminded ? "Reminder sent ✓" : "Send reminder"}
+            </Button>
+          </Box>
+        )}
+
+        {decided && pr.team_lead_decided_at && (
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+            {pr.team_lead_status === "approved" ? "Approved" : "Rejected"} on{" "}
+            {new Date(pr.team_lead_decided_at).toLocaleString()}
+          </Typography>
+        )}
+        {decided && pr.team_lead_notes && !showForm && (
+          <Typography
+            variant="body2"
+            color="text.secondary"
+            sx={{
+              mt: 1,
+              whiteSpace: "pre-wrap",
+              bgcolor: "background.default",
+              borderRadius: 1,
+              p: 1.5,
+            }}
+          >
+            {pr.team_lead_notes}
+          </Typography>
+        )}
+
+        {!actionable && !decided && (
+          <Typography variant="body2" color="text.disabled" sx={{ mt: 1 }}>
+            Awaiting the team lead's decision.
+          </Typography>
+        )}
+
+        {showForm && (
+          <Stack spacing={1.5} sx={{ mt: 2 }}>
+            <TextField
+              fullWidth
+              multiline
+              minRows={3}
+              size="small"
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              placeholder="Notes (required when rejecting)"
+            />
+            <Box sx={{ display: "flex", flexWrap: "wrap", gap: 1 }}>
+              <Button
+                variant="contained"
+                color="success"
+                onClick={() => requestConfirm("approve")}
+                disabled={mutation.isPending || pendingMutation.isPending}
+              >
+                Approve
+              </Button>
+              <Button
+                variant="contained"
+                color="error"
+                onClick={() => requestConfirm("reject")}
+                disabled={mutation.isPending || pendingMutation.isPending}
+              >
+                Reject
+              </Button>
+              {decided && editing && (
+                <Button
+                  variant="outlined"
+                  color="warning"
+                  onClick={() => pendingMutation.mutate()}
+                  disabled={mutation.isPending || pendingMutation.isPending}
+                >
+                  {pendingMutation.isPending ? "Working…" : "Move to pending"}
+                </Button>
+              )}
+              {editing && (
+                <Button
+                  variant="outlined"
+                  color="inherit"
+                  onClick={() => {
+                    setEditing(false);
+                    setNotes(pr.team_lead_notes ?? "");
+                    setError(null);
+                  }}
+                  disabled={mutation.isPending || pendingMutation.isPending}
+                >
+                  Cancel
+                </Button>
+              )}
+            </Box>
+          </Stack>
+        )}
+
+        {actionable && decided && !editing && (
+          <Button
+            variant="text"
+            sx={{ mt: 2 }}
+            onClick={() => {
+              setNotes(pr.team_lead_notes ?? "");
+              setEditing(true);
+            }}
+          >
+            Edit decision
+          </Button>
+        )}
+
+        {error && (
+          <Alert severity="error" sx={{ mt: 2 }}>
+            {error}
+          </Alert>
+        )}
+
+        {confirm && (
+          <ConfirmDialog
+            title={confirm === "approve" ? "Approve this request?" : "Reject this request?"}
+            message={
+              confirm === "approve"
+                ? "Approving lets procurement see and start working on this purchase request."
+                : "Rejecting keeps this request hidden from procurement. The requester can edit and resubmit it."
+            }
+            confirmLabel={confirm === "approve" ? "Approve" : "Reject"}
+            danger={confirm === "reject"}
+            busy={mutation.isPending}
+            onConfirm={() => mutation.mutate(confirm)}
+            onCancel={() => setConfirm(null)}
+          />
+        )}
+      </CardContent>
+    </Card>
   );
 }

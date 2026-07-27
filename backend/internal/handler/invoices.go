@@ -28,8 +28,8 @@ type invoiceItemInput struct {
 }
 
 type invoiceAllocInput struct {
-	BudgetUnitID int64   `json:"budget_unit_id"`
-	Value        float64 `json:"value"`
+	BusinessUnitID int64   `json:"business_unit_id"`
+	Value          float64 `json:"value"`
 }
 
 type invoiceInput struct {
@@ -55,7 +55,7 @@ func (in invoiceInput) toRepo() repository.InvoiceInput {
 	}
 	allocs := make([]repository.CostAllocation, 0, len(in.CostAllocations))
 	for _, a := range in.CostAllocations {
-		allocs = append(allocs, repository.CostAllocation{BudgetUnitID: a.BudgetUnitID, Value: a.Value})
+		allocs = append(allocs, repository.CostAllocation{BusinessUnitID: a.BusinessUnitID, Value: a.Value})
 	}
 	mode := strings.ToLower(strings.TrimSpace(in.AllocationMode))
 	if mode == "" {
@@ -74,8 +74,8 @@ func (in invoiceInput) toRepo() repository.InvoiceInput {
 	}
 }
 
-// validateAllocations enforces the budget-unit allocation rules: a valid mode,
-// at least one allocation, no duplicate or invalid budget units, and a total
+// validateAllocations enforces the business-unit allocation rules: a valid mode,
+// at least one allocation, no duplicate or invalid business units, and a total
 // that adds up (100% in percentage mode, or the invoice total in amount mode).
 // Returns a user-facing message and false when invalid.
 func validateAllocations(in repository.InvoiceInput, total float64) (string, bool) {
@@ -83,18 +83,18 @@ func validateAllocations(in repository.InvoiceInput, total float64) (string, boo
 		return "allocation mode must be 'percentage' or 'amount'", false
 	}
 	if len(in.CostAllocations) == 0 {
-		return "at least one budget-unit allocation is required", false
+		return "at least one business-unit allocation is required", false
 	}
 	seen := map[int64]bool{}
 	var sum float64
 	for _, a := range in.CostAllocations {
-		if a.BudgetUnitID <= 0 {
-			return "each allocation must reference a budget unit", false
+		if a.BusinessUnitID <= 0 {
+			return "each allocation must reference a business unit", false
 		}
-		if seen[a.BudgetUnitID] {
-			return "each budget unit can appear only once in the allocation", false
+		if seen[a.BusinessUnitID] {
+			return "each business unit can appear only once in the allocation", false
 		}
-		seen[a.BudgetUnitID] = true
+		seen[a.BusinessUnitID] = true
 		if a.Value < 0 {
 			return "allocation values cannot be negative", false
 		}

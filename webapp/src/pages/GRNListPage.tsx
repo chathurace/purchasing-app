@@ -1,4 +1,18 @@
 import { Link, useSearchParams } from "react-router-dom";
+import {
+  Alert,
+  Box,
+  CircularProgress,
+  Link as MuiLink,
+  Paper,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
+  Typography,
+} from "@wso2/oxygen-ui";
 import { useGRNs } from "../hooks/useGrns";
 import { VendorFilterNotice } from "../components/VendorFilterNotice";
 import { conRef, grnRef } from "../types/api";
@@ -11,54 +25,58 @@ export function GRNListPage() {
   const vendorName = rows.find((g) => g.vendor)?.vendor?.name;
 
   return (
-    <div>
-      <h1 className="mb-4 text-xl font-semibold text-gray-900">Goods received notes</h1>
+    <Box sx={{ maxWidth: 1200, mx: "auto", p: { xs: 2, md: 4 } }}>
+      <Typography variant="h5" sx={{ fontWeight: 600, mb: 3 }}>
+        Goods received notes
+      </Typography>
 
       {vendorFilter > 0 && (
         <VendorFilterNotice vendorId={vendorFilter} vendorName={vendorName} basePath="/grns" />
       )}
 
-      {isLoading && <p className="text-gray-500">Loading…</p>}
-      {error && <p className="text-red-600">Failed to load GRNs.</p>}
+      {isLoading && <CircularProgress size={24} />}
+      {error && <Alert severity="error">Failed to load GRNs.</Alert>}
 
       {data && rows.length === 0 && (
-        <div className="rounded border border-dashed bg-white p-8 text-center text-gray-500">
-          {vendorFilter > 0 ? "No GRNs for this vendor." : "No GRNs yet. Record one from a signed contract."}
-        </div>
+        <Paper variant="outlined" sx={{ p: 6, textAlign: "center", borderStyle: "dashed" }}>
+          <Typography variant="body2" color="text.secondary">
+            {vendorFilter > 0 ? "No GRNs for this vendor." : "No GRNs yet. Record one from a signed contract."}
+          </Typography>
+        </Paper>
       )}
 
       {data && rows.length > 0 && (
-        <div className="overflow-hidden rounded border bg-white">
-          <table className="w-full text-sm">
-            <thead className="border-b bg-gray-50 text-left text-gray-500">
-              <tr>
-                <th className="px-4 py-2 font-medium">Ref</th>
-                <th className="px-4 py-2 font-medium">Vendor</th>
-                <th className="px-4 py-2 font-medium">Received</th>
-                <th className="px-4 py-2 font-medium">Contract</th>
-              </tr>
-            </thead>
-            <tbody>
+        <TableContainer component={Paper} variant="outlined">
+          <Table size="small">
+            <TableHead>
+              <TableRow>
+                <TableCell>Ref</TableCell>
+                <TableCell>Vendor</TableCell>
+                <TableCell>Received</TableCell>
+                <TableCell>Contract</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
               {rows.map((g) => (
-                <tr key={g.id} className="border-b last:border-0 hover:bg-gray-50">
-                  <td className="px-4 py-2">
-                    <Link to={`/grns/${g.id}`} className="font-medium text-indigo-600">
+                <TableRow key={g.id} hover>
+                  <TableCell>
+                    <MuiLink component={Link} to={`/grns/${g.id}`} sx={{ fontWeight: 500 }}>
                       {grnRef(g.id)}
-                    </Link>
-                  </td>
-                  <td className="px-4 py-2 text-gray-700">{g.vendor?.name ?? `Vendor #${g.vendor_id}`}</td>
-                  <td className="px-4 py-2 text-gray-700">{g.received_date}</td>
-                  <td className="px-4 py-2">
-                    <Link to={`/contracts/${g.contract_id}`} className="text-indigo-600">
+                    </MuiLink>
+                  </TableCell>
+                  <TableCell>{g.vendor?.name ?? `Vendor #${g.vendor_id}`}</TableCell>
+                  <TableCell>{g.received_date}</TableCell>
+                  <TableCell>
+                    <MuiLink component={Link} to={`/contracts/${g.contract_id}`}>
                       {conRef(g.contract_id)}
-                    </Link>
-                  </td>
-                </tr>
+                    </MuiLink>
+                  </TableCell>
+                </TableRow>
               ))}
-            </tbody>
-          </table>
-        </div>
+            </TableBody>
+          </Table>
+        </TableContainer>
       )}
-    </div>
+    </Box>
   );
 }

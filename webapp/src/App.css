@@ -1,0 +1,33 @@
+/* ── App-level global CSS (Oxygen UI retheme, docs/plans/19) ───────────────
+   Ported from the finops-app webapp. @wso2/oxygen-ui's CssBaseline (mounted at
+   the app root via OxygenUIThemeProvider in main.tsx) provides the box-sizing
+   reset, margin/padding removal, and global typography/colour — this file only
+   carries what CssBaseline does not: the mount point's min-height, form-control
+   font inheritance, and the light-mode "acrylic orange" gradient background
+   wash that gives the app its WSO2 identity. The app is light-only for now
+   (see main.tsx), but the dark selector is kept for when dark mode returns. */
+
+#root {
+  min-height: 100vh;
+}
+
+button {
+  font-family: inherit;
+}
+
+input,
+select,
+textarea {
+  font-family: inherit;
+}
+
+/* Light mode gets the acrylic-orange gradient wash: a warm orange glow top
+   right, a cool violet glow mid-left, over the theme's default background. */
+html[data-color-scheme="light"] body {
+  background-attachment: fixed;
+  background-image:
+    radial-gradient(circle at 65% 30%, rgba(255, 116, 0, 0.1) 10%, rgba(255, 255, 255, 0) 40% 40%),
+    radial-gradient(circle at 15% 50%, rgba(74, 41, 165, 0.1) 1%, rgba(255, 255, 255, 0) 40% 70%),
+    radial-gradient(circle at center, rgba(255, 255, 255, 0.6) 0%, var(--oxygen-palette-background-default) 100%);
+  background-blend-mode: normal;
+}

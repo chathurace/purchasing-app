@@ -269,7 +269,7 @@ func (h *ContractsHandler) loadViewable(w http.ResponseWriter, r *http.Request) 
 	}
 	user := middleware.UserFromCtx(ctx)
 	if user != nil {
-		ok, err := h.Repo.IsApproverForPR(ctx, c.PurchaseRequestID, user.ID,
+		ok, err := h.Repo.IsApproverForPR(ctx, c.PurchaseRequestID, user.ID, user.Email,
 			middleware.HasRole(ctx, model.RoleLegal), middleware.HasRole(ctx, model.RoleSecurity))
 		if err != nil {
 			reqLog(r).Error().Err(err).Msg("check contract approver access")

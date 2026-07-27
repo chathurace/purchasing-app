@@ -24,6 +24,24 @@ type Config struct {
 		InsecureSkipVerify bool   `yaml:"insecure_skip_verify"`
 	} `yaml:"oidc"`
 
+	// SCIM configures the connection to the identity server's SCIM2 API, used to
+	// populate user-autocomplete suggestions from the org directory. When
+	// disabled (the default), directory lookups fall back to the local DB users,
+	// so dev runs without an M2M app. The client authenticates with the OAuth2
+	// client-credentials grant (a machine-to-machine app in WSO2 IS / Asgardeo
+	// holding the `internal_user_mgt_list` scope).
+	SCIM struct {
+		Enabled            bool     `yaml:"enabled"`
+		BaseURL            string   `yaml:"base_url"`  // SCIM2 base, e.g. https://localhost:9443/scim2
+		TokenURL           string   `yaml:"token_url"` // token endpoint, e.g. https://localhost:9443/oauth2/token
+		ClientID           string   `yaml:"client_id"`
+		ClientSecret       string   `yaml:"client_secret"`
+		Scopes             []string `yaml:"scopes"`
+		InsecureSkipVerify bool     `yaml:"insecure_skip_verify"` // dev only — trusts self-signed cert
+		CacheTTLSeconds    int      `yaml:"cache_ttl_seconds"`    // directory cache lifetime; default 600
+		PageSize           int      `yaml:"page_size"`            // SCIM page size; default 100
+	} `yaml:"scim"`
+
 	Storage struct {
 		Backend   string `yaml:"backend"` // "local" (default) or "gdrive"
 		FilesRoot string `yaml:"files_root"`
@@ -110,6 +128,12 @@ func Load(path string) (*Config, error) {
 	if cfg.Email.SMTPPort == 0 {
 		cfg.Email.SMTPPort = 587
 	}
+	if cfg.SCIM.CacheTTLSeconds == 0 {
+		cfg.SCIM.CacheTTLSeconds = 600
+	}
+	if cfg.SCIM.PageSize == 0 {
+		cfg.SCIM.PageSize = 100
+	}
 	if cfg.Email.AppBaseURL == "" && len(cfg.CORS.AllowedOrigins) > 0 {
 		cfg.Email.AppBaseURL = cfg.CORS.AllowedOrigins[0]
 	}
@@ -123,6 +147,17 @@ func Load(path string) (*Config, error) {
 	}
 	if cfg.OIDC.ClientID == "" {
 		return nil, fmt.Errorf("oidc.client_id is required")
+	}
+	if cfg.SCIM.Enabled {
+		if cfg.SCIM.BaseURL == "" {
+			return nil, fmt.Errorf("scim.base_url is required when scim.enabled is true")
+		}
+		if cfg.SCIM.TokenURL == "" {
+			return nil, fmt.Errorf("scim.token_url is required when scim.enabled is true")
+		}
+		if cfg.SCIM.ClientID == "" || cfg.SCIM.ClientSecret == "" {
+			return nil, fmt.Errorf("scim.client_id and scim.client_secret are required when scim.enabled is true")
+		}
 	}
 	switch cfg.Storage.Backend {
 	case "local":

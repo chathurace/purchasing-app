@@ -1,198 +1,253 @@
-import { useEffect, useRef, useState } from "react";
-import { NavLink, Outlet } from "react-router-dom";
+import { useState } from "react";
+import type { MouseEvent } from "react";
+import { Link, Outlet, useLocation } from "react-router-dom";
+import {
+  AppShell,
+  Header,
+  Sidebar,
+  Drawer,
+  Box,
+  Menu,
+  MenuItem,
+  useMediaQuery,
+  useTheme,
+} from "@wso2/oxygen-ui";
+import { ChevronDown, LogOut } from "@wso2/oxygen-ui-icons-react";
 import { useAuth } from "../auth/AuthContext";
 import { useMe } from "../hooks/useMe";
 import { useProcurementAccess } from "../hooks/useProcurementAccess";
 import { useIsAdmin } from "../hooks/useIsAdmin";
-import { useIsApprover } from "../hooks/useIsApprover";
 import { useCanManageVendors } from "../hooks/useCanManageVendors";
-import { useCanManageBudgetUnits } from "../hooks/useCanManageBudgetUnits";
+import { useCanManageBusinessUnits } from "../hooks/useCanManageBusinessUnits";
+import { useCanViewAuditLog } from "../hooks/useCanViewAuditLog";
+import { getNavGroups } from "../lib/nav/navModel";
+import type { NavGroup } from "../lib/nav/navModel";
 
-const linkCls = ({ isActive }: { isActive: boolean }) =>
-  `rounded-lg px-3 py-1.5 text-sm font-medium transition ${
-    isActive
-      ? "bg-indigo-50 text-indigo-700 shadow-sm ring-1 ring-inset ring-indigo-100"
-      : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
-  }`;
+// ── Application shell (Oxygen UI retheme, docs/plans/19) ────────────────────
+//
+// Replaces the old top-bar/horizontal-nav identity with Oxygen's side-nav app
+// shell: a collapsible left Sidebar, a slim Header (brand + user menu), and a
+// content area rendering the routed <Outlet/>. Modelled on finops-app's
+// components/shell/Shell.tsx. Login and the auth callback render outside this
+// (they are separate top-level routes), matching the previous behaviour.
+//
+// Desktop vs mobile is hand-tracked (not delegated to Oxygen's useAppShell):
+// `desktopCollapsed` toggles the full-width sidebar to a 64px icon rail on
+// desktop; `mobileOpen` shows the same nav as a dismissible overlay Drawer on
+// narrow viewports (nothing permanently eating content width).
+const MOBILE_QUERY = "(max-width:899.95px)"; // MUI's `md` breakpoint (900px)
+const SIDEBAR_WIDTH = 250; // Sidebar's own expanded-width default
 
-function initials(email?: string): string {
-  if (!email) return "?";
-  const name = email.split("@")[0];
-  const parts = name.split(/[.\-_]/).filter(Boolean);
-  const letters = (parts.length >= 2 ? parts[0][0] + parts[1][0] : name.slice(0, 2)) || "?";
-  return letters.toUpperCase();
+function resolveActiveId(pathname: string, groups: NavGroup[]): string | undefined {
+  const items = groups.flatMap((g) => g.items);
+  const exact = items.find((i) => i.to === pathname);
+  if (exact) return exact.id;
+  // Prefix match for nested routes (e.g. /requests/:id highlights Purchase
+  // requests). Excludes the root ('/') so Home doesn't swallow every route.
+  const prefixMatches = items
+    .filter((i) => i.to !== "/" && pathname.startsWith(`${i.to}/`))
+    .sort((a, b) => b.to.length - a.to.length);
+  return prefixMatches[0]?.id;
 }
 
-export function Layout() {
-  const { logout } = useAuth();
-  const { data: me } = useMe();
-  const procurement = useProcurementAccess();
-  const isAdmin = useIsAdmin();
-  const isApprover = useIsApprover();
-  const canManageVendors = useCanManageVendors();
-  const canManageBudgetUnits = useCanManageBudgetUnits();
-  // Requests and Approvals are visible to everyone (staff-only users included);
-  // the Approvals page just lists whatever is awaiting the caller. Approvers
-  // (named approvers, or budget/legal/security card actors) and procurement
-  // additionally see the Quotations and Contracts tabs, with a read-only,
-  // PR-scoped view of the latter two.
-  const canApprove = procurement || isApprover;
-
+function SidebarNav({
+  groups,
+  collapsed,
+  activeId,
+  onSelect,
+}: {
+  groups: NavGroup[];
+  collapsed: boolean;
+  activeId: string | undefined;
+  onSelect: () => void;
+}) {
   return (
-    <div className="min-h-screen">
-      <header className="sticky top-0 z-30 border-b border-slate-200/70 bg-white/80 backdrop-blur-md">
-        <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-4 py-2.5">
-          <div className="flex min-w-0 items-center gap-6">
-            <span className="flex items-center gap-2.5">
-              <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-indigo-500 to-indigo-700 text-sm font-bold text-white shadow-sm">
-                P
-              </span>
-              <span className="text-[15px] font-semibold tracking-tight text-slate-900">
-                Purchasing
-              </span>
-            </span>
-            <nav className="flex items-center gap-1">
-              <NavLink to="/requests" className={linkCls}>
-                Requests
-              </NavLink>
-              <NavLink to="/approvals" className={linkCls}>
-                Approvals
-              </NavLink>
-              {canApprove && (
-                <NavLink to="/quotations" className={linkCls}>
-                  Quotations
-                </NavLink>
-              )}
-              {canApprove && (
-                <NavLink to="/contracts" className={linkCls}>
-                  Contracts
-                </NavLink>
-              )}
-              {procurement && (
-                <>
-                  <NavLink to="/grns" className={linkCls}>
-                    GRNs
-                  </NavLink>
-                  <NavLink to="/invoices" className={linkCls}>
-                    Invoices
-                  </NavLink>
-                </>
-              )}
-              {canManageVendors && (
-                <NavLink to="/vendors" className={linkCls}>
-                  Vendors
-                </NavLink>
-              )}
-              {canManageBudgetUnits && (
-                <NavLink to="/budget-units" className={linkCls}>
-                  Budget units
-                </NavLink>
-              )}
-              {isAdmin && (
-                <NavLink to="/users" className={linkCls}>
-                  Users
-                </NavLink>
-              )}
-              {canManageBudgetUnits && (
-                <NavLink to="/settings" className={linkCls}>
-                  Settings
-                </NavLink>
-              )}
-            </nav>
-          </div>
-          <div className="flex shrink-0 items-center">
-            {me && <UserMenu email={me.email} onSignOut={logout} />}
-          </div>
-        </div>
-      </header>
-      <main className="mx-auto max-w-6xl px-4 py-8">
-        <Outlet />
-      </main>
-    </div>
+    <Sidebar collapsed={collapsed} activeItem={activeId} onSelect={onSelect}>
+      <Sidebar.Nav>
+        {groups.map((group) => (
+          <Sidebar.Category key={group.id}>
+            {group.label && <Sidebar.CategoryLabel>{group.label}</Sidebar.CategoryLabel>}
+            {group.items.map((item) => {
+              const Icon = item.icon;
+              return (
+                <Sidebar.Item key={item.id} id={item.id} link={<Link to={item.to} />}>
+                  <Sidebar.ItemIcon>
+                    <Icon size={20} />
+                  </Sidebar.ItemIcon>
+                  <Sidebar.ItemLabel>{item.label}</Sidebar.ItemLabel>
+                </Sidebar.Item>
+              );
+            })}
+          </Sidebar.Category>
+        ))}
+      </Sidebar.Nav>
+    </Sidebar>
   );
 }
 
-// UserMenu is the compact account control in the top bar: a user-icon button
-// that opens a dropdown with the signed-in email and a sign-out action.
-function UserMenu({ email, onSignOut }: { email: string; onSignOut: () => void }) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
+export function Layout() {
+  const location = useLocation();
+  const procurement = useProcurementAccess();
+  const isAdmin = useIsAdmin();
+  const canManageVendors = useCanManageVendors();
+  const canManageBusinessUnits = useCanManageBusinessUnits();
+  const canViewAuditLog = useCanViewAuditLog();
+  const isMobile = useMediaQuery(MOBILE_QUERY);
+  const [desktopCollapsed, setDesktopCollapsed] = useState(false);
+  const [mobileOpen, setMobileOpen] = useState(false);
 
-  useEffect(() => {
-    if (!open) return;
-    const onDocClick = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
-    };
-    document.addEventListener("mousedown", onDocClick);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDocClick);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [open]);
+  const groups = getNavGroups({
+    procurement,
+    isAdmin,
+    canManageVendors,
+    canManageBusinessUnits,
+    canViewAuditLog,
+  });
+  const activeId = resolveActiveId(location.pathname, groups);
+  const closeMobileDrawer = () => setMobileOpen(false);
 
   return (
-    <div className="relative" ref={ref}>
-      <button
-        type="button"
-        aria-haspopup="menu"
-        aria-expanded={open}
-        aria-label="Account menu"
-        onClick={() => setOpen((v) => !v)}
-        className={`flex h-9 w-9 items-center justify-center rounded-full text-xs font-semibold ring-1 ring-inset transition ${
-          open
-            ? "bg-indigo-600 text-white ring-indigo-600"
-            : "bg-indigo-100 text-indigo-700 ring-indigo-200 hover:bg-indigo-200"
-        }`}
-      >
-        {initials(email)}
-      </button>
+    <>
+      <AppShell>
+        <AppShell.Navbar>
+          <Header>
+            <Header.Toggle
+              collapsed={isMobile ? !mobileOpen : desktopCollapsed}
+              onToggle={() =>
+                isMobile
+                  ? setMobileOpen((open) => !open)
+                  : setDesktopCollapsed((collapsed) => !collapsed)
+              }
+            />
+            <Header.Brand>
+              <Link
+                to="/"
+                style={{ display: "flex", alignItems: "center", textDecoration: "none", color: "inherit" }}
+              >
+                <Header.BrandTitle>Purchasing</Header.BrandTitle>
+              </Link>
+            </Header.Brand>
+            <Header.Spacer />
+            <Header.Actions>
+              <UserMenu />
+            </Header.Actions>
+          </Header>
+        </AppShell.Navbar>
 
-      {open && (
-        <div
-          role="menu"
-          className="absolute right-0 z-40 mt-2 w-64 origin-top-right animate-fade-in overflow-hidden rounded-xl border border-slate-200 bg-white shadow-card"
+        {!isMobile && (
+          <AppShell.Sidebar>
+            <SidebarNav groups={groups} collapsed={desktopCollapsed} activeId={activeId} onSelect={() => {}} />
+          </AppShell.Sidebar>
+        )}
+
+        <AppShell.Main>
+          {/* AppShell wraps Main's content in a row-flex Box internally; a
+              flex-row item doesn't stretch horizontally by default, so this
+              full-width wrapper keeps page content filling the content area.
+              A little left padding keeps page content from butting against the
+              sidebar/nav edge. */}
+          <Box sx={{ width: "100%", pl: { xs: 2, md: 3 } }}>
+            <Outlet />
+          </Box>
+        </AppShell.Main>
+      </AppShell>
+
+      {isMobile && (
+        <Drawer
+          anchor="left"
+          variant="temporary"
+          open={mobileOpen}
+          onClose={closeMobileDrawer}
+          keepMounted
+          slotProps={{ paper: { sx: { width: SIDEBAR_WIDTH } } }}
         >
-          <div className="flex items-center gap-3 border-b border-slate-100 px-4 py-3">
-            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-indigo-100 text-xs font-semibold text-indigo-700 ring-1 ring-inset ring-indigo-200">
-              {initials(email)}
-            </span>
-            <div className="min-w-0">
-              <p className="text-xs text-slate-400">Signed in as</p>
-              <p className="truncate text-sm font-medium text-slate-900" title={email}>
-                {email}
-              </p>
-            </div>
-          </div>
-          <button
-            type="button"
-            role="menuitem"
-            onClick={() => {
-              setOpen(false);
-              onSignOut();
-            }}
-            className="flex w-full items-center gap-2.5 px-4 py-2.5 text-left text-sm font-medium text-slate-700 transition hover:bg-slate-50"
-          >
-            <svg
-              className="h-4 w-4 text-slate-400"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.8"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden
-            >
-              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
-              <path d="M16 17l5-5-5-5M21 12H9" />
-            </svg>
-            Sign out
-          </button>
-        </div>
+          <SidebarNav groups={groups} collapsed={false} activeId={activeId} onSelect={closeMobileDrawer} />
+        </Drawer>
       )}
-    </div>
+    </>
+  );
+}
+
+// UserMenu — a compact avatar + email trigger in the Header that opens a Menu
+// with a single Sign out action. Modelled on finops-app's UserMenu.
+function UserMenu() {
+  const { logout } = useAuth();
+  const { data: me } = useMe();
+  const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null);
+  const open = Boolean(anchorEl);
+  const theme = useTheme();
+
+  const email = me?.email ?? "";
+  const initial = (email.trim()[0] ?? "?").toUpperCase();
+
+  const handleOpen = (e: MouseEvent<HTMLElement>) => setAnchorEl(e.currentTarget);
+  const handleClose = () => setAnchorEl(null);
+  const handleSignOut = () => {
+    handleClose();
+    logout();
+  };
+
+  return (
+    <Box sx={{ display: "flex", alignItems: "center", ml: "auto", gap: "4px" }}>
+      <Box
+        component="button"
+        type="button"
+        onClick={handleOpen}
+        aria-haspopup="true"
+        aria-expanded={open}
+        aria-controls={open ? "user-menu" : undefined}
+        aria-label="Account menu"
+        sx={{
+          display: "flex",
+          alignItems: "center",
+          gap: "6px",
+          padding: "4px 8px 4px 4px",
+          borderRadius: "20px",
+          bgcolor: "action.hover",
+          border: "none",
+          cursor: "pointer",
+          font: "inherit",
+        }}
+      >
+        <Box
+          sx={{
+            width: "24px",
+            height: "24px",
+            borderRadius: "50%",
+            bgcolor: "primary.main",
+            color: "common.white",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            fontSize: "11px",
+            fontWeight: 700,
+            flexShrink: 0,
+          }}
+        >
+          {initial}
+        </Box>
+        <Box
+          component="span"
+          sx={{
+            fontSize: "13px",
+            fontWeight: 500,
+            color: "text.primary",
+            maxWidth: "180px",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {email}
+        </Box>
+        <ChevronDown size={18} color={theme.palette.text.secondary} />
+      </Box>
+      <Menu id="user-menu" anchorEl={anchorEl} open={open} onClose={handleClose}>
+        <MenuItem onClick={handleSignOut}>
+          <LogOut size={16} style={{ marginRight: 8 }} />
+          Sign out
+        </MenuItem>
+      </Menu>
+    </Box>
   );
 }

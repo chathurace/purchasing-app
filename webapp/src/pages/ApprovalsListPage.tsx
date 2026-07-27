@@ -1,5 +1,22 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
+import {
+  Alert,
+  Box,
+  Checkbox,
+  Chip,
+  CircularProgress,
+  FormControlLabel,
+  Link as MuiLink,
+  Paper,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
+  Typography,
+} from "@wso2/oxygen-ui";
 import { useApprovalRequests } from "../hooks/usePurchaseRequests";
 import { StatusBadge } from "../components/StatusBadge";
 import { prReference, type ApprovalStatus } from "../types/api";
@@ -7,30 +24,19 @@ import { prReference, type ApprovalStatus } from "../types/api";
 // MyApprovalBadge renders the caller's own state on a PR awaiting them.
 function MyApprovalBadge({ state }: { state?: ApprovalStatus | null }) {
   if (state === "pending") {
-    return (
-      <span className="badge bg-amber-50 text-amber-700 ring-amber-600/20">
-        <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
-        Awaiting you
-      </span>
-    );
+    return <Chip size="small" variant="outlined" color="warning" label="Awaiting you" />;
   }
   if (state === "approved") {
-    return (
-      <span className="badge bg-emerald-50 text-emerald-700 ring-emerald-600/20">
-        <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-        Approved
-      </span>
-    );
+    return <Chip size="small" variant="outlined" color="success" label="Approved" />;
   }
   if (state === "rejected") {
-    return (
-      <span className="badge bg-red-50 text-red-700 ring-red-600/20">
-        <span className="h-1.5 w-1.5 rounded-full bg-red-500" />
-        Rejected
-      </span>
-    );
+    return <Chip size="small" variant="outlined" color="error" label="Rejected" />;
   }
-  return <span className="text-slate-400">—</span>;
+  return (
+    <Typography component="span" color="text.disabled">
+      —
+    </Typography>
+  );
 }
 
 export function ApprovalsListPage() {
@@ -48,94 +54,100 @@ export function ApprovalsListPage() {
   });
 
   return (
-    <div>
-      <div className="mb-6">
-        <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Approvals</h1>
-        <p className="mt-1 text-sm text-slate-500">
-          Purchase requests awaiting your decision as a team lead, or a budget, legal, or security approver.
-        </p>
-      </div>
+    <Box sx={{ maxWidth: 1200, mx: "auto", p: { xs: 2, md: 4 } }}>
+      <Box sx={{ mb: 3 }}>
+        <Typography variant="h5" sx={{ fontWeight: 600 }}>
+          Approvals
+        </Typography>
+        <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+          Purchase requests awaiting your decision as a team lead, or a budget, legal, or security
+          approver.
+        </Typography>
+      </Box>
 
-      <div className="mb-4 flex items-center gap-5 text-sm">
-        <label className="flex cursor-pointer items-center gap-2 text-slate-700">
-          <input
-            type="checkbox"
-            className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-            checked={showPending}
-            onChange={(e) => setShowPending(e.target.checked)}
-          />
-          Pending
-        </label>
-        <label className="flex cursor-pointer items-center gap-2 text-slate-700">
-          <input
-            type="checkbox"
-            className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-            checked={showReviewed}
-            onChange={(e) => setShowReviewed(e.target.checked)}
-          />
-          Approved
-        </label>
-      </div>
+      <Box sx={{ mb: 2, display: "flex", alignItems: "center", gap: 3 }}>
+        <FormControlLabel
+          control={
+            <Checkbox
+              size="small"
+              checked={showPending}
+              onChange={(e) => setShowPending(e.target.checked)}
+            />
+          }
+          label="Pending"
+        />
+        <FormControlLabel
+          control={
+            <Checkbox
+              size="small"
+              checked={showReviewed}
+              onChange={(e) => setShowReviewed(e.target.checked)}
+            />
+          }
+          label="Approved"
+        />
+      </Box>
 
-      {isLoading && <p className="text-slate-500">Loading…</p>}
-      {error && <p className="text-red-600">Failed to load approvals.</p>}
+      {isLoading && <CircularProgress size={24} />}
+      {error && <Alert severity="error">Failed to load approvals.</Alert>}
 
       {data && rows.length === 0 && (
-        <div className="app-card border-dashed p-12 text-center">
-          <p className="text-sm font-medium text-slate-700">Nothing to show</p>
-          <p className="mt-1 text-sm text-slate-500">
+        <Paper variant="outlined" sx={{ p: 6, textAlign: "center", borderStyle: "dashed" }}>
+          <Typography variant="subtitle2">Nothing to show</Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
             {data.length === 0
               ? "No purchase requests are awaiting your approval."
               : "No requests match the selected filters."}
-          </p>
-        </div>
+          </Typography>
+        </Paper>
       )}
 
       {rows.length > 0 && (
-        <div className="app-card overflow-hidden">
-          <table className="w-full text-sm">
-            <thead className="border-b border-slate-200 bg-slate-50/70 text-left text-xs font-medium uppercase tracking-wide text-slate-500">
-              <tr>
-                <th className="px-4 py-3">Ref</th>
-                <th className="px-4 py-3">Title</th>
-                <th className="px-4 py-3">Requester</th>
-                <th className="px-4 py-3">Status</th>
-                <th className="px-4 py-3">Your decision</th>
-                <th className="px-4 py-3">Created</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
+        <TableContainer component={Paper} variant="outlined">
+          <Table size="small">
+            <TableHead>
+              <TableRow>
+                <TableCell>Ref</TableCell>
+                <TableCell>Title</TableCell>
+                <TableCell>Requester</TableCell>
+                <TableCell>Status</TableCell>
+                <TableCell>Your decision</TableCell>
+                <TableCell>Created</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
               {rows.map((pr) => (
-                <tr key={pr.id} className="transition-colors hover:bg-slate-50/70">
-                  <td className="px-4 py-3">
-                    <Link
-                      to={`/requests/${pr.id}`}
-                      className="font-medium text-indigo-600 hover:text-indigo-700 hover:underline"
-                    >
+                <TableRow key={pr.id} hover>
+                  <TableCell>
+                    <MuiLink component={Link} to={`/requests/${pr.id}`} sx={{ fontWeight: 500 }}>
                       {prReference(pr)}
-                    </Link>
-                  </td>
-                  <td className="px-4 py-3 text-slate-700">
-                    {pr.title || <span className="text-slate-400">—</span>}
-                  </td>
-                  <td className="px-4 py-3 text-slate-500">
+                    </MuiLink>
+                  </TableCell>
+                  <TableCell>
+                    {pr.title || (
+                      <Typography component="span" color="text.disabled">
+                        —
+                      </Typography>
+                    )}
+                  </TableCell>
+                  <TableCell sx={{ color: "text.secondary" }}>
                     {pr.requester?.name || pr.requester?.email || "—"}
-                  </td>
-                  <td className="px-4 py-3">
+                  </TableCell>
+                  <TableCell>
                     <StatusBadge status={pr.status} />
-                  </td>
-                  <td className="px-4 py-3">
+                  </TableCell>
+                  <TableCell>
                     <MyApprovalBadge state={pr.my_approval_state} />
-                  </td>
-                  <td className="px-4 py-3 text-slate-500">
+                  </TableCell>
+                  <TableCell sx={{ color: "text.secondary" }}>
                     {new Date(pr.created_at).toLocaleDateString()}
-                  </td>
-                </tr>
+                  </TableCell>
+                </TableRow>
               ))}
-            </tbody>
-          </table>
-        </div>
+            </TableBody>
+          </Table>
+        </TableContainer>
       )}
-    </div>
+    </Box>
   );
 }

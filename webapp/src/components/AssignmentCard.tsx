@@ -1,5 +1,17 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  Alert,
+  Box,
+  Button,
+  Card,
+  CardContent,
+  Chip,
+  MenuItem,
+  Stack,
+  TextField,
+  Typography,
+} from "@wso2/oxygen-ui";
 import { ApiError } from "../api/client";
 import {
   addPRCollaborator,
@@ -93,109 +105,124 @@ export function AssignmentCard({ pr, me }: { pr: PurchaseRequest; me: Me | undef
   ];
 
   return (
-    <div className="mt-6 rounded border bg-white p-6">
-      <div className="mb-3 flex items-center justify-between">
-        <h2 className="font-medium text-gray-900">Assignment</h2>
-        <span
-          className={`rounded px-2 py-0.5 text-xs font-medium ${
-            assigned ? "bg-green-100 text-green-800" : "bg-amber-100 text-amber-800"
-          }`}
+    <Card variant="outlined" sx={{ mt: 3 }}>
+      <CardContent>
+        <Box
+          sx={{
+            mb: 1.5,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 1,
+          }}
         >
-          {assigned ? "Assigned" : "Unassigned"}
-        </span>
-      </div>
+          <Typography variant="h6">Assignment</Typography>
+          <Chip
+            size="small"
+            variant="outlined"
+            color={assigned ? "success" : "warning"}
+            label={assigned ? "Assigned" : "Unassigned"}
+          />
+        </Box>
 
-      {/* Assignee */}
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="text-sm text-gray-600">Assignee:</span>
-        <span className="text-sm font-medium text-gray-900">
-          {pr.assignee ? userLabel(pr.assignee) : "—"}
-        </span>
-      </div>
+        {/* Assignee */}
+        <Box sx={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 1 }}>
+          <Typography variant="body2" color="text.secondary">
+            Assignee:
+          </Typography>
+          <Typography variant="body2" sx={{ fontWeight: 600 }}>
+            {pr.assignee ? userLabel(pr.assignee) : "—"}
+          </Typography>
+        </Box>
 
-      {canAssign && (
-        <div className="mt-2 flex flex-wrap items-center gap-2">
-          {isProcurementAdmin ? (
-            <select
-              className="min-w-[16rem] rounded border px-2 py-1 text-sm focus:border-indigo-500 focus:outline-none disabled:opacity-50"
-              value={pr.assignee_id ?? ""}
-              disabled={busy}
-              onChange={(e) =>
-                assignMutation.mutate(e.target.value === "" ? null : Number(e.target.value))
-              }
-            >
-              <option value="">Unassigned</option>
-              {/* Keep a stale assignee visible even if they're not in the member list. */}
-              {pr.assignee && !members.some((m) => m.id === pr.assignee_id) && (
-                <option value={pr.assignee_id ?? ""}>{userLabel(pr.assignee)}</option>
-              )}
-              {members.map((m) => (
-                <option key={m.id} value={m.id}>
-                  {userLabel(m)}
-                </option>
-              ))}
-            </select>
-          ) : !assigned ? (
-            <button
-              type="button"
-              className="rounded bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
-              onClick={() => me && assignMutation.mutate(me.id)}
-              disabled={busy}
-            >
-              {busy ? "Assigning…" : "Assign to me"}
-            </button>
-          ) : (
-            me &&
-            pr.assignee_id === me.id && (
-              <button
-                type="button"
-                className="rounded border px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50"
-                onClick={() => assignMutation.mutate(null)}
+        {canAssign && (
+          <Box sx={{ mt: 1, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 1 }}>
+            {isProcurementAdmin ? (
+              <TextField
+                select
+                size="small"
+                value={pr.assignee_id ?? ""}
+                disabled={busy}
+                onChange={(e) =>
+                  assignMutation.mutate(e.target.value === "" ? null : Number(e.target.value))
+                }
+                sx={{ minWidth: "16rem" }}
+              >
+                <MenuItem value="">Unassigned</MenuItem>
+                {/* Keep a stale assignee visible even if they're not in the member list. */}
+                {pr.assignee && !members.some((m) => m.id === pr.assignee_id) && (
+                  <MenuItem value={pr.assignee_id ?? ""}>{userLabel(pr.assignee)}</MenuItem>
+                )}
+                {members.map((m) => (
+                  <MenuItem key={m.id} value={m.id}>
+                    {userLabel(m)}
+                  </MenuItem>
+                ))}
+              </TextField>
+            ) : !assigned ? (
+              <Button
+                variant="contained"
+                onClick={() => me && assignMutation.mutate(me.id)}
                 disabled={busy}
               >
-                {busy ? "Working…" : "Unassign me"}
-              </button>
-            )
-          )}
-        </div>
-      )}
-
-      {!assigned && canAssign && (
-        <p className="mt-2 text-sm text-gray-400">
-          This request must be assigned to a procurement user before quotations or a
-          recommendation can be added.
-        </p>
-      )}
-
-      {/* Collaborators */}
-      <div className="mt-4">
-        <p className="mb-1 text-sm text-gray-600">Collaborators</p>
-        {canManage ? (
-          <ApproverPicker
-            candidates={members}
-            selectedIds={collabSelectedIds}
-            selectedUsers={collaborators}
-            onAdd={(u) => addCollab.mutate(u.id)}
-            onRemove={(id) => removeCollab.mutate(id)}
-            disabled={addCollab.isPending || removeCollab.isPending}
-          />
-        ) : collaborators.length > 0 ? (
-          <ul className="flex flex-wrap gap-2">
-            {collaborators.map((c) => (
-              <li
-                key={c.id}
-                className="rounded-full bg-indigo-50 px-2.5 py-1 text-xs text-indigo-700"
-              >
-                {userLabel(c)}
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p className="text-sm text-gray-400">No collaborators.</p>
+                {busy ? "Assigning…" : "Assign to me"}
+              </Button>
+            ) : (
+              me &&
+              pr.assignee_id === me.id && (
+                <Button
+                  variant="outlined"
+                  color="inherit"
+                  onClick={() => assignMutation.mutate(null)}
+                  disabled={busy}
+                >
+                  {busy ? "Working…" : "Unassign me"}
+                </Button>
+              )
+            )}
+          </Box>
         )}
-      </div>
 
-      {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
-    </div>
+        {!assigned && canAssign && (
+          <Typography variant="body2" color="text.disabled" sx={{ mt: 1 }}>
+            This request must be assigned to a procurement user before quotations or a
+            recommendation can be added.
+          </Typography>
+        )}
+
+        {/* Collaborators */}
+        <Box sx={{ mt: 2 }}>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 0.5 }}>
+            Collaborators
+          </Typography>
+          {canManage ? (
+            <ApproverPicker
+              candidates={members}
+              selectedIds={collabSelectedIds}
+              selectedUsers={collaborators}
+              onAdd={(u) => addCollab.mutate(u.id)}
+              onRemove={(id) => removeCollab.mutate(id)}
+              disabled={addCollab.isPending || removeCollab.isPending}
+            />
+          ) : collaborators.length > 0 ? (
+            <Stack direction="row" spacing={1} sx={{ flexWrap: "wrap", gap: 1 }}>
+              {collaborators.map((c) => (
+                <Chip key={c.id} size="small" variant="outlined" label={userLabel(c)} />
+              ))}
+            </Stack>
+          ) : (
+            <Typography variant="body2" color="text.disabled">
+              No collaborators.
+            </Typography>
+          )}
+        </Box>
+
+        {error && (
+          <Alert severity="error" sx={{ mt: 2 }}>
+            {error}
+          </Alert>
+        )}
+      </CardContent>
+    </Card>
   );
 }

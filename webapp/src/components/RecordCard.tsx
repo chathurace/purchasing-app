@@ -1,4 +1,6 @@
 import { Link } from "react-router-dom";
+import { alpha, Box, Button, Card, CardContent, Link as MuiLink, Stack, Typography } from "@wso2/oxygen-ui";
+import { Plus } from "@wso2/oxygen-ui-icons-react";
 import { StatusBadge } from "./StatusBadge";
 import { EntityStatusBadge } from "./EntityStatusBadge";
 import type { CaseRecord } from "../lib/caseGraph";
@@ -9,23 +11,38 @@ import type { ContractStatus, InvoiceStatus, PRStatus, QuotationStatus } from ".
 // tinted so the active branch stands out among siblings.
 export function RecordRow({ record }: { record: CaseRecord }) {
   return (
-    <div
-      className={`flex items-center justify-between gap-3 ${
-        record.highlight ? "-mx-2 rounded bg-green-50 px-2 py-1 ring-1 ring-green-200" : ""
-      }`}
+    <Box
+      sx={(theme) => ({
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 1.5,
+        ...(record.highlight && {
+          mx: -1,
+          px: 1,
+          py: 0.5,
+          borderRadius: 1,
+          bgcolor: alpha(theme.palette.success.main, 0.08),
+          boxShadow: `0 0 0 1px ${alpha(theme.palette.success.main, 0.25)}`,
+        }),
+      })}
     >
-      <div className="min-w-0">
-        <Link to={record.to} className="font-medium text-indigo-600 hover:underline">
+      <Box sx={{ minWidth: 0 }}>
+        <MuiLink component={Link} to={record.to} sx={{ fontWeight: 600 }}>
           {record.ref}
-        </Link>
-        {record.detail ? <span className="ml-2 text-gray-500">{record.detail}</span> : null}
-      </div>
+        </MuiLink>
+        {record.detail ? (
+          <Typography component="span" variant="body2" color="text.secondary" sx={{ ml: 1 }}>
+            {record.detail}
+          </Typography>
+        ) : null}
+      </Box>
       {record.status == null ? null : record.kind === "pr" ? (
         <StatusBadge status={record.status as PRStatus} />
       ) : (
         <EntityStatusBadge status={record.status as QuotationStatus | ContractStatus | InvoiceStatus} />
       )}
-    </div>
+    </Box>
   );
 }
 
@@ -55,42 +72,70 @@ export function RecordCard({
 }) {
   const noRecords = !records || records.length === 0;
   return (
-    <div className="app-card mt-6 p-6">
-      <div className="mb-3 flex items-center justify-between">
-        <h2 className="font-semibold text-slate-900">{title}</h2>
-        {action ? (
-          actionProminent ? (
-            <Link
+    <Card variant="outlined" sx={{ mt: 3 }}>
+      <CardContent>
+        <Box sx={{ mb: 1.5, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <Typography variant="h6" sx={{ fontWeight: 600 }}>
+            {title}
+          </Typography>
+          {action ? (
+            actionProminent ? (
+              <Button
+                component={Link}
+                to={action.to}
+                variant="contained"
+                size="small"
+                startIcon={<Plus size={16} />}
+              >
+                {action.label.replace(/^\+\s*/, "")}
+              </Button>
+            ) : (
+              <MuiLink component={Link} to={action.to} variant="body2">
+                {action.label}
+              </MuiLink>
+            )
+          ) : null}
+        </Box>
+        {children ??
+          (!noRecords ? (
+            <Stack spacing={0.75}>
+              {records!.map((r) => (
+                <RecordRow key={`${r.kind}-${r.id}`} record={r} />
+              ))}
+            </Stack>
+          ) : actionProminent && action && emptyCta ? (
+            <Box
+              component={Link}
               to={action.to}
-              className="inline-flex items-center gap-1.5 rounded-md bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-700"
+              sx={{
+                display: "block",
+                textAlign: "center",
+                textDecoration: "none",
+                borderRadius: 2,
+                border: "2px dashed",
+                borderColor: "primary.light",
+                bgcolor: (theme) => alpha(theme.palette.primary.main, 0.04),
+                p: 2.5,
+                transition: "border-color .15s, background-color .15s",
+                "&:hover": {
+                  borderColor: "primary.main",
+                  bgcolor: (theme) => alpha(theme.palette.primary.main, 0.08),
+                },
+              }}
             >
-              <span className="text-base leading-none">+</span> {action.label.replace(/^\+\s*/, "")}
-            </Link>
+              <Typography variant="body2" sx={{ fontWeight: 600 }} color="primary.main">
+                {emptyCta.title}
+              </Typography>
+              <Typography variant="caption" color="text.secondary">
+                {emptyCta.subtitle}
+              </Typography>
+            </Box>
           ) : (
-            <Link to={action.to} className="text-sm text-indigo-600">
-              {action.label}
-            </Link>
-          )
-        ) : null}
-      </div>
-      {children ??
-        (!noRecords ? (
-          <div className="space-y-1.5 text-sm">
-            {records!.map((r) => (
-              <RecordRow key={`${r.kind}-${r.id}`} record={r} />
-            ))}
-          </div>
-        ) : actionProminent && action && emptyCta ? (
-          <Link
-            to={action.to}
-            className="block rounded-lg border-2 border-dashed border-indigo-300 bg-indigo-50/60 p-5 text-center transition hover:border-indigo-400 hover:bg-indigo-50"
-          >
-            <p className="text-sm font-semibold text-indigo-900">{emptyCta.title}</p>
-            <p className="mt-0.5 text-xs text-indigo-700/80">{emptyCta.subtitle}</p>
-          </Link>
-        ) : (
-          <p className="text-sm text-gray-400">{empty}</p>
-        ))}
-    </div>
+            <Typography variant="body2" color="text.secondary">
+              {empty}
+            </Typography>
+          ))}
+      </CardContent>
+    </Card>
   );
 }

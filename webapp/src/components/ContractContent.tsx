@@ -1,5 +1,16 @@
 import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
+import {
+  Alert,
+  Box,
+  Button,
+  Card,
+  CardContent,
+  Stack,
+  TextField,
+  Typography,
+} from "@wso2/oxygen-ui";
+import { FileText, Upload } from "@wso2/oxygen-ui-icons-react";
 import { ApiError } from "../api/client";
 import {
   deleteContractDocument,
@@ -24,15 +35,27 @@ export function ContractContent({
   invalidate: () => void;
 }) {
   return (
-    <div className="space-y-5">
+    <Stack spacing={2.5}>
       <DraftContractsSection contract={contract} canEdit={canEdit} invalidate={invalidate} />
       <SignedContractSection contract={contract} canEdit={canEdit} invalidate={invalidate} />
-    </div>
+    </Stack>
   );
 }
 
 function SectionHeading({ children }: { children: React.ReactNode }) {
-  return <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">{children}</p>;
+  return (
+    <Typography
+      variant="caption"
+      sx={{
+        fontWeight: 600,
+        textTransform: "uppercase",
+        letterSpacing: "0.05em",
+        color: "text.secondary",
+      }}
+    >
+      {children}
+    </Typography>
+  );
 }
 
 // A single document (draft or signed): filename download, notes, and — when
@@ -69,75 +92,81 @@ function DocRow({
   });
 
   return (
-    <div className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
-      <div className="flex items-start justify-between gap-3">
-        <button
-          type="button"
-          className="inline-flex items-center gap-1.5 text-sm font-medium text-indigo-600 hover:underline"
-          onClick={() => downloadContractDocument(contractId, doc)}
-        >
-          <span aria-hidden>📄</span>
-          {doc.filename}
-        </button>
-        {canEdit && (
-          <div className="flex shrink-0 gap-3 text-sm">
-            <button
-              className="font-medium text-indigo-600 hover:text-indigo-700"
-              onClick={() => {
-                setNotes(doc.notes);
-                setError(null);
-                setEditing((v) => !v);
-              }}
-            >
-              {editing ? "Close" : doc.notes ? "Edit notes" : "Add notes"}
-            </button>
-            <button
-              className="font-medium text-red-600 hover:text-red-700 disabled:opacity-50"
-              disabled={removing}
-              onClick={onRemove}
-            >
-              {removeLabel}
-            </button>
-          </div>
-        )}
-      </div>
+    <Card variant="outlined">
+      <CardContent sx={{ p: 1.5, "&:last-child": { pb: 1.5 } }}>
+        <Box sx={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 1.5 }}>
+          <Button
+            variant="text"
+            startIcon={<FileText size={16} />}
+            onClick={() => downloadContractDocument(contractId, doc)}
+            sx={{ textTransform: "none", justifyContent: "flex-start" }}
+          >
+            {doc.filename}
+          </Button>
+          {canEdit && (
+            <Stack direction="row" spacing={1} sx={{ flexShrink: 0 }}>
+              <Button
+                variant="text"
+                size="small"
+                onClick={() => {
+                  setNotes(doc.notes);
+                  setError(null);
+                  setEditing((v) => !v);
+                }}
+              >
+                {editing ? "Close" : doc.notes ? "Edit notes" : "Add notes"}
+              </Button>
+              <Button
+                variant="text"
+                size="small"
+                color="error"
+                disabled={removing}
+                onClick={onRemove}
+              >
+                {removeLabel}
+              </Button>
+            </Stack>
+          )}
+        </Box>
 
-      {editing ? (
-        <div className="mt-2 space-y-2">
-          <textarea
-            className="field"
-            rows={2}
-            value={notes}
-            onChange={(e) => setNotes(e.target.value)}
-            placeholder="Notes for this document"
-          />
-          {error && <p className="text-sm text-red-600">{error}</p>}
-          <div className="flex gap-2">
-            <button
-              type="button"
-              disabled={saveNotes.isPending}
-              onClick={() => saveNotes.mutate()}
-              className="btn-primary"
-            >
-              {saveNotes.isPending ? "Saving…" : "Save notes"}
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setEditing(false);
-                setNotes(doc.notes);
-                setError(null);
-              }}
-              className="btn-secondary"
-            >
-              Cancel
-            </button>
-          </div>
-        </div>
-      ) : (
-        doc.notes && <p className="mt-1.5 whitespace-pre-wrap text-sm text-slate-600">{doc.notes}</p>
-      )}
-    </div>
+        {editing ? (
+          <Stack spacing={1} sx={{ mt: 1 }}>
+            <TextField
+              size="small"
+              fullWidth
+              multiline
+              minRows={2}
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              placeholder="Notes for this document"
+            />
+            {error && <Alert severity="error">{error}</Alert>}
+            <Stack direction="row" spacing={1}>
+              <Button variant="contained" disabled={saveNotes.isPending} onClick={() => saveNotes.mutate()}>
+                {saveNotes.isPending ? "Saving…" : "Save notes"}
+              </Button>
+              <Button
+                variant="outlined"
+                color="inherit"
+                onClick={() => {
+                  setEditing(false);
+                  setNotes(doc.notes);
+                  setError(null);
+                }}
+              >
+                Cancel
+              </Button>
+            </Stack>
+          </Stack>
+        ) : (
+          doc.notes && (
+            <Typography variant="body2" sx={{ mt: 0.75, whiteSpace: "pre-wrap", color: "text.secondary" }}>
+              {doc.notes}
+            </Typography>
+          )
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
@@ -166,37 +195,58 @@ function AddDocForm({
   });
 
   return (
-    <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50/60 p-3">
-      <p className="mb-2 text-sm font-medium text-slate-700">{label}</p>
-      <div className="flex items-center gap-2">
-        <label className="cursor-pointer text-sm font-medium text-indigo-600 hover:text-indigo-700">
-          {file ? "Change PDF" : "+ Choose PDF"}
+    <Box
+      sx={{
+        p: 1.5,
+        borderRadius: 2,
+        border: "1px dashed",
+        borderColor: "divider",
+        bgcolor: "action.hover",
+      }}
+    >
+      <Typography variant="body2" sx={{ mb: 1, fontWeight: 500 }}>
+        {label}
+      </Typography>
+      <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+        <Button variant="outlined" color="inherit" component="label" startIcon={<Upload size={16} />}>
+          {file ? "Change PDF" : "Choose PDF"}
           <input
             type="file"
             accept="application/pdf,.pdf"
-            className="hidden"
+            hidden
             onChange={(e) => setFile(e.target.files?.[0] ?? null)}
           />
-        </label>
-        {file && <span className="text-xs text-slate-600">{file.name}</span>}
-      </div>
-      <textarea
-        className="field mt-2"
-        rows={2}
+        </Button>
+        {file && (
+          <Typography variant="caption" sx={{ color: "text.secondary" }}>
+            {file.name}
+          </Typography>
+        )}
+      </Box>
+      <TextField
+        size="small"
+        fullWidth
+        multiline
+        minRows={2}
+        sx={{ mt: 1 }}
         value={notes}
         onChange={(e) => setNotes(e.target.value)}
         placeholder="Notes (optional)"
       />
-      {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
-      <button
-        type="button"
+      {error && (
+        <Alert severity="error" sx={{ mt: 1 }}>
+          {error}
+        </Alert>
+      )}
+      <Button
+        variant="contained"
+        sx={{ mt: 1 }}
         disabled={mutation.isPending || !file}
         onClick={() => mutation.mutate()}
-        className="btn-primary mt-2"
       >
         {mutation.isPending ? "Uploading…" : submitLabel}
-      </button>
-    </div>
+      </Button>
+    </Box>
   );
 }
 
@@ -216,9 +266,13 @@ function DraftContractsSection({
   });
 
   return (
-    <div className="space-y-2">
+    <Stack spacing={1}>
       <SectionHeading>Draft contracts</SectionHeading>
-      {drafts.length === 0 && !canEdit && <p className="text-sm text-slate-400">No draft contracts.</p>}
+      {drafts.length === 0 && !canEdit && (
+        <Typography variant="body2" sx={{ color: "text.disabled" }}>
+          No draft contracts.
+        </Typography>
+      )}
       {drafts.map((d) => (
         <DocRow
           key={d.id}
@@ -241,7 +295,7 @@ function DraftContractsSection({
           }}
         />
       )}
-    </div>
+    </Stack>
   );
 }
 
@@ -261,7 +315,7 @@ function SignedContractSection({
   });
 
   return (
-    <div className="space-y-2">
+    <Stack spacing={1}>
       <SectionHeading>Signed contract</SectionHeading>
       {signed ? (
         <DocRow
@@ -283,8 +337,10 @@ function SignedContractSection({
           }}
         />
       ) : (
-        <p className="text-sm text-slate-400">Not signed yet.</p>
+        <Typography variant="body2" sx={{ color: "text.disabled" }}>
+          Not signed yet.
+        </Typography>
       )}
-    </div>
+    </Stack>
   );
 }

@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/cs/purchasing-app/internal/directory"
 	"github.com/cs/purchasing-app/internal/middleware"
 	"github.com/cs/purchasing-app/internal/model"
 	"github.com/cs/purchasing-app/internal/repository"
@@ -14,6 +15,7 @@ import (
 
 type UsersHandler struct {
 	Repo *repository.Repository
+	Dir  *directory.Service
 	Log  zerolog.Logger
 }
 
@@ -57,6 +59,52 @@ func (h *UsersHandler) Lookup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, users)
+}
+
+// Directory returns the org user directory (email/name) for name/email
+// autocomplete, sourced from the connected identity server via SCIM. When SCIM
+// is disabled it falls back to the app's active DB users. Available to any
+// authenticated user; the frontend filters the list client-side.
+func (h *UsersHandler) Directory(w http.ResponseWriter, r *http.Request) {
+	// refresh=1 forces a fresh SCIM fetch (rate-limited server-side) — sent when a
+	// typed prefix matched nothing cached, so a newly-added user may be missing.
+	forceRefresh := r.URL.Query().Get("refresh") == "1" || r.URL.Query().Get("refresh") == "true"
+	users, err := h.Dir.List(r.Context(), forceRefresh)
+	if err != nil {
+		reqLog(r).Error().Err(err).Msg("list user directory")
+		writeError(w, http.StatusBadGateway, "failed to load the user directory")
+		return
+	}
+	writeJSON(w, http.StatusOK, users)
+}
+
+// Ensure resolves a directory person (email + optional name) to a provisioned
+// app user, creating a pending invite when none exists, and returns the user's
+// id/email/name. This lets id-based pickers (business-unit approvers, team
+// members) select someone from the directory who hasn't logged in yet.
+// procurement_admin/admin only — the same authority that manages those lists.
+func (h *UsersHandler) Ensure(w http.ResponseWriter, r *http.Request) {
+	if !middleware.HasTeamAdmin(r.Context()) && !middleware.HasBusinessUnitAdmin(r.Context()) {
+		writeError(w, http.StatusForbidden, "procurement admin access required")
+		return
+	}
+	var in createUserInput
+	if err := decodeJSON(r, &in); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	email := strings.ToLower(strings.TrimSpace(in.Email))
+	if !looksLikeEmail(email) {
+		writeError(w, http.StatusBadRequest, "a valid email address is required")
+		return
+	}
+	u, err := h.Repo.GetOrCreateUserByEmail(r.Context(), email, strings.TrimSpace(in.Name))
+	if err != nil {
+		reqLog(r).Error().Err(err).Msg("ensure directory user")
+		writeError(w, http.StatusInternalServerError, "failed to resolve user")
+		return
+	}
+	writeJSON(w, http.StatusOK, repository.UserSummary{ID: u.ID, Email: u.Email, Name: u.Name})
 }
 
 // requireAdmin writes a 403 and returns false when the caller is not an admin.

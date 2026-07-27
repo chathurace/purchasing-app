@@ -10,6 +10,21 @@ export type PRStatus =
   | "rejected"
   | "cancelled";
 
+// PR_STATUS_LABELS / PR_STATUSES drive the status dropdown on the Purchase-requests
+// filter bar (and any other status selector). Order matches the workflow.
+export const PR_STATUS_LABELS: Record<PRStatus, string> = {
+  submitted: "Submitted",
+  under_review: "Under review",
+  vendor_selected: "Vendor selected",
+  contract_prepared: "Contract prepared",
+  order_signed: "Order signed",
+  completed: "Completed",
+  rejected: "Rejected",
+  cancelled: "Cancelled",
+};
+
+export const PR_STATUSES = Object.keys(PR_STATUS_LABELS) as PRStatus[];
+
 export type QuotationStatus = "received" | "under_evaluation" | "selected" | "rejected";
 
 // A contract is draft until its signed PDF is attached, then signed. (rejected is
@@ -60,6 +75,59 @@ export interface UserSummary {
   id: number;
   email: string;
   name: string;
+}
+
+// ── Audit / process events (admin events view) ──────────────────────────────
+// Two append-only logs. Process events are PR business-process tasks; audit
+// events are non-process master-data/admin mutations. Both carry an immutable
+// actor_email snapshot plus the actor's current name (joined at read time).
+
+export interface ProcessEvent {
+  id: number;
+  purchase_request_id: number;
+  action: string;
+  qualifier: string;
+  actor_id: number | null;
+  actor_email: string;
+  actor_name: string;
+  created_at: string;
+}
+
+export interface AuditEvent {
+  id: number;
+  action: string;
+  qualifier: string;
+  entity_type: string;
+  entity_id: number | null;
+  detail: string;
+  actor_id: number | null;
+  actor_email: string;
+  actor_name: string;
+  created_at: string;
+}
+
+// The fixed action catalogs (from the Go source of truth) backing the two
+// action-filter dropdowns.
+export interface EventActions {
+  process: string[];
+  audit: string[];
+}
+
+// Shared query filters for an events read; pr_id applies only to process events.
+export interface EventFilters {
+  actor?: string;
+  action?: string;
+  from?: string;
+  to?: string;
+  pr_id?: string;
+}
+
+// A directory entry from the connected identity server (SCIM), used for
+// name/email autocomplete. Not necessarily a provisioned app user — they may
+// never have logged in — so it carries no id.
+export interface DirectoryUser {
+  name: string;
+  email: string;
 }
 
 // A team (Legal / Security / Procurement). Membership is the member_role: a user is a
@@ -146,6 +214,28 @@ export interface RecComment {
   documents: Document[];
 }
 
+export type BudgetStepDecision = "pending" | "approved" | "rejected";
+
+// One step in the budget card's serial approval chain. Step 1 (is_base) is
+// governed by the PR's budget unit (no named approver); additional steps name a
+// specific approver by email and are decided one after the other.
+export interface BudgetStep {
+  id: number;
+  position: number;
+  is_base: boolean;
+  approver_name: string;
+  approver_email: string;
+  decision: BudgetStepDecision;
+  decided_by?: number | null;
+  decider?: UserSummary | null;
+  decided_at?: string | null;
+  comments: RecComment[];
+  // Per-caller flags (server-computed): whether the current user may decide this
+  // step right now (serial + identity gated) / may edit or remove it (procurement).
+  can_decide: boolean;
+  can_manage: boolean;
+}
+
 export interface RecApproval {
   approval_type: RecApprovalType;
   approved: boolean;
@@ -162,6 +252,9 @@ export interface RecApproval {
   can_comment: boolean;
   can_approve: boolean;
   can_assign: boolean;
+  // The serial budget approval chain — populated only for the budget card. The
+  // card's approved/approver above are a projection (approved iff every step is).
+  budget_steps?: BudgetStep[];
 }
 
 export interface Recommendation {
@@ -203,7 +296,7 @@ export interface RecommendationInput {
 export type YesNo = "yes" | "no" | "";
 // Within-budget answer allows an explicit "I don't know yet".
 export type YesNoUnknown = YesNo | "unknown";
-export type PRCategory = "IT" | "NON-IT" | "";
+export type PRCategory = "IT" | "NON-IT" | "EVENTS" | "";
 
 // PRDetails is the structured form data stored in the PR's JSONB `details` blob
 // (everything not promoted to a core column).
@@ -213,21 +306,30 @@ export interface PRDetails {
   date?: string;
   business_justification?: string;
   // IT solution
-  it_category?: string;
+  it_category?: string; // legacy — no longer collected (kept for old rows)
   it_product?: string;
   it_description?: string;
   it_plan?: string;
-  it_users?: string;
-  it_admins?: string;
-  it_usage?: string;
+  it_users?: string; // legacy free-text count (kept for old rows)
+  it_admins?: string; // legacy free-text (kept for old rows)
+  it_usage?: string; // stores the usage-period select value
+  it_user_count?: string;
+  it_user_names?: string[];
+  it_admin_count?: string;
+  it_admin_names?: string[];
   sec_sensitive?: YesNo;
   sec_external_pii?: YesNo;
   sec_external_pii_detail?: string;
   sec_employee_pii?: YesNo;
+  sec_employee_pii_detail?: string;
   sec_integrates?: YesNo;
-  sec_integration_detail?: string;
+  sec_integration_detail?: string; // legacy (kept for old rows)
+  sec_integration_systems?: string;
+  sec_integration_kind?: string;
+  sec_vendor_docs?: YesNo;
+  sec_vendor_docs_link?: string;
   // Non-IT solution
-  nit_category?: string;
+  nit_category?: string; // legacy — no longer collected (kept for old rows)
   nit_description?: string;
   nit_specs?: string;
   // Vendor
@@ -235,13 +337,15 @@ export interface PRDetails {
   supplier_website?: string;
   supplier_contact?: string;
   supplier_email?: string;
-  supplier_existing?: YesNo;
+  supplier_phone?: string;
+  supplier_existing?: YesNo; // legacy (kept for old rows)
   // Set when the requester picked an existing vendor from the dropdown (vs.
   // typing a new supplier, which is never added to the vendor master).
   supplier_vendor_id?: number | null;
-  engagement_type?: string;
-  within_budget?: YesNoUnknown;
-  // Budget coding
+  engagement_type?: string; // legacy (kept for old rows)
+  within_budget?: YesNoUnknown; // legacy (kept for old rows)
+  // Budget coding (free-text in the ProQ form)
+  business_unit?: string;
   budget_category?: string;
   budget_product?: string;
   budget_region?: string;
@@ -306,7 +410,7 @@ export interface PurchaseRequest {
   reference?: string | null;
   title: string;
   requester_id: number;
-  budget_unit_id: number | null;
+  business_unit_id: number | null;
   comments: string;
   status: PRStatus;
   rejection_reason: string;
@@ -423,64 +527,32 @@ export interface VendorUsage {
   invoices: number;
 }
 
-// A budget unit's approval bracket: an inclusive value range (max null =
-// unbounded) with one or more approvers. Any approver of the resolved bracket
-// may approve the budget card.
-export interface BudgetUnitBracket {
+export interface BusinessUnit {
   id: number;
-  position: number;
-  currency: string;
-  min_value: number;
-  max_value: number | null;
+  name: string;
+  description: string;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+  // The flat, ordered set of qualified budget approvers.
   approvers: UserSummary[];
 }
 
-export interface BudgetUnit {
-  id: number;
-  code: string;
+export interface BusinessUnitInput {
   name: string;
   description: string;
-  budget: number;
-  currency: string;
   is_active: boolean;
-  // The catch-all approver used when a PR matches no bracket.
-  default_approver_id: number | null;
-  default_approver?: UserSummary | null;
-  created_at: string;
-  updated_at: string;
-  brackets: BudgetUnitBracket[];
-}
-
-// Bracket shape for create/update: currency + min/max + the approver ids.
-// Brackets are ordered by their position in the array (first match wins).
-export interface BudgetUnitBracketInput {
-  currency: string;
-  min_value: number;
-  max_value: number | null;
   approver_ids: number[];
 }
 
-export interface BudgetUnitInput {
-  code: string;
-  name: string;
-  description: string;
-  budget: number;
-  currency: string;
-  is_active: boolean;
-  default_approver_id: number | null;
-  brackets: BudgetUnitBracketInput[];
-}
-
-// BudgetUnitSummary is the lightweight shape returned by the lookup endpoint,
-// used to populate the budget-unit dropdown on a purchase request.
-export interface BudgetUnitSummary {
+// BusinessUnitSummary is the lightweight shape returned by the lookup endpoint,
+// used to populate the business-unit dropdown on a purchase request.
+export interface BusinessUnitSummary {
   id: number;
-  code: string;
   name: string;
-  currency: string;
 }
 
-export interface BudgetUnitUsage {
+export interface BusinessUnitUsage {
   purchase_requests: number;
 }
 
@@ -491,19 +563,19 @@ export interface CurrencyTotal {
   amount: number;
 }
 
-// BudgetUnitInvoiceCategory summarises one invoice status bucket: how many
-// invoices allocate to the budget unit and the allocated totals per currency.
-export interface BudgetUnitInvoiceCategory {
+// BusinessUnitInvoiceCategory summarises one invoice status bucket: how many
+// invoices allocate to the business unit and the allocated totals per currency.
+export interface BusinessUnitInvoiceCategory {
   count: number;
   totals: CurrencyTotal[];
 }
 
-// BudgetUnitInvoiceSummary buckets a budget unit's allocated invoices by status
-// (pending = received), each with the budget unit's allocated share.
-export interface BudgetUnitInvoiceSummary {
-  pending: BudgetUnitInvoiceCategory;
-  approved: BudgetUnitInvoiceCategory;
-  paid: BudgetUnitInvoiceCategory;
+// BusinessUnitInvoiceSummary buckets a business unit's allocated invoices by
+// status (pending = received), each with the business unit's allocated share.
+export interface BusinessUnitInvoiceSummary {
+  pending: BusinessUnitInvoiceCategory;
+  approved: BusinessUnitInvoiceCategory;
+  paid: BusinessUnitInvoiceCategory;
 }
 
 export interface QuotationItem {
@@ -562,8 +634,8 @@ export interface Contract {
   signed_document?: Document | null;
   // Sum of this contract's invoice totals in its own currency (detail reads only).
   invoiced_total?: number;
-  // The owning PR's budget unit, if any — used to default an invoice's allocation.
-  budget_unit?: BudgetUnitSummary | null;
+  // The owning PR's business unit, if any — used to default an invoice's allocation.
+  business_unit?: BusinessUnitSummary | null;
 }
 
 export interface ContractInput {
@@ -617,21 +689,21 @@ export interface InvoiceItem {
 // to the invoice total).
 export type AllocationMode = "percentage" | "amount";
 
-// CostAllocation is an invoice's cost split to one budget unit. value is a
+// CostAllocation is an invoice's cost split to one business unit. value is a
 // percentage or an amount per the invoice's allocation_mode; amount is the
 // resolved amount in the invoice currency (server-computed, read-only).
 export interface CostAllocation {
   id?: number;
-  budget_unit_id: number;
+  business_unit_id: number;
   value: number;
   position?: number;
-  budget_unit?: BudgetUnitSummary | null;
+  business_unit?: BusinessUnitSummary | null;
   amount?: number;
 }
 
 // CostAllocationInput is the writable shape sent on create/update.
 export interface CostAllocationInput {
-  budget_unit_id: number;
+  business_unit_id: number;
   value: number;
 }
 
@@ -695,7 +767,7 @@ export interface RelatedDocuments {
 
 export interface PurchaseRequestInput {
   title: string;
-  budget_unit_id: number | null;
+  business_unit_id: number | null;
   comments: string;
   items: { description: string; quantity: number }[];
   links: { url: string; label: string }[];
@@ -735,21 +807,13 @@ export function vendorRef(id: number): string {
   return "VEN-" + String(id).padStart(6, "0");
 }
 
-export function budgetUnitRef(id: number): string {
-  return "BU-" + String(id).padStart(6, "0");
-}
-
-// A fresh, active budget-unit draft. Shared by the management list (inline add)
-// and detail (edit) pages. Starts with one unbounded, no-approver bracket.
-export const emptyBudgetUnit: BudgetUnitInput = {
-  code: "",
+// A fresh, active business-unit draft. Shared by the management list (inline
+// add) and detail (edit) pages. Starts with no approvers.
+export const emptyBusinessUnit: BusinessUnitInput = {
   name: "",
   description: "",
-  budget: 0,
-  currency: "",
   is_active: true,
-  default_approver_id: null,
-  brackets: [],
+  approver_ids: [],
 };
 
 export function grnRef(id: number): string {
@@ -787,16 +851,16 @@ export function allocationsSum(allocs: { value: number }[]): number {
 }
 
 // allocationsValid mirrors the server rule: at least one allocation, each with a
-// distinct budget unit, summing to 100 (percentage mode) or the invoice total
+// distinct business unit, summing to 100 (percentage mode) or the invoice total
 // (amount mode), within a small rounding tolerance.
 export function allocationsValid(
   mode: AllocationMode,
-  allocs: { budget_unit_id: number; value: number }[],
+  allocs: { business_unit_id: number; value: number }[],
   total: number,
 ): boolean {
   if (allocs.length === 0) return false;
-  if (allocs.some((a) => !a.budget_unit_id)) return false;
-  const ids = allocs.map((a) => a.budget_unit_id);
+  if (allocs.some((a) => !a.business_unit_id)) return false;
+  const ids = allocs.map((a) => a.business_unit_id);
   if (new Set(ids).size !== ids.length) return false;
   const target = mode === "percentage" ? 100 : total;
   return Math.abs(allocationsSum(allocs) - target) <= 0.01;
@@ -810,4 +874,146 @@ export function formatMoney(amount: number, currency: string): string {
     maximumFractionDigits: 2,
   });
   return `${n} ${currency || ""}`.trim();
+}
+
+// --- Home dashboard (GET /api/v1/home) ---
+
+// HomeActivity is one recent process event on a PR, for the "latest activity" feed.
+export interface HomeActivity {
+  purchase_request_id: number;
+  reference: string;
+  title: string;
+  action: string;
+  qualifier: string;
+  actor_email: string;
+  created_at: string;
+}
+
+export interface StaffHome {
+  my_requests_count: number;
+  completed_count: number;
+  recent_activity: HomeActivity[];
+}
+
+export interface ApprovalsHome {
+  pending_count: number;
+  completed_count: number;
+  recent_activity: HomeActivity[];
+}
+
+export interface ProcurementHome {
+  pending_count: number;
+  awaiting_delivery_count: number;
+  completed_count: number;
+  recent_activity: HomeActivity[];
+}
+
+// HomeResponse carries whichever role blocks apply to the caller; staff is always
+// present, approvals/procurement only when the caller qualifies.
+export interface HomeResponse {
+  staff?: StaffHome;
+  approvals?: ApprovalsHome;
+  procurement?: ProcurementHome;
+}
+
+// activityLabel humanizes a process event (action + qualifier) into a short past-
+// tense phrase for the activity feed. Mirrors model.ValidProcessActions; unknown
+// actions fall back to a title-cased form of the action string.
+export function activityLabel(action: string, qualifier: string): string {
+  switch (action) {
+    case "submit_pr":
+      return "Request submitted";
+    case "update_pr":
+      return "Request updated";
+    case "reject_pr":
+      return "Request rejected";
+    case "add_pr_approver":
+      return "Approver added";
+    case "remove_pr_approver":
+      return "Approver removed";
+    case "pr_approval":
+      return qualifier === "reject" ? "Approval rejected" : "Approved";
+    case "rerequest_pr_approval":
+      return "Approval re-requested";
+    case "team_lead_approval":
+      return qualifier === "reject" ? "Team lead rejected" : "Team lead approved";
+    case "assign_pr":
+      return qualifier === "unassign" ? "Unassigned" : "Assigned";
+    case "update_pr_collaborators":
+      return "Collaborators updated";
+    case "create_recommendation":
+      return "Recommendation created";
+    case "update_recommendation":
+      return "Recommendation updated";
+    case "delete_recommendation":
+      return "Recommendation removed";
+    case "rec_approval_legal":
+      return qualifier === "revert" ? "Legal approval reverted" : "Legal approved";
+    case "rec_approval_security":
+      return qualifier === "revert" ? "Security approval reverted" : "Security approved";
+    case "rec_approval_budget":
+      if (qualifier === "reject") return "Budget rejected";
+      if (qualifier === "revert") return "Budget approval reverted";
+      return "Budget approved";
+    case "request_rec_approval":
+      return "Approval requested";
+    case "remove_rec_approval":
+      return "Approval card removed";
+    case "update_budget_chain":
+      return "Budget chain updated";
+    case "assign_rec_legal":
+      return qualifier === "unassign" ? "Legal assignee cleared" : "Legal assignee set";
+    case "assign_rec_security":
+      return qualifier === "unassign" ? "Security assignee cleared" : "Security assignee set";
+    case "raise_rfi":
+      return "RFI raised";
+    case "clear_rfi":
+      return "RFI cleared";
+    case "add_quotation":
+      return "Quotation added";
+    case "update_quotation":
+      return "Quotation updated";
+    case "delete_quotation":
+      return "Quotation removed";
+    case "select_quotation":
+      return "Quotation selected";
+    case "add_draft_contract":
+      return "Draft contract added";
+    case "update_contract":
+      return "Contract updated";
+    case "delete_contract":
+      return "Contract removed";
+    case "sign_contract":
+      return qualifier === "unsign" ? "Contract unsigned" : "Contract signed";
+    case "create_grn":
+      return "GRN recorded";
+    case "update_grn":
+      return "GRN updated";
+    case "delete_grn":
+      return "GRN removed";
+    case "create_invoice":
+      return "Invoice recorded";
+    case "update_invoice":
+      return "Invoice updated";
+    case "delete_invoice":
+      return "Invoice removed";
+    case "invoice_status":
+      return `Invoice ${qualifier || "updated"}`;
+    default:
+      return action.replace(/_/g, " ").replace(/^\w/, (c) => c.toUpperCase());
+  }
+}
+
+// relativeTime renders an ISO timestamp as a compact "3h ago" style string.
+export function relativeTime(iso: string): string {
+  const then = new Date(iso).getTime();
+  const secs = Math.round((Date.now() - then) / 1000);
+  if (secs < 60) return "just now";
+  const mins = Math.round(secs / 60);
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.round(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.round(hrs / 24);
+  if (days < 30) return `${days}d ago`;
+  return new Date(iso).toLocaleDateString();
 }

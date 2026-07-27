@@ -5,6 +5,7 @@ import (
 
 	"github.com/cs/purchasing-app/internal/model"
 	"github.com/cs/purchasing-app/internal/repository"
+	"github.com/jackc/pgx/v5"
 )
 
 // TestProcurementLifecycle walks a purchase request through the full procurement
@@ -65,8 +66,9 @@ func TestProcurementLifecycle(t *testing.T) {
 	if err := repo.SelectQuotation(ctx, quo.ID); err != repository.ErrInvalidState {
 		t.Fatalf("select before recommendation approved = %v, want ErrInvalidState", err)
 	}
-	if err := repo.SetRecApproval(ctx, pr.ID, model.RecApprovalBudget, user.ID); err != nil {
-		t.Fatalf("approve budget card: %v", err)
+	// Budget approval is a serial chain: approve the base step (seeded on create).
+	if _, err := repo.SetBudgetStepDecision(ctx, pr.ID, baseBudgetStepID(t, repo, pr.ID), "approve", user.ID); err != nil {
+		t.Fatalf("approve budget base step: %v", err)
 	}
 
 	// Select quotation -> PR moves to vendor_selected.
@@ -207,4 +209,218 @@ func reloadContractStatus(t *testing.T, repo *repository.Repository, id int64) s
 		t.Fatalf("reload contract: %v", err)
 	}
 	return c.Status
+}
+
+// TestRecApprovalCardAddRemove exercises requesting and removing individual
+// approval cards on a recommendation without disturbing the others.
+func TestRecApprovalCardAddRemove(t *testing.T) {
+	repo, ctx := newTestRepo(t)
+
+	user, err := repo.UpsertUser(ctx, "card-sub-"+t.Name(), "card-proc@example.com", "Card Proc")
+	if err != nil {
+		t.Fatalf("upsert user: %v", err)
+	}
+	pr, err := repo.CreatePurchaseRequest(ctx, user.ID, repository.PurchaseRequestInput{Title: "Cards"})
+	if err != nil {
+		t.Fatalf("create PR: %v", err)
+	}
+	vendor, err := repo.CreateVendor(ctx, repository.VendorInput{Name: "CardVendor " + t.Name()}, user.ID)
+	if err != nil {
+		t.Fatalf("create vendor: %v", err)
+	}
+	if _, err := repo.CreateQuotation(ctx, pr.ID, repository.QuotationInput{VendorID: vendor.ID, TotalAmount: 10, Currency: "USD"}, user.ID); err != nil {
+		t.Fatalf("create quotation: %v", err)
+	}
+	if _, err := repo.CreateRecommendation(ctx, pr.ID, repository.RecommendationInput{
+		VendorID: vendor.ID, Description: "cards", RequiredTypes: []string{model.RecApprovalBudget},
+	}, user.ID); err != nil {
+		t.Fatalf("create recommendation: %v", err)
+	}
+
+	// Request the legal card -> now two cards; budget seeded a base step, legal none.
+	if err := repo.AddRecApprovalCard(ctx, pr.ID, model.RecApprovalLegal); err != nil {
+		t.Fatalf("add legal card: %v", err)
+	}
+	rec, err := repo.GetRecommendation(ctx, pr.ID)
+	if err != nil {
+		t.Fatalf("get recommendation: %v", err)
+	}
+	if len(rec.Approvals) != 2 {
+		t.Fatalf("want 2 cards, got %d", len(rec.Approvals))
+	}
+	// Requesting an already-present card is refused.
+	if err := repo.AddRecApprovalCard(ctx, pr.ID, model.RecApprovalLegal); err != repository.ErrInvalidState {
+		t.Fatalf("re-add legal = %v, want ErrInvalidState", err)
+	}
+
+	// Remove the legal card again.
+	if _, err := repo.RemoveRecApprovalCard(ctx, pr.ID, model.RecApprovalLegal); err != nil {
+		t.Fatalf("remove legal card: %v", err)
+	}
+	// Removing a card that isn't required -> not found.
+	if _, err := repo.RemoveRecApprovalCard(ctx, pr.ID, model.RecApprovalSecurity); err != pgx.ErrNoRows {
+		t.Fatalf("remove absent security = %v, want ErrNoRows", err)
+	}
+	// The last remaining card cannot be removed.
+	if _, err := repo.RemoveRecApprovalCard(ctx, pr.ID, model.RecApprovalBudget); err != repository.ErrInvalidState {
+		t.Fatalf("remove last (budget) = %v, want ErrInvalidState", err)
+	}
+	// Budget base step survived the legal add/remove churn.
+	if bc := budgetCard(t, repo, pr.ID); len(bc.BudgetSteps) != 1 {
+		t.Fatalf("budget base step count = %d, want 1", len(bc.BudgetSteps))
+	}
+
+	if _, err := repo.DeleteRecommendation(ctx, pr.ID); err != nil {
+		t.Fatalf("cleanup recommendation: %v", err)
+	}
+}
+
+// budgetCard returns the budget approval card of a PR's recommendation.
+func budgetCard(t *testing.T, repo *repository.Repository, prID int64) *repository.RecApproval {
+	t.Helper()
+	rec, err := repo.GetRecommendation(t.Context(), prID)
+	if err != nil || rec == nil {
+		t.Fatalf("get recommendation: %v", err)
+	}
+	for i := range rec.Approvals {
+		if rec.Approvals[i].ApprovalType == model.RecApprovalBudget {
+			return &rec.Approvals[i]
+		}
+	}
+	t.Fatalf("no budget card on recommendation")
+	return nil
+}
+
+// baseBudgetStepID returns the id of the recommendation's base budget step.
+func baseBudgetStepID(t *testing.T, repo *repository.Repository, prID int64) int64 {
+	t.Helper()
+	card := budgetCard(t, repo, prID)
+	for _, s := range card.BudgetSteps {
+		if s.IsBase {
+			return s.ID
+		}
+	}
+	t.Fatalf("no base budget step")
+	return 0
+}
+
+// TestBudgetApprovalChain exercises the serial budget approval chain end-to-end:
+// step seeding, serial ordering, the projected budget card, and the lock rule.
+func TestBudgetApprovalChain(t *testing.T) {
+	repo, ctx := newTestRepo(t)
+
+	user, err := repo.UpsertUser(ctx, "chain-sub-"+t.Name(), "chain-proc@example.com", "Chain Proc")
+	if err != nil {
+		t.Fatalf("upsert user: %v", err)
+	}
+	pr, err := repo.CreatePurchaseRequest(ctx, user.ID, repository.PurchaseRequestInput{Title: "Chain"})
+	if err != nil {
+		t.Fatalf("create PR: %v", err)
+	}
+	vendor, err := repo.CreateVendor(ctx, repository.VendorInput{Name: "ChainVendor " + t.Name()}, user.ID)
+	if err != nil {
+		t.Fatalf("create vendor: %v", err)
+	}
+	quo, err := repo.CreateQuotation(ctx, pr.ID, repository.QuotationInput{VendorID: vendor.ID, TotalAmount: 100, Currency: "USD"}, user.ID)
+	if err != nil {
+		t.Fatalf("create quotation: %v", err)
+	}
+	if _, err := repo.CreateRecommendation(ctx, pr.ID, repository.RecommendationInput{
+		VendorID: vendor.ID, Description: "chain", RequiredTypes: []string{model.RecApprovalBudget},
+	}, user.ID); err != nil {
+		t.Fatalf("create recommendation: %v", err)
+	}
+
+	// A base step is seeded on create; the chain is not yet approved.
+	card := budgetCard(t, repo, pr.ID)
+	if len(card.BudgetSteps) != 1 || !card.BudgetSteps[0].IsBase {
+		t.Fatalf("want 1 base step, got %+v", card.BudgetSteps)
+	}
+	if ok, _ := repo.RecommendationFullyApproved(ctx, pr.ID); ok {
+		t.Fatal("fully approved with a pending base step")
+	}
+	baseID := card.BudgetSteps[0].ID
+
+	// Add two named steps.
+	s2, err := repo.AddBudgetStep(ctx, pr.ID, "Finance", "finance@example.com")
+	if err != nil {
+		t.Fatalf("add step 2: %v", err)
+	}
+	s3, err := repo.AddBudgetStep(ctx, pr.ID, "CFO", "cfo@example.com")
+	if err != nil {
+		t.Fatalf("add step 3: %v", err)
+	}
+	if s2.Position != 2 || s3.Position != 3 {
+		t.Fatalf("positions = %d,%d want 2,3", s2.Position, s3.Position)
+	}
+
+	// A named step approver is recognised as an approver of the PR (the budget-step
+	// branch of approvablePredicate), matched case-insensitively by email; an
+	// unrelated address is not.
+	if ok, err := repo.IsApproverForPR(ctx, pr.ID, 0, "FINANCE@example.com", false, false); err != nil || !ok {
+		t.Fatalf("named step approver IsApproverForPR = %v (err %v), want true", ok, err)
+	}
+	if ok, _ := repo.IsApproverForPR(ctx, pr.ID, 0, "stranger@example.com", false, false); ok {
+		t.Fatal("unrelated email should not be an approver")
+	}
+
+	// Serial gate: step 2 cannot be decided before the base step is approved.
+	if _, err := repo.SetBudgetStepDecision(ctx, pr.ID, s2.ID, "approve", user.ID); err != repository.ErrInvalidState {
+		t.Fatalf("approve step 2 before base = %v, want ErrInvalidState", err)
+	}
+
+	// Approve base -> still not fully approved (steps 2,3 pending).
+	if _, err := repo.SetBudgetStepDecision(ctx, pr.ID, baseID, "approve", user.ID); err != nil {
+		t.Fatalf("approve base: %v", err)
+	}
+	if ok, _ := repo.RecommendationFullyApproved(ctx, pr.ID); ok {
+		t.Fatal("fully approved with pending later steps")
+	}
+
+	// Approve step 2, then step 3 -> the projected budget card becomes approved.
+	if _, err := repo.SetBudgetStepDecision(ctx, pr.ID, s2.ID, "approve", user.ID); err != nil {
+		t.Fatalf("approve step 2: %v", err)
+	}
+	if _, err := repo.SetBudgetStepDecision(ctx, pr.ID, s3.ID, "approve", user.ID); err != nil {
+		t.Fatalf("approve step 3: %v", err)
+	}
+	if ok, _ := repo.RecommendationFullyApproved(ctx, pr.ID); !ok {
+		t.Fatal("not fully approved after every step approved")
+	}
+	if bc := budgetCard(t, repo, pr.ID); !bc.Approved {
+		t.Fatal("budget card projection not approved")
+	}
+
+	// Lock rule: step 2 cannot be reversed now that step 3 has decided.
+	if _, err := repo.SetBudgetStepDecision(ctx, pr.ID, s2.ID, "revert", user.ID); err != repository.ErrInvalidState {
+		t.Fatalf("reverse locked step 2 = %v, want ErrInvalidState", err)
+	}
+
+	// Reject flow: revert step 3, then reject step 2 -> chain no longer approved and
+	// the quotation cannot be selected.
+	if _, err := repo.SetBudgetStepDecision(ctx, pr.ID, s3.ID, "revert", user.ID); err != nil {
+		t.Fatalf("revert step 3: %v", err)
+	}
+	if _, err := repo.SetBudgetStepDecision(ctx, pr.ID, s2.ID, "reject", user.ID); err != nil {
+		t.Fatalf("reject step 2: %v", err)
+	}
+	if ok, _ := repo.RecommendationFullyApproved(ctx, pr.ID); ok {
+		t.Fatal("fully approved with a rejected step")
+	}
+	if err := repo.SelectQuotation(ctx, quo.ID); err != repository.ErrInvalidState {
+		t.Fatalf("select with rejected step = %v, want ErrInvalidState", err)
+	}
+
+	// A pending additional step can be removed; a decided one cannot.
+	if err := repo.DeleteBudgetStep(ctx, pr.ID, s3.ID); err != nil {
+		t.Fatalf("delete pending step 3: %v", err)
+	}
+	if err := repo.DeleteBudgetStep(ctx, pr.ID, s2.ID); err != repository.ErrInvalidState {
+		t.Fatalf("delete rejected step 2 = %v, want ErrInvalidState", err)
+	}
+
+	// Clean up the test data.
+	if _, err := repo.DeleteRecommendation(ctx, pr.ID); err != nil {
+		t.Fatalf("cleanup recommendation: %v", err)
+	}
 }
