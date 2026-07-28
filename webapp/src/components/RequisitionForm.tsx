@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useVendorLookup } from "../hooks/useVendors";
 import { useBusinessUnitApprovers, useBusinessUnitLookup } from "../hooks/useBusinessUnits";
+import { useConfigLookup, optionsFor } from "../hooks/useConfigOptions";
 import { useDirectory } from "../hooks/useDirectory";
 import { EmailAutocomplete } from "./EmailAutocomplete";
 import { SupplierNameCombobox } from "./SupplierNameCombobox";
@@ -310,6 +311,112 @@ function Select({ value, onChange, options, placeholder }: { value?: string; onC
   );
 }
 
+// A configured list longer than this is offered as a type-to-search combobox
+// instead of a plain <select> (a long native dropdown is unusable).
+const OPTION_DROPDOWN_MAX = 10;
+
+// OptionField renders a value drawn from a Settings-page list (config_options):
+// a <select> while the list is short, a type-to-search combobox once it grows
+// past OPTION_DROPDOWN_MAX, and a plain text input when the list has no
+// configured values at all (so the field never becomes a dead end). Free text is
+// accepted in the latter two forms — these fields were free-text historically and
+// a value may exist before an admin adds it to the list.
+function OptionField({
+  options,
+  value,
+  onChange,
+  noun,
+  placeholder,
+}: {
+  options: string[];
+  value?: string;
+  onChange: (v: string) => void;
+  // noun names the list in the generated placeholders, e.g. "budget category".
+  noun: string;
+  // placeholder is used for the free-text fallback (an empty list).
+  placeholder: string;
+}) {
+  if (options.length === 0) {
+    return <input type="text" value={value ?? ""} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} />;
+  }
+  if (options.length <= OPTION_DROPDOWN_MAX) {
+    return <Select value={value} onChange={onChange} options={options} placeholder={`— Select ${noun} —`} />;
+  }
+  return <OptionCombobox value={value ?? ""} onChange={onChange} options={options} placeholder={`Search ${noun}…`} />;
+}
+
+// OptionCombobox is an editable dropdown over a long configured list: type to
+// filter, or click the chevron to browse everything.
+function OptionCombobox({
+  value,
+  onChange,
+  options,
+  placeholder,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  options: string[];
+  placeholder: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef<HTMLDivElement>(null);
+
+  // Close on any click outside the component.
+  useEffect(() => {
+    if (!open) return;
+    const onDocClick = (e: MouseEvent) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onDocClick);
+    return () => document.removeEventListener("mousedown", onDocClick);
+  }, [open]);
+
+  const q = value.trim().toLowerCase();
+  const filtered = q ? options.filter((o) => o.toLowerCase().includes(q)) : options;
+
+  return (
+    <div className="combo" ref={wrapRef}>
+      <input
+        type="text"
+        value={value}
+        onChange={(e) => {
+          onChange(e.target.value);
+          setOpen(true);
+        }}
+        onFocus={() => setOpen(true)}
+        placeholder={placeholder}
+        autoComplete="off"
+        role="combobox"
+        aria-expanded={open}
+      />
+      <button type="button" className="combo-toggle" tabIndex={-1} onClick={() => setOpen((o) => !o)} aria-label={placeholder}>
+        ▾
+      </button>
+      {open && (
+        <div className="combo-menu">
+          {filtered.length === 0 ? (
+            <div className="combo-empty">No matching option — “{value.trim()}” will be used as typed.</div>
+          ) : (
+            filtered.map((o) => (
+              <button
+                type="button"
+                className={`combo-item${o === value ? " on" : ""}`}
+                key={o}
+                onClick={() => {
+                  onChange(o);
+                  setOpen(false);
+                }}
+              >
+                {o}
+              </button>
+            ))
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // NameList edits a string[] of names, with a count field that pre-seeds rows.
 function NameList({
   names,
@@ -591,6 +698,9 @@ function StepVendorBudget({
   const { data: vendorOptions } = useVendorLookup();
   const { data: businessUnits } = useBusinessUnitLookup();
   const { data: buApprovers } = useBusinessUnitApprovers(value.business_unit_id);
+  // Budget-coding values come from the Settings-page lists.
+  const { data: config } = useConfigLookup();
+  const lists = config?.lists;
 
   // Selecting a business unit resets the budget approver (its approver list
   // changes). Picking an approver fills in the free-text name/email fields that
@@ -678,17 +788,41 @@ function StepVendorBudget({
       <SectionBand>Budget details</SectionBand>
       <div className="grid-2">
         <Field label="Budget category">
-          <input type="text" value={d.budget_category ?? ""} onChange={(e) => setD({ budget_category: e.target.value })} placeholder="e.g. Software & SaaS, Hardware & Equipment" />
+          <OptionField
+            options={optionsFor(lists, "budget_category", d.budget_category)}
+            value={d.budget_category}
+            onChange={(v) => setD({ budget_category: v })}
+            noun="budget category"
+            placeholder="e.g. Software & SaaS, Hardware & Equipment"
+          />
         </Field>
         <Field label="Product">
-          <input type="text" value={d.budget_product ?? ""} onChange={(e) => setD({ budget_product: e.target.value })} placeholder="e.g. WSO2 Identity Server, Choreo, Corporate / shared" />
+          <OptionField
+            options={optionsFor(lists, "product", d.budget_product)}
+            value={d.budget_product}
+            onChange={(v) => setD({ budget_product: v })}
+            noun="product"
+            placeholder="e.g. WSO2 Identity Server, Choreo, Corporate / shared"
+          />
         </Field>
         <Field label="Region">
-          <input type="text" value={d.budget_region ?? ""} onChange={(e) => setD({ budget_region: e.target.value })} placeholder="e.g. APAC — Sri Lanka, EMEA — UK, Global" />
+          <OptionField
+            options={optionsFor(lists, "region", d.budget_region)}
+            value={d.budget_region}
+            onChange={(v) => setD({ budget_region: v })}
+            noun="region"
+            placeholder="e.g. APAC — Sri Lanka, EMEA — UK, Global"
+          />
         </Field>
       </div>
       <Field label="Engagement code" hint="Finance / NetSuite cost-center code, if known.">
-        <input type="text" value={d.engagement_code ?? ""} onChange={(e) => setD({ engagement_code: e.target.value })} placeholder="e.g. ENG-1001, if known" />
+        <OptionField
+          options={optionsFor(lists, "engagement_code", d.engagement_code)}
+          value={d.engagement_code}
+          onChange={(v) => setD({ engagement_code: v })}
+          noun="engagement code"
+          placeholder="e.g. ENG-1001, if known"
+        />
       </Field>
 
       <SectionBand>Budget approval</SectionBand>
