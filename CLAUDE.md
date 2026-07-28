@@ -63,10 +63,15 @@ Whenever test data is added by claude, clean up all those test data after testin
   `purchase_requests` — no CHECK/enum, so EVENTS needed no migration); **Marketing & Events** is a
   real stored category rendered as "under development" placeholders. The rest of the form is a
   `details` **JSONB** blob (shape = `PRDetails`). Following the ProQ mockup, the form **no longer
-  collects** WSO2 entity, config-list budget coding, estimated value, or currency — those
+  collects** WSO2 entity, estimated value, or currency — those
   columns remain (nullable/defaulted) and pass through unchanged when editing legacy PRs, but new PRs
-  leave them empty; budget coding (category / product / region / engagement code) is now
-  **free-text in `details`**. The form **does** collect a **business unit** (dropdown, required) and a
+  leave them empty. Budget coding (category / product / region / engagement code) is stored as strings
+  in `details`, but the **values are picked from the Settings-page config lists**
+  (`budget_category`/`product`/`region`/`engagement_code` via `useConfigLookup` + `optionsFor`): the
+  shared `OptionField` helper in `RequisitionForm.tsx` renders a `<select>` for a list of ≤10 values, a
+  type-to-search combobox (`OptionCombobox`) once it exceeds 10, and a plain free-text input when the
+  list is empty (as `engagement_code` ships) — free text is still accepted so pre-existing/unlisted
+  values survive. The form **does** collect a **business unit** (dropdown, required) and a
   **budget approver** (dropdown, required) chosen from that unit's approvers — see the **Business
   units** entry below. `team_lead_email` is also required. The selected approver is stored in the
   free-text `budget_approver_name/email`; the recommendation's **budget approval** matches the caller's
@@ -296,5 +301,10 @@ Whenever test data is added by claude, clean up all those test data after testin
   suggestions — accepts a typed email not in the directory) on **team-lead email** (create + edit),
   **budget-chain steps** (add/edit), and the **invite-user** form; `DirectoryUserPicker` (search →
   ensure → id) on **business-unit approvers** and **team members**. PR assignee/collaborators stay
-  DB/procurement-scoped (the backend requires the procurement role there). No migration, no new event
-  action (reads + reuses the invite mechanism).
+  DB/procurement-scoped (the backend requires the procurement role there). Both pickers filter the
+  cached directory through **`lib/directorySearch.ts` (`searchPeople`)**, which *ranks* rather than
+  merely filters: full name/email **prefix** first, then a prefix of any name word or email
+  local-part segment (surnames, `first.last@`), then all query tokens matching word prefixes in any
+  order, and only last a plain substring hit — so incidental mid-word matches no longer crowd out the
+  person being typed. Ties break on display name, then email; `foundCount` (uncapped) still drives
+  `useRefreshOnNoMatch`. No migration, no new event action (reads + reuses the invite mechanism).

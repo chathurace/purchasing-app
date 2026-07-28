@@ -3,6 +3,7 @@ import { useMutation } from "@tanstack/react-query";
 import { Box, Chip, MenuItem, Paper, Stack, TextField, Typography } from "@wso2/oxygen-ui";
 import { ensureDirectoryUser } from "../api/users";
 import { useDirectory, useRefreshOnNoMatch } from "../hooks/useDirectory";
+import { searchPeople } from "../lib/directorySearch";
 import { ApiError } from "../api/client";
 import type { DirectoryUser, UserSummary } from "../types/api";
 
@@ -64,15 +65,8 @@ export function DirectoryUserPicker({
   });
 
   const { available, foundCount } = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (q === "") return { available: [] as DirectoryUser[], foundCount: 0 };
-    const matched = (directory ?? []).filter(
-      (u) => u.email.toLowerCase().includes(q) || u.name.toLowerCase().includes(q),
-    );
-    const available = matched
-      .filter((u) => !selectedEmails.has(u.email.toLowerCase()))
-      .slice(0, 8);
-    return { available, foundCount: matched.length };
+    const { matches, foundCount } = searchPeople(directory, query, { exclude: selectedEmails });
+    return { available: matches, foundCount };
   }, [directory, selectedEmails, query]);
 
   useRefreshOnNoMatch(query, foundCount, refresh);

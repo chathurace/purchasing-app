@@ -1,6 +1,7 @@
 import { useMemo, useRef, useState } from "react";
 import { Box, MenuItem, Paper, TextField, Typography } from "@wso2/oxygen-ui";
 import { useRefreshOnNoMatch } from "../hooks/useDirectory";
+import { searchPeople } from "../lib/directorySearch";
 import type { DirectoryUser } from "../types/api";
 
 interface Props {
@@ -49,17 +50,16 @@ export function EmailAutocomplete({
   const blurTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   const { matches, foundCount } = useMemo(() => {
-    const q = value.trim().toLowerCase();
-    if (q === "") return { matches: [] as DirectoryUser[], foundCount: 0 };
-    const found = directory.filter(
-      (u) => u.email.toLowerCase().includes(q) || u.name.toLowerCase().includes(q),
-    );
+    const found = searchPeople(directory, value);
     // Hide the dropdown once the text is an exact match (nothing left to pick),
     // but still count it as found so no needless refresh fires.
-    if (found.length === 1 && found[0].email.toLowerCase() === q) {
+    if (
+      found.foundCount === 1 &&
+      found.matches[0]?.email.toLowerCase() === value.trim().toLowerCase()
+    ) {
       return { matches: [] as DirectoryUser[], foundCount: 1 };
     }
-    return { matches: found.slice(0, 8), foundCount: found.length };
+    return found;
   }, [directory, value]);
 
   useRefreshOnNoMatch(value, foundCount, refresh ?? noop);
