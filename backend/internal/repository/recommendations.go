@@ -852,9 +852,9 @@ func (r *Repository) ClearRecApproval(ctx context.Context, prID int64, approvalT
 	return nil
 }
 
-// SetRecAssignee sets (or clears, when assigneeID is nil) the assignee of a
-// legal/security approval card. Returns ErrInvalidState if the card is not a
-// required one on this PR's recommendation.
+// SetRecAssignee sets (or clears, when assigneeID is nil) the assignee of a team
+// approval card (legal/security/compliance). Returns ErrInvalidState if the card
+// is not a required one on this PR's recommendation.
 func (r *Repository) SetRecAssignee(ctx context.Context, prID int64, approvalType string, assigneeID *int64) error {
 	tag, err := r.pool.Exec(ctx, `
 		UPDATE pr_recommendation_approvals

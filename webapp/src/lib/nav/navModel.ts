@@ -27,7 +27,7 @@ import {
 //   - GRNs, Invoices               → procurement
 //
 // Users without a procurement/procurement_admin/admin role (the `procurement`
-// flag, false for plain staff and for legal/security approvers) therefore see
+// flag, false for plain staff and for legal/security/compliance approvers) therefore see
 // only Home, My requests, and Approvals.
 //   - Vendors                      → canManageVendors (admin / procurement_admin)
 //   - Business units, Settings     → canManageBusinessUnits (admin / procurement_admin)

@@ -16,8 +16,8 @@ storage. No workflow engine.
 
 ## Roles (maintained in-app, not from the SSO token)
 
-`staff`, `procurement`, `procurement_admin`, `admin`, plus `legal` / `security` (the legal/security approval
-cards on a PR's procurement recommendation; they also retain read access to contracts). New SSO
+`staff`, `procurement`, `procurement_admin`, `admin`, plus `legal` / `security` / `compliance` (the
+team approval cards on a PR's procurement recommendation; they also retain read access to contracts). New SSO
 users are auto-provisioned as `staff` on first login. The `bootstrap_admin.email` in `config.yaml` is
 granted `admin` on every login. Admins manage users from the **Users** page — see
 `docs/user-management.md`.
@@ -119,16 +119,21 @@ Whenever test data is added by claude, clean up all those test data after testin
 - **Procurement recommendation** — migration `022`; backend in
   `repository/recommendations.go` + `handler/recommendations.go`. Once a PR has ≥1 quotation, procurement
   adds a **single** recommendation (vendor — restricted to a quoted vendor — + description + the
-  required approvals: budget owner / legal / security, budget default-checked) inline on the PR page.
+  required approvals: budget owner / legal / security / compliance, budget default-checked) inline on
+  the PR page.
   Each required approval is an **approval card** with an approve toggle and a comment thread (text +
-  doc attachments, owner type `pr_recommendation_comment`). Card actors: legal→`legal` role,
-  security→`security` role, budget→the PR's **named budget approver** (the person the requester picked
+  doc attachments, owner type `pr_recommendation_comment`). Card actors: each **team card** maps to its
+  role via `model.RecTeamApprovalRoles` (legal→`legal`, security→`security`, compliance→`compliance` —
+  adding a team card is a one-line change there plus a seeded `teams` row);
+  budget→the PR's **named budget approver** (the person the requester picked
   from the business unit's approvers, stored in `budget_approver_email`): `IsBudgetApproverForPR` /
   `BudgetApproversForPR` match the caller's email against it (case-insensitive); admin passes any.
   The card a caller may act on is server-computed
   into `recommendation.my_actionable_types` (comment/view) plus per-card `can_comment`/`can_approve`/
-  `can_assign` flags — see the **Teams & approval assignees** entry below for the legal/security
-  assignee split (comment = whole team, approve = the assignee only).
+  `can_assign` flags — see the **Teams & approval assignees** entry below for the team-card
+  assignee split (comment = whole team, approve = the assignee only). Caller-side card membership is
+  resolved once by `handler.callerRecCardTypes` and passed to the repository as the `text[]` `$2` bind
+  of `approvablePredicate`/`myApprovalStateExpr` (`$3` = caller email).
   **All required cards must be approved before a quotation can be selected**
   (`RecommendationFullyApproved`, enforced in `SelectQuotation`). Editing the recommendation resets all cards to pending. PR view/list
   access is extended so card actors can see and find the PRs awaiting them. The recommendation view
@@ -235,7 +240,8 @@ Whenever test data is added by claude, clean up all those test data after testin
   HasRole(procurement_admin)`; frontend `useCanViewAuditLog`/`canViewAuditLog` nav flag); capped at
   the latest 2000 rows/section. Read-only — no new event action.
 - **Teams & approval assignees** — see `docs/teams-approval-assignee.md` (migrations `038` teams,
-  `039` assignee). A **team** (`teams` table, seeded fixed set Legal/Security/Procurement) is a name
+  `039` assignee, `047` the Compliance team + `compliance` role). A **team** (`teams` table, seeded
+  fixed set Legal/Security/Compliance/Procurement) is a name
   + a fixed/display-only `member_role` + a shared `team_email`.
   Membership **is** the role — there is no membership table; adding/removing a member grants/revokes
   `member_role` (reusing `EnsureUserHasRole`/`RemoveUserRole`). A team may also have an **admin-role
@@ -246,7 +252,7 @@ Whenever test data is added by claude, clean up all those test data after testin
   Managed in a **Teams** section on the
   Settings page (`components/TeamsSection.tsx`); members + email are procurement_admin/admin
   (`middleware.HasTeamAdmin`), reading is open (`GET /teams`, needed by the assignee dropdown). The
-  legal/security recommendation approval cards gain an **assignee**
+  team recommendation approval cards (legal/security/compliance) gain an **assignee**
   (`pr_recommendation_approvals.assignee_id`): the previously all-or-nothing card is split three ways,
   serialized as `can_comment`/`can_approve`/`can_assign` — **comment** = any team member (as before),
   **approve** = **the assignee only** (`canApproveRecType`), **assign** = any team member or procurement
@@ -254,7 +260,10 @@ Whenever test data is added by claude, clean up all those test data after testin
   CC the `team_email`); a **Send reminder** button re-sends. Email uses the existing SMTP mailer
   (`Mailer.SendCC` added for the CC); disabled in dev = logged. Endpoints
   `PUT/POST .../recommendation/approvals/{type}/assignee[/remind]`; process events
-  `assign_rec_legal`/`assign_rec_security` (qualifier `assign`/`unassign`).
+  `assign_rec_legal`/`assign_rec_security`/`assign_rec_compliance` (qualifier `assign`/`unassign`).
+  **Compliance** (migration `047`) is a straight clone of Security: a `compliance` role + seeded team,
+  a `compliance` approval card (optional, assignee-approved, gates quotation selection like the
+  others), and process events `rec_approval_compliance`/`assign_rec_compliance`.
 - **Business units (was budget units, was cost centers)** — see `docs/business-units.md` (migration
   `046`, which renames `budget_units` → **`business_units`**, drops the bracket/currency/value model,
   and — dev-only, no data migration — **truncates** existing data). A business unit is just a **name**,

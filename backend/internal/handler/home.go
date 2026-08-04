@@ -55,8 +55,7 @@ type HomeResponse struct {
 func (h *HomeHandler) Get(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	user := middleware.UserFromCtx(ctx)
-	hasLegal := middleware.HasRole(ctx, model.RoleLegal)
-	hasSecurity := middleware.HasRole(ctx, model.RoleSecurity)
+	recCardTypes := callerRecCardTypes(ctx)
 	isAdmin := middleware.HasRole(ctx, model.RoleAdmin)
 
 	resp := HomeResponse{}
@@ -81,20 +80,20 @@ func (h *HomeHandler) Get(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Approvals — anyone who approves a PR they did not submit.
-	isApprover, err := h.Repo.HasApprovableWork(ctx, user.ID, user.Email, hasLegal, hasSecurity)
+	isApprover, err := h.Repo.HasApprovableWork(ctx, user.ID, user.Email, recCardTypes)
 	if err != nil {
 		reqLog(r).Error().Err(err).Msg("home: is approver")
 		writeError(w, http.StatusInternalServerError, "failed to load home")
 		return
 	}
 	if isApprover {
-		pending, done, err := h.Repo.CountApprovals(ctx, user.ID, user.Email, hasLegal, hasSecurity)
+		pending, done, err := h.Repo.CountApprovals(ctx, user.ID, user.Email, recCardTypes)
 		if err != nil {
 			reqLog(r).Error().Err(err).Msg("home: count approvals")
 			writeError(w, http.StatusInternalServerError, "failed to load home")
 			return
 		}
-		act, err := h.Repo.RecentActivityForApprover(ctx, user.ID, user.Email, hasLegal, hasSecurity, homeActivityLimit)
+		act, err := h.Repo.RecentActivityForApprover(ctx, user.ID, user.Email, recCardTypes, homeActivityLimit)
 		if err != nil {
 			reqLog(r).Error().Err(err).Msg("home: approver activity")
 			writeError(w, http.StatusInternalServerError, "failed to load home")

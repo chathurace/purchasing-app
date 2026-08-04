@@ -29,19 +29,21 @@ const (
 	ProcessAssignPR              = "assign_pr" // qualifier: assign | unassign
 	ProcessUpdatePRCollaborators = "update_pr_collaborators"
 
-	ProcessCreateRecommendation = "create_recommendation"
-	ProcessUpdateRecommendation = "update_recommendation"
-	ProcessDeleteRecommendation = "delete_recommendation"
-	ProcessRecApprovalLegal     = "rec_approval_legal"    // qualifier: approve | revert
-	ProcessRecApprovalSecurity  = "rec_approval_security" // qualifier: approve | revert
-	ProcessRecApprovalBudget    = "rec_approval_budget"   // qualifier: approve | reject | revert
-	ProcessRequestRecApproval   = "request_rec_approval"  // qualifier: budget | legal | security
-	ProcessRemoveRecApproval    = "remove_rec_approval"   // qualifier: budget | legal | security
-	ProcessUpdateBudgetChain    = "update_budget_chain"   // qualifier: add | update | remove
-	ProcessAssignRecLegal       = "assign_rec_legal"      // qualifier: assign | unassign
-	ProcessAssignRecSecurity    = "assign_rec_security"   // qualifier: assign | unassign
-	ProcessRaiseRFI             = "raise_rfi"
-	ProcessClearRFI             = "clear_rfi"
+	ProcessCreateRecommendation  = "create_recommendation"
+	ProcessUpdateRecommendation  = "update_recommendation"
+	ProcessDeleteRecommendation  = "delete_recommendation"
+	ProcessRecApprovalLegal      = "rec_approval_legal"      // qualifier: approve | revert
+	ProcessRecApprovalSecurity   = "rec_approval_security"   // qualifier: approve | revert
+	ProcessRecApprovalCompliance = "rec_approval_compliance" // qualifier: approve | revert
+	ProcessRecApprovalBudget     = "rec_approval_budget"     // qualifier: approve | reject | revert
+	ProcessRequestRecApproval    = "request_rec_approval"    // qualifier: budget | legal | security | compliance
+	ProcessRemoveRecApproval     = "remove_rec_approval"     // qualifier: budget | legal | security | compliance
+	ProcessUpdateBudgetChain     = "update_budget_chain"     // qualifier: add | update | remove
+	ProcessAssignRecLegal        = "assign_rec_legal"        // qualifier: assign | unassign
+	ProcessAssignRecSecurity     = "assign_rec_security"     // qualifier: assign | unassign
+	ProcessAssignRecCompliance   = "assign_rec_compliance"   // qualifier: assign | unassign
+	ProcessRaiseRFI              = "raise_rfi"
+	ProcessClearRFI              = "clear_rfi"
 
 	ProcessAddQuotation    = "add_quotation"
 	ProcessUpdateQuotation = "update_quotation"
@@ -129,10 +131,11 @@ var ValidProcessActions = setOf(
 	ProcessTeamLeadApproval,
 	ProcessAssignPR, ProcessUpdatePRCollaborators,
 	ProcessCreateRecommendation, ProcessUpdateRecommendation, ProcessDeleteRecommendation,
-	ProcessRecApprovalLegal, ProcessRecApprovalSecurity, ProcessRecApprovalBudget,
+	ProcessRecApprovalLegal, ProcessRecApprovalSecurity, ProcessRecApprovalCompliance,
+	ProcessRecApprovalBudget,
 	ProcessRequestRecApproval, ProcessRemoveRecApproval,
 	ProcessUpdateBudgetChain,
-	ProcessAssignRecLegal, ProcessAssignRecSecurity,
+	ProcessAssignRecLegal, ProcessAssignRecSecurity, ProcessAssignRecCompliance,
 	ProcessRaiseRFI, ProcessClearRFI,
 	ProcessAddQuotation, ProcessUpdateQuotation, ProcessDeleteQuotation, ProcessSelectQuotation,
 	ProcessAddDraftContract, ProcessUpdateContract, ProcessDeleteContract, ProcessSignContract,
@@ -148,28 +151,34 @@ var ValidAuditActions = setOf(
 	AuditConnectStorage, AuditSetStorageFolder,
 )
 
-// RecApprovalAction maps a recommendation card type (budget/legal/security) to
-// its fixed process action, so callers derive the action from the URL {type}.
+// RecApprovalAction maps a recommendation card type (budget/legal/security/
+// compliance) to its fixed process action, so callers derive the action from the
+// URL {type}.
 func RecApprovalAction(approvalType string) (string, bool) {
 	switch approvalType {
 	case RecApprovalLegal:
 		return ProcessRecApprovalLegal, true
 	case RecApprovalSecurity:
 		return ProcessRecApprovalSecurity, true
+	case RecApprovalCompliance:
+		return ProcessRecApprovalCompliance, true
 	case RecApprovalBudget:
 		return ProcessRecApprovalBudget, true
 	}
 	return "", false
 }
 
-// RecAssignAction maps a legal/security card type to its assignment process
-// action. The budget card has no assignee, so it returns ("", false).
+// RecAssignAction maps a team card type (legal/security/compliance) to its
+// assignment process action. The budget card has no assignee, so it returns
+// ("", false).
 func RecAssignAction(approvalType string) (string, bool) {
 	switch approvalType {
 	case RecApprovalLegal:
 		return ProcessAssignRecLegal, true
 	case RecApprovalSecurity:
 		return ProcessAssignRecSecurity, true
+	case RecApprovalCompliance:
+		return ProcessAssignRecCompliance, true
 	}
 	return "", false
 }

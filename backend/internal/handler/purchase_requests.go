@@ -146,6 +146,21 @@ func (h *PurchaseRequestsHandler) callerCanView(r *http.Request, pr *repository.
 	return false
 }
 
+// callerRecCardTypes returns the team-backed recommendation card types the caller
+// may act on — one per team role they hold (legal / security / compliance), in
+// canonical order. It is the $2 bind of the repository's approvablePredicate /
+// myApprovalStateExpr, so a caller in no approval team gets an empty slice.
+func callerRecCardTypes(ctx context.Context) []string {
+	out := []string{}
+	for _, t := range model.RecApprovalTypes {
+		role, ok := model.RoleForRecApprovalType(t)
+		if ok && middleware.HasRole(ctx, role) {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
 // callerIsTeamLead reports whether the user is the PR's named team lead — a
 // case-insensitive email match. Emails are stored lowercased; we normalize the
 // caller's side too for safety.
@@ -180,20 +195,16 @@ func callerIsBudgetStepApprover(user *repository.User, rec *repository.Recommend
 
 // canActOnRecType reports whether the caller has a stake in a recommendation
 // approval card — the predicate for viewing the PR, for *commenting* and (for
-// the budget card) for approving: legal/security require the matching role
-// (admin passes); the budget card requires being a qualified budget approver of
-// the PR's budget unit (or admin) — any approver of the bracket the
-// recommendation's estimated value + currency resolve to. Approving a
-// legal/security card additionally requires being its assignee — see
+// the budget card) for approving: a team card (legal/security/compliance) requires
+// the matching role; the budget card requires being the PR's named budget approver
+// (or admin). Approving a team card additionally requires being its assignee — see
 // canApproveRecType.
 func (h *PurchaseRequestsHandler) canActOnRecType(r *http.Request, pr *repository.PurchaseRequest, approvalType string) (bool, error) {
 	ctx := r.Context()
-	switch approvalType {
-	case model.RecApprovalLegal:
-		return middleware.HasRole(ctx, model.RoleLegal), nil
-	case model.RecApprovalSecurity:
-		return middleware.HasRole(ctx, model.RoleSecurity), nil
-	case model.RecApprovalBudget:
+	if role, ok := model.RoleForRecApprovalType(approvalType); ok {
+		return middleware.HasRole(ctx, role), nil
+	}
+	if approvalType == model.RecApprovalBudget {
 		if middleware.HasRole(ctx, model.RoleAdmin) {
 			return true, nil
 		}
@@ -210,30 +221,26 @@ func (h *PurchaseRequestsHandler) canActOnRecType(r *http.Request, pr *repositor
 	return false, nil
 }
 
-// canApproveRecType reports whether the caller may toggle a card's approval. For
-// legal/security only the card's *assignee* may approve (a team member assigns the
-// card to themselves first); the budget card keeps the canActOnRecType rule.
+// canApproveRecType reports whether the caller may toggle a card's approval. For a
+// team card only its *assignee* may approve (a team member assigns the card to
+// themselves first); the budget card keeps the canActOnRecType rule.
 func (h *PurchaseRequestsHandler) canApproveRecType(r *http.Request, pr *repository.PurchaseRequest, a *repository.RecApproval) (bool, error) {
-	switch a.ApprovalType {
-	case model.RecApprovalLegal, model.RecApprovalSecurity:
+	if _, isTeamCard := model.RoleForRecApprovalType(a.ApprovalType); isTeamCard {
 		user := middleware.UserFromCtx(r.Context())
 		return user != nil && a.AssigneeID != nil && *a.AssigneeID == user.ID, nil
-	default:
-		return h.canActOnRecType(r, pr, a.ApprovalType)
 	}
+	return h.canActOnRecType(r, pr, a.ApprovalType)
 }
 
-// canAssignRecType reports whether the caller may set the assignee of a
-// legal/security card: any member of that team, or any procurement user (procurement /
-// procurement_admin / admin). The budget card has no assignee.
+// canAssignRecType reports whether the caller may set the assignee of a team card
+// (legal/security/compliance): any member of that team, or any procurement user
+// (procurement / procurement_admin / admin). The budget card has no assignee.
 func (h *PurchaseRequestsHandler) canAssignRecType(ctx context.Context, approvalType string) bool {
-	switch approvalType {
-	case model.RecApprovalLegal:
-		return middleware.HasRole(ctx, model.RoleLegal) || middleware.HasProcurementAccess(ctx)
-	case model.RecApprovalSecurity:
-		return middleware.HasRole(ctx, model.RoleSecurity) || middleware.HasProcurementAccess(ctx)
+	role, ok := model.RoleForRecApprovalType(approvalType)
+	if !ok {
+		return false
 	}
-	return false
+	return middleware.HasRole(ctx, role) || middleware.HasProcurementAccess(ctx)
 }
 
 // attachRecActionable fills each approval card's per-caller capability flags
@@ -344,8 +351,7 @@ func (h *PurchaseRequestsHandler) List(w http.ResponseWriter, r *http.Request) {
 	filter.AssigneeID = parseInt64Param(q.Get("assignee_id"))
 
 	prs, err := h.Repo.ListPurchaseRequests(ctx, user.ID, user.Email, seesAll,
-		middleware.HasRole(ctx, model.RoleAdmin),
-		middleware.HasRole(ctx, model.RoleLegal), middleware.HasRole(ctx, model.RoleSecurity), scope, filter)
+		middleware.HasRole(ctx, model.RoleAdmin), callerRecCardTypes(ctx), scope, filter)
 	if err != nil {
 		reqLog(r).Error().Err(err).Msg("list purchase requests")
 		writeError(w, http.StatusInternalServerError, "failed to list requests")

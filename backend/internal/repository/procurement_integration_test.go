@@ -357,10 +357,10 @@ func TestBudgetApprovalChain(t *testing.T) {
 	// A named step approver is recognised as an approver of the PR (the budget-step
 	// branch of approvablePredicate), matched case-insensitively by email; an
 	// unrelated address is not.
-	if ok, err := repo.IsApproverForPR(ctx, pr.ID, 0, "FINANCE@example.com", false, false); err != nil || !ok {
+	if ok, err := repo.IsApproverForPR(ctx, pr.ID, 0, "FINANCE@example.com", nil); err != nil || !ok {
 		t.Fatalf("named step approver IsApproverForPR = %v (err %v), want true", ok, err)
 	}
-	if ok, _ := repo.IsApproverForPR(ctx, pr.ID, 0, "stranger@example.com", false, false); ok {
+	if ok, _ := repo.IsApproverForPR(ctx, pr.ID, 0, "stranger@example.com", nil); ok {
 		t.Fatal("unrelated email should not be an approver")
 	}
 

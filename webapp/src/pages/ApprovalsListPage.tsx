@@ -60,8 +60,8 @@ export function ApprovalsListPage() {
           Approvals
         </Typography>
         <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-          Purchase requests awaiting your decision as a team lead, or a budget, legal, or security
-          approver.
+          Purchase requests awaiting your decision as a team lead, or a budget, legal, security, or
+          compliance approver.
         </Typography>
       </Box>
 

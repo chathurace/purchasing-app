@@ -70,7 +70,7 @@ func TestHomeDashboardCounts(t *testing.T) {
 	}
 
 	// The approver and procurement queries must at least execute cleanly.
-	if _, _, err := repo.CountApprovals(ctx, requester.ID, requester.Email, false, false); err != nil {
+	if _, _, err := repo.CountApprovals(ctx, requester.ID, requester.Email, nil); err != nil {
 		t.Fatalf("CountApprovals: %v", err)
 	}
 	pending, awaiting, done, err := repo.CountProcurementRequests(ctx, true)
@@ -89,7 +89,7 @@ func TestHomeDashboardCounts(t *testing.T) {
 	if _, err := repo.RecentActivityForProcurement(ctx, true, 8); err != nil {
 		t.Fatalf("RecentActivityForProcurement: %v", err)
 	}
-	if _, err := repo.RecentActivityForApprover(ctx, requester.ID, requester.Email, false, false, 8); err != nil {
+	if _, err := repo.RecentActivityForApprover(ctx, requester.ID, requester.Email, nil, 8); err != nil {
 		t.Fatalf("RecentActivityForApprover: %v", err)
 	}
 }

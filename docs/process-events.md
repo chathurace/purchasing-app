@@ -56,7 +56,7 @@ end. `Repository.ListProcessEvents` remains the per-PR timeline read used by tes
 | `pr_approval` | `approve` \| `reject` | RecordApprovalDecision |
 | `rerequest_pr_approval` | — | RequestApprovalAgain |
 | `create_recommendation` / `update_recommendation` / `delete_recommendation` | — | recommendation CRUD |
-| `rec_approval_legal` / `rec_approval_security` / `rec_approval_budget` | `approve` \| `revert` | SetRecApproval |
+| `rec_approval_legal` / `rec_approval_security` / `rec_approval_compliance` / `rec_approval_budget` | `approve` \| `revert` | SetRecApproval |
 | `raise_rfi` / `clear_rfi` | — | Set/Delete recommendation RFI |
 | `add_quotation` / `update_quotation` / `delete_quotation` | — | quotation CRUD |
 | `select_quotation` | — | quotation Select |

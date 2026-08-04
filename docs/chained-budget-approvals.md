@@ -23,7 +23,7 @@ selected.
 | `decided_by` / `decided_at` | who decided, when (null when pending) |
 
 Budget-card comments hang off a step via `pr_recommendation_comments.budget_step_id`
-(legal/security comments leave it null). Migration `045` backfills a base step for
+(team-card comments leave it null). Migration `045` backfills a base step for
 every existing budget card and re-homes existing budget comments onto it.
 
 ## The budget approvals row is a projection

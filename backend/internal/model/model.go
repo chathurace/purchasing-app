@@ -94,24 +94,45 @@ func ValidInvoiceTransition(from, to string) bool {
 }
 
 // Procurement recommendation approval types. Each is one required sign-off card
-// on a PR's recommendation: budget owner (the cost-center owner), legal and
-// security. A recommendation requires a subset of these (budget is the default).
+// on a PR's recommendation: budget owner (the named budget approver), legal,
+// security and compliance. A recommendation requires a subset of these (budget is
+// the default).
 const (
-	RecApprovalBudget   = "budget"
-	RecApprovalLegal    = "legal"
-	RecApprovalSecurity = "security"
+	RecApprovalBudget     = "budget"
+	RecApprovalLegal      = "legal"
+	RecApprovalSecurity   = "security"
+	RecApprovalCompliance = "compliance"
 )
 
-// RecApprovalTypes are all the approval card types a recommendation may require.
-var RecApprovalTypes = []string{RecApprovalBudget, RecApprovalLegal, RecApprovalSecurity}
+// RecApprovalTypes are all the approval card types a recommendation may require,
+// in canonical (display) order.
+var RecApprovalTypes = []string{RecApprovalBudget, RecApprovalLegal, RecApprovalSecurity, RecApprovalCompliance}
+
+// RecTeamApprovalRoles maps every *team-backed* approval card to the role that
+// designates its team: a member of that team may comment on and be assigned the
+// card. The budget card is deliberately absent — its actor is the PR's named
+// budget approver (an email match), not a role. Adding a team card (e.g.
+// compliance) is a one-line change here plus a seeded `teams` row.
+var RecTeamApprovalRoles = map[string]string{
+	RecApprovalLegal:      RoleLegal,
+	RecApprovalSecurity:   RoleSecurity,
+	RecApprovalCompliance: RoleCompliance,
+}
+
+// RoleForRecApprovalType returns the team role backing a card type, and false for
+// the budget card (which has no team, hence no assignee).
+func RoleForRecApprovalType(t string) (string, bool) {
+	role, ok := RecTeamApprovalRoles[t]
+	return role, ok
+}
 
 // IsRecApprovalType reports whether t is a recognized recommendation approval type.
 func IsRecApprovalType(t string) bool {
-	switch t {
-	case RecApprovalBudget, RecApprovalLegal, RecApprovalSecurity:
+	if t == RecApprovalBudget {
 		return true
 	}
-	return false
+	_, ok := RecTeamApprovalRoles[t]
+	return ok
 }
 
 // ConfigList describes one runtime-editable dropdown list managed from the
@@ -167,12 +188,13 @@ const (
 	RoleAdmin            = "admin"
 	RoleLegal            = "legal"
 	RoleSecurity         = "security"
+	RoleCompliance       = "compliance"
 )
 
 // AssignableRoles are the roles an admin may grant/revoke through user
 // management. `staff` is a permanent baseline (auto-granted on first login and
 // never removable), so it is not in this set.
-var AssignableRoles = []string{RoleProcurement, RoleProcurementAdmin, RoleAdmin, RoleLegal, RoleSecurity}
+var AssignableRoles = []string{RoleProcurement, RoleProcurementAdmin, RoleAdmin, RoleLegal, RoleSecurity, RoleCompliance}
 
 // IsAssignableRole reports whether role can be added/removed via user management.
 func IsAssignableRole(role string) bool {

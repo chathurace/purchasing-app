@@ -1,4 +1,11 @@
-export type Role = "staff" | "procurement" | "procurement_admin" | "admin" | "legal" | "security";
+export type Role =
+  | "staff"
+  | "procurement"
+  | "procurement_admin"
+  | "admin"
+  | "legal"
+  | "security"
+  | "compliance";
 
 export type PRStatus =
   | "submitted"
@@ -41,7 +48,7 @@ export interface Me {
   name: string;
   roles: Role[];
   // True when the user is an approver on any PR they didn't submit (a named
-  // approver, or a budget/legal/security recommendation-card actor). Roles alone
+  // approver, or a budget/legal/security/compliance recommendation-card actor). Roles alone
   // can't tell — budget owners and named approvers hold no distinguishing role.
   // Drives the Approvals/Quotations/Contracts nav tabs.
   is_approver: boolean;
@@ -49,7 +56,14 @@ export interface Me {
 
 // Roles an admin may grant/revoke. `staff` is a permanent baseline (auto-granted
 // on first login, never removable) and so is excluded — mirrors model.AssignableRoles.
-export const ASSIGNABLE_ROLES: Role[] = ["procurement", "procurement_admin", "admin", "legal", "security"];
+export const ASSIGNABLE_ROLES: Role[] = [
+  "procurement",
+  "procurement_admin",
+  "admin",
+  "legal",
+  "security",
+  "compliance",
+];
 
 export const ROLE_LABELS: Record<Role, string> = {
   staff: "Staff",
@@ -58,6 +72,7 @@ export const ROLE_LABELS: Record<Role, string> = {
   admin: "Admin",
   legal: "Legal",
   security: "Security",
+  compliance: "Compliance",
 };
 
 // AdminUser is the user-management view of a user: roles plus lifecycle flags.
@@ -130,7 +145,7 @@ export interface DirectoryUser {
   email: string;
 }
 
-// A team (Legal / Security / Procurement). Membership is the member_role: a user is a
+// A team (Legal / Security / Compliance / Procurement). Membership is the member_role: a user is a
 // member iff they hold that role, so adding/removing a member grants/revokes it.
 // admin_members are the users holding the team's admin-role variant (only the
 // Procurement team has one — procurement_admin); they count as members for display
@@ -195,14 +210,15 @@ export interface PRApproval {
 
 // --- Procurement recommendation (one per PR) ---
 
-export type RecApprovalType = "budget" | "legal" | "security";
+export type RecApprovalType = "budget" | "legal" | "security" | "compliance";
 
-export const REC_APPROVAL_TYPES: RecApprovalType[] = ["budget", "legal", "security"];
+export const REC_APPROVAL_TYPES: RecApprovalType[] = ["budget", "legal", "security", "compliance"];
 
 export const REC_APPROVAL_LABELS: Record<RecApprovalType, string> = {
   budget: "Budget owner",
   legal: "Legal",
   security: "Security",
+  compliance: "Compliance",
 };
 
 export interface RecComment {
@@ -242,7 +258,7 @@ export interface RecApproval {
   approved_by?: number | null;
   approver?: UserSummary | null;
   approved_at?: string | null;
-  // The team member responsible for this card (legal/security only). Only the
+  // The team member responsible for this card (team cards only, not budget). Only the
   // assignee may approve; the budget card has none.
   assignee_id?: number | null;
   assignee?: UserSummary | null;
@@ -427,7 +443,7 @@ export interface PurchaseRequest {
   // null/absent when they are not an approver.
   my_approval_status?: ApprovalStatus | null;
   // The caller's unified approval state across BOTH systems (named approvals +
-  // budget/legal/security recommendation cards): pending | approved | rejected.
+  // budget/legal/security/compliance recommendation cards): pending | approved | rejected.
   // Drives the Approvals-tab filter; only meaningful on the scope=approvals list.
   my_approval_state?: ApprovalStatus | null;
   // The procurement recommendation (detail reads only), or null when none.
@@ -951,6 +967,8 @@ export function activityLabel(action: string, qualifier: string): string {
       return qualifier === "revert" ? "Legal approval reverted" : "Legal approved";
     case "rec_approval_security":
       return qualifier === "revert" ? "Security approval reverted" : "Security approved";
+    case "rec_approval_compliance":
+      return qualifier === "revert" ? "Compliance approval reverted" : "Compliance approved";
     case "rec_approval_budget":
       if (qualifier === "reject") return "Budget rejected";
       if (qualifier === "revert") return "Budget approval reverted";
@@ -965,6 +983,10 @@ export function activityLabel(action: string, qualifier: string): string {
       return qualifier === "unassign" ? "Legal assignee cleared" : "Legal assignee set";
     case "assign_rec_security":
       return qualifier === "unassign" ? "Security assignee cleared" : "Security assignee set";
+    case "assign_rec_compliance":
+      return qualifier === "unassign"
+        ? "Compliance assignee cleared"
+        : "Compliance assignee set";
     case "raise_rfi":
       return "RFI raised";
     case "clear_rfi":

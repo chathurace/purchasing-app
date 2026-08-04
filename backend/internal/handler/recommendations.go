@@ -31,7 +31,7 @@ type recommendationInput struct {
 func (in recommendationInput) toRepoInput() (repository.RecommendationInput, string) {
 	types, ok := normalizeRequiredTypes(in.RequiredTypes)
 	if !ok {
-		return repository.RecommendationInput{}, "select at least one approval (budget, legal or security)"
+		return repository.RecommendationInput{}, "select at least one approval (" + recApprovalTypeList() + ")"
 	}
 	if in.VendorID == 0 {
 		return repository.RecommendationInput{}, "a vendor is required"
@@ -49,8 +49,35 @@ func (in recommendationInput) toRepoInput() (repository.RecommendationInput, str
 	}, ""
 }
 
+// recApprovalTypeList / recTeamTypeList render the card-type catalogs for error
+// messages ("budget, legal, security or compliance"), derived from the model so a
+// new card type never leaves a stale message behind.
+func recApprovalTypeList() string { return joinOr(model.RecApprovalTypes) }
+
+func recTeamTypeList() string {
+	types := []string{}
+	for _, t := range model.RecApprovalTypes {
+		if _, ok := model.RoleForRecApprovalType(t); ok {
+			types = append(types, t)
+		}
+	}
+	return joinOr(types)
+}
+
+// joinOr renders items as "a, b or c".
+func joinOr(items []string) string {
+	switch len(items) {
+	case 0:
+		return ""
+	case 1:
+		return items[0]
+	}
+	return strings.Join(items[:len(items)-1], ", ") + " or " + items[len(items)-1]
+}
+
 // normalizeRequiredTypes validates and dedupes the requested approval types,
-// returning them in canonical order (budget, legal, security). Requires ≥1.
+// returning them in canonical order (budget, legal, security, compliance).
+// Requires ≥1.
 func normalizeRequiredTypes(in []string) ([]string, bool) {
 	set := map[string]bool{}
 	for _, t := range in {
@@ -261,7 +288,7 @@ func (h *PurchaseRequestsHandler) RequestRecApproval(w http.ResponseWriter, r *h
 	}
 	approvalType := urlParam(r, "type")
 	if !model.IsRecApprovalType(approvalType) {
-		writeError(w, http.StatusBadRequest, "approval type must be budget, legal or security")
+		writeError(w, http.StatusBadRequest, "approval type must be one of "+recApprovalTypeList())
 		return
 	}
 	if err := h.Repo.AddRecApprovalCard(r.Context(), pr.ID, approvalType); err != nil {
@@ -299,7 +326,7 @@ func (h *PurchaseRequestsHandler) RemoveRecApproval(w http.ResponseWriter, r *ht
 	}
 	approvalType := urlParam(r, "type")
 	if !model.IsRecApprovalType(approvalType) {
-		writeError(w, http.StatusBadRequest, "approval type must be budget, legal or security")
+		writeError(w, http.StatusBadRequest, "approval type must be one of "+recApprovalTypeList())
 		return
 	}
 	paths, err := h.Repo.RemoveRecApprovalCard(r.Context(), pr.ID, approvalType)
@@ -537,7 +564,7 @@ func (h *PurchaseRequestsHandler) SetRecApproval(w http.ResponseWriter, r *http.
 	}
 	approvalType := urlParam(r, "type")
 	if !model.IsRecApprovalType(approvalType) {
-		writeError(w, http.StatusBadRequest, "approval type must be budget, legal or security")
+		writeError(w, http.StatusBadRequest, "approval type must be one of "+recApprovalTypeList())
 		return
 	}
 	if approvalType == model.RecApprovalBudget {
@@ -611,7 +638,7 @@ func (h *PurchaseRequestsHandler) AddRecComment(w http.ResponseWriter, r *http.R
 		return
 	}
 	if !model.IsRecApprovalType(in.ApprovalType) {
-		writeError(w, http.StatusBadRequest, "approval type must be budget, legal or security")
+		writeError(w, http.StatusBadRequest, "approval type must be one of "+recApprovalTypeList())
 		return
 	}
 	// Budget comments hang off a specific step; commenting is allowed for anyone
@@ -683,7 +710,7 @@ func (h *PurchaseRequestsHandler) SetRecAssignee(w http.ResponseWriter, r *http.
 	approvalType := urlParam(r, "type")
 	role, ok := roleForAssignableType(approvalType)
 	if !ok {
-		writeError(w, http.StatusBadRequest, "only the legal and security cards have an assignee")
+		writeError(w, http.StatusBadRequest, "only the "+recTeamTypeList()+" cards have an assignee")
 		return
 	}
 	if !h.canAssignRecType(r.Context(), approvalType) {
@@ -747,7 +774,7 @@ func (h *PurchaseRequestsHandler) RemindRecAssignee(w http.ResponseWriter, r *ht
 	approvalType := urlParam(r, "type")
 	role, ok := roleForAssignableType(approvalType)
 	if !ok {
-		writeError(w, http.StatusBadRequest, "only the legal and security cards have an assignee")
+		writeError(w, http.StatusBadRequest, "only the "+recTeamTypeList()+" cards have an assignee")
 		return
 	}
 	if !h.canAssignRecType(r.Context(), approvalType) {
@@ -1066,16 +1093,11 @@ func (h *PurchaseRequestsHandler) RemindBudgetStep(w http.ResponseWriter, r *htt
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// roleForAssignableType maps an assignable card type (legal/security) to the role
-// that designates its team. Reports false for the budget card (no assignee).
+// roleForAssignableType maps an assignable card type (legal/security/compliance)
+// to the role that designates its team. Reports false for the budget card (no
+// assignee).
 func roleForAssignableType(approvalType string) (string, bool) {
-	switch approvalType {
-	case model.RecApprovalLegal:
-		return model.RoleLegal, true
-	case model.RecApprovalSecurity:
-		return model.RoleSecurity, true
-	}
-	return "", false
+	return model.RoleForRecApprovalType(approvalType)
 }
 
 // --- comment documents ---

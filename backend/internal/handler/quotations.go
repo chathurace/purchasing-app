@@ -160,8 +160,7 @@ func (h *QuotationsHandler) List(w http.ResponseWriter, r *http.Request) {
 	} else {
 		// Approvers get a read-only view scoped to the PRs they approve.
 		user := middleware.UserFromCtx(ctx)
-		quotes, err = h.Repo.ListQuotationsForApprover(ctx, user.ID,
-			middleware.HasRole(ctx, model.RoleLegal), middleware.HasRole(ctx, model.RoleSecurity))
+		quotes, err = h.Repo.ListQuotationsForApprover(ctx, user.ID, user.Email, callerRecCardTypes(ctx))
 	}
 	if err != nil {
 		reqLog(r).Error().Err(err).Msg("list quotations")
@@ -384,8 +383,7 @@ func (h *QuotationsHandler) loadViewable(w http.ResponseWriter, r *http.Request)
 	}
 	user := middleware.UserFromCtx(ctx)
 	if user != nil {
-		ok, err := h.Repo.IsApproverForPR(ctx, q.PurchaseRequestID, user.ID, user.Email,
-			middleware.HasRole(ctx, model.RoleLegal), middleware.HasRole(ctx, model.RoleSecurity))
+		ok, err := h.Repo.IsApproverForPR(ctx, q.PurchaseRequestID, user.ID, user.Email, callerRecCardTypes(ctx))
 		if err != nil {
 			reqLog(r).Error().Err(err).Msg("check quotation approver access")
 			writeError(w, http.StatusInternalServerError, "failed to load quotation")

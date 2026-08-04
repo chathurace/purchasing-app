@@ -23,6 +23,7 @@ import {
 import type { Theme } from "@wso2/oxygen-ui";
 import {
   Banknote,
+  ClipboardCheck,
   FileText,
   MessageCircleQuestion,
   Paperclip,
@@ -112,7 +113,7 @@ function InlineError({ children }: { children: React.ReactNode }) {
 
 // RecommendationSection renders the PR's procurement recommendation: procurement adds
 // or edits it (once at least one quotation exists), and the named actors
-// (legal/security/budget owner) toggle approval and comment on their card.
+// (legal/security/compliance/budget owner) toggle approval and comment on their card.
 export function RecommendationSection({ pr }: { pr: PurchaseRequest }) {
   // Authoring the recommendation requires procurement access AND being on the PR
   // (assignee/collaborator/admin) — the same gate the backend enforces. Approver
@@ -549,6 +550,7 @@ function SubCardHead({ children }: { children: React.ReactNode }) {
 function ApprovalIcon({ type }: { type: string }) {
   if (type === "legal") return <Scale size={18} />;
   if (type === "security") return <ShieldCheck size={18} />;
+  if (type === "compliance") return <ClipboardCheck size={18} />;
   return <Banknote size={18} />;
 }
 
@@ -1040,7 +1042,7 @@ function ApprovalCard({
     onError: (e) => setError(e instanceof ApiError ? e.message : "Failed to add comment"),
   });
 
-  // Assignee — legal/security cards only (the budget card has no assignee).
+  // Assignee — team cards only (legal/security/compliance; the budget card has none).
   const assignable = t !== "budget";
   const { data: teams } = useQuery({
     queryKey: ["teams"],
@@ -1287,7 +1289,7 @@ function ApprovalCard({
         />
       )}
 
-      {/* Assignee (legal/security) */}
+      {/* Assignee (team cards: legal/security/compliance) */}
       {assignable && (approval.assignee || approval.can_assign) && (
         <Box
           sx={{
@@ -1386,7 +1388,7 @@ function ApprovalCard({
         />
       )}
 
-      {/* Comments (legal/security card-level; budget comments live on each step) */}
+      {/* Comments (team card-level; budget comments live on each step) */}
       {!isBudget && (approval.comments.length > 0 || approval.can_comment) && (
         <SubCardBody>
           {approval.comments.length > 0 && (

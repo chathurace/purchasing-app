@@ -2,7 +2,7 @@
 
 Plan archive: `docs/plans/11-approver-views.md`.
 
-Budget / legal / security approvers are also ordinary staff. This phase separates their two jobs
+Budget / legal / security / compliance approvers are also ordinary staff. This phase separates their two jobs
 and aligns nav-tab visibility with role.
 
 ## Two jobs, two tabs
@@ -10,7 +10,7 @@ and aligns nav-tab visibility with role.
 - **Requests** — a user's own submissions. Staff/approvers get `scope=mine`; procurement/admin keep the
   full procurement queue (no scope).
 - **Approvals** (new, `/approvals`) — PRs awaiting the caller's decision across **both** approval
-  systems: the named `pr_approvals` approvers **and** the budget/legal/security recommendation
+  systems: the named `pr_approvals` approvers **and** the budget/legal/security/compliance recommendation
   cards. Two checkboxes (Pending on by default, Approved off) filter client-side on
   `my_approval_state`.
 
@@ -32,10 +32,11 @@ approve. Vendors/Cost centers/Settings keep their prior `procurement_admin`/`adm
 ## Backend
 
 - **Shared predicate** — `approvablePredicate` in `internal/repository/repository.go` is the single
-  definition of "caller is an approver on PR `pr`" (named approver, legal/security card actor by
-  role, or the PR's named budget approver — email match via `budgetEmailMatch`, see
-  `docs/business-units.md`). Binds `$1` caller / `$2` hasLegal / `$3`
-  hasSecurity / `$4` caller email. Reused by every query below; `myApprovalStateExpr` is the matching state CASE.
+  definition of "caller is an approver on PR `pr`" (named approver, team card actor by role —
+  legal/security/compliance, or the PR's named budget approver — email match via `budgetEmailMatch`,
+  see `docs/business-units.md`). Binds `$1` caller / `$2` the caller's team card types (`text[]`,
+  from `handler.callerRecCardTypes`) / `$3` caller email. Reused by every query below;
+  `myApprovalStateExpr` is the matching state CASE.
 - **PR list** — `ListPurchaseRequests(..., scope)` takes `PRScopeMine` / `PRScopeApprovals` /
   `PRScopeDefault`; handler maps `?scope=mine|approvals`. Every row now also carries
   `my_approval_state` (pending | approved | rejected) unified across both systems.

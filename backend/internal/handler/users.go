@@ -31,8 +31,7 @@ func (h *UsersHandler) Me(w http.ResponseWriter, r *http.Request) {
 	if roles == nil {
 		roles = []string{}
 	}
-	isApprover, err := h.Repo.HasApprovableWork(ctx, user.ID, user.Email,
-		middleware.HasRole(ctx, model.RoleLegal), middleware.HasRole(ctx, model.RoleSecurity))
+	isApprover, err := h.Repo.HasApprovableWork(ctx, user.ID, user.Email, callerRecCardTypes(ctx))
 	if err != nil {
 		reqLog(r).Error().Err(err).Msg("resolve is_approver")
 		writeError(w, http.StatusInternalServerError, "failed to load profile")

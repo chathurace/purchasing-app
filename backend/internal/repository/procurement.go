@@ -616,11 +616,11 @@ func (r *Repository) ListQuotations(ctx context.Context, prID *int64) ([]*Quotat
 
 // ListQuotationsForApprover returns quotation summaries limited to PRs the caller
 // approves (see approvablePredicate) — the read-only Quotations tab for approvers.
-func (r *Repository) ListQuotationsForApprover(ctx context.Context, callerID int64, hasLegal, hasSecurity bool) ([]*Quotation, error) {
+func (r *Repository) ListQuotationsForApprover(ctx context.Context, callerID int64, callerEmail string, recCardTypes []string) ([]*Quotation, error) {
 	rows, err := r.pool.Query(ctx, quotationSummarySelect+`
 		WHERE q.purchase_request_id IN (
 			SELECT pr.id FROM purchase_requests pr WHERE `+approvablePredicate+`)
-		ORDER BY q.created_at DESC`, callerID, hasLegal, hasSecurity)
+		ORDER BY q.created_at DESC`, callerID, recCardTypeArg(recCardTypes), normEmail(callerEmail))
 	if err != nil {
 		return nil, err
 	}
@@ -916,11 +916,11 @@ func (r *Repository) ListContracts(ctx context.Context, prID *int64) ([]*Contrac
 
 // ListContractsForApprover returns contract summaries limited to PRs the caller
 // approves (see approvablePredicate) — the read-only Contracts tab for approvers.
-func (r *Repository) ListContractsForApprover(ctx context.Context, callerID int64, hasLegal, hasSecurity bool) ([]*Contract, error) {
+func (r *Repository) ListContractsForApprover(ctx context.Context, callerID int64, callerEmail string, recCardTypes []string) ([]*Contract, error) {
 	rows, err := r.pool.Query(ctx, contractSummarySelect+`
 		WHERE c.purchase_request_id IN (
 			SELECT pr.id FROM purchase_requests pr WHERE `+approvablePredicate+`)
-		ORDER BY c.created_at DESC`, callerID, hasLegal, hasSecurity)
+		ORDER BY c.created_at DESC`, callerID, recCardTypeArg(recCardTypes), normEmail(callerEmail))
 	if err != nil {
 		return nil, err
 	}

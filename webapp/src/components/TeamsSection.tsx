@@ -17,7 +17,7 @@ import { ROLE_LABELS } from "../types/api";
 import type { Team } from "../types/api";
 import { DirectoryUserPicker } from "./DirectoryUserPicker";
 
-// TeamsSection manages the Legal / Security / Procurement teams from the Settings
+// TeamsSection manages the Legal / Security / Compliance / Procurement teams from the Settings
 // page: each team's shared email and its members (adding/removing a member
 // grants/revokes the team's member role). The member role itself is fixed —
 // shown, not editable — because the approval-card actor logic is keyed on it.

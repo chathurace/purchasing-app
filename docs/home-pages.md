@@ -11,7 +11,7 @@ group** the caller belongs to, mirroring how the nav gates its tabs:
 
 - **My requests** (everyone — anyone can submit): `my_requests_count` / `completed_count`
   (`order_signed` or the reserved `completed`) + latest activity on the caller's own requests.
-- **Approvals** (shown when `is_approver` — a named approver or a budget/legal/security
+- **Approvals** (shown when `is_approver` — a named approver or a budget/legal/security/compliance
   recommendation-card actor): `pending_count` / `completed_count` (approved or rejected) +
   latest activity on the PRs awaiting/decided by the caller. Same PR set as the Approvals tab.
 - **Procurement** (`procurement`/`procurement_admin`/`admin`): `pending_count` (active PRs before
@@ -31,8 +31,8 @@ procurement on `middleware.HasProcurementAccess`.
 
 Aggregation lives in `repository/home.go` and **reuses the existing SQL predicate fragments**
 from `repository.go` (`approvablePredicate`, `myApprovalStateExpr`, `teamLeadMatch`,
-`budgetEmailMatch`) with the identical bind order `$1`=callerID, `$2`=hasLegal, `$3`=hasSecurity,
-`$4`=lowercased email — so the dashboard's approval/visibility semantics stay in lockstep with
+`budgetEmailMatch`) with the identical bind order `$1`=callerID, `$2`=the caller's team card types
+(`text[]`), `$3`=lowercased email — so the dashboard's approval/visibility semantics stay in lockstep with
 `ListPurchaseRequests`:
 
 - `CountMyRequests` — total + `FILTER (WHERE status IN ('order_signed','completed'))`.

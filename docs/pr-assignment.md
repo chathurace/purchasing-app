@@ -57,7 +57,7 @@ assignee dropdown lists the Procurement team plus the current user when they're 
   recommendation contract create/delete; RFI raise/clear; budget-approver set). If the acting user is a
   `procurement`/`procurement_admin` and isn't already the assignee or a collaborator, they're inserted
   as a collaborator (and an `update_pr_collaborators` process event recorded). Best-effort; idempotent;
-  skips the requester and legal/security/budget approvers (not procurement) and plain admins.
+  skips the requester and team-card/budget approvers (not procurement) and plain admins.
 - **Per-caller flags** (`attachAssignmentActionable`, set on detail reads, mirrors
   `my_team_lead_actionable`): `my_can_assign`, `my_can_manage_collaborators`, and `my_can_work` (true
   once the PR is assigned, for any procurement caller).

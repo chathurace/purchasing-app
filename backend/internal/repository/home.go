@@ -10,8 +10,8 @@ import (
 // home page (GET /api/v1/home). Everything here is read-only aggregation that
 // reuses the same SQL predicate fragments as ListPurchaseRequests
 // (approvablePredicate, myApprovalStateExpr, teamLeadMatch) with the identical
-// bind order: $1 = callerID, $2 = hasLegal, $3 = hasSecurity, $4 = lowercased
-// caller email.
+// bind order: $1 = callerID, $2 = the caller's team recommendation-card types
+// (text[]), $3 = lowercased caller email.
 
 // HomeActivity is one recent process event, joined to its purchase request so the
 // UI can render "<ref> — <action> by <actor>" and link to the PR.
@@ -40,7 +40,7 @@ func (r *Repository) CountMyRequests(ctx context.Context, callerID int64) (total
 // CountApprovals buckets the PRs awaiting or decided by the caller as an approver
 // (any of the three approval systems) into pending vs completed (approved or
 // rejected). The PR set matches PRScopeApprovals in ListPurchaseRequests.
-func (r *Repository) CountApprovals(ctx context.Context, callerID int64, callerEmail string, hasLegal, hasSecurity bool) (pending, completed int, err error) {
+func (r *Repository) CountApprovals(ctx context.Context, callerID int64, callerEmail string, recCardTypes []string) (pending, completed int, err error) {
 	err = r.pool.QueryRow(ctx, `
 		SELECT count(*) FILTER (WHERE state = 'pending'),
 		       count(*) FILTER (WHERE state <> 'pending')
@@ -50,7 +50,7 @@ func (r *Repository) CountApprovals(ctx context.Context, callerID int64, callerE
 			WHERE pr.requester_id <> $1 AND (`+teamLeadMatch+`
 				OR (pr.team_lead_status = 'approved' AND `+approvablePredicate+`))
 		) t`,
-		callerID, hasLegal, hasSecurity, normEmail(callerEmail)).Scan(&pending, &completed)
+		callerID, recCardTypeArg(recCardTypes), normEmail(callerEmail)).Scan(&pending, &completed)
 	return pending, completed, err
 }
 
@@ -120,10 +120,10 @@ func (r *Repository) RecentActivityForRequester(ctx context.Context, callerID in
 
 // RecentActivityForApprover returns recent events on the PRs awaiting or decided
 // by the caller as an approver (same set as CountApprovals).
-func (r *Repository) RecentActivityForApprover(ctx context.Context, callerID int64, callerEmail string, hasLegal, hasSecurity bool, limit int) ([]HomeActivity, error) {
+func (r *Repository) RecentActivityForApprover(ctx context.Context, callerID int64, callerEmail string, recCardTypes []string, limit int) ([]HomeActivity, error) {
 	where := `pr.requester_id <> $1 AND (` + teamLeadMatch +
 		` OR (pr.team_lead_status = 'approved' AND ` + approvablePredicate + `))`
-	return r.recentActivity(ctx, where, []any{callerID, hasLegal, hasSecurity, normEmail(callerEmail)}, limit)
+	return r.recentActivity(ctx, where, []any{callerID, recCardTypeArg(recCardTypes), normEmail(callerEmail)}, limit)
 }
 
 // RecentActivityForProcurement returns recent events on the procurement work queue

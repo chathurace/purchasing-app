@@ -108,7 +108,7 @@ func TestPurchaseRequestLifecycle(t *testing.T) {
 	}
 
 	// Scoped listing returns this requester's PR.
-	mine, err := repo.ListPurchaseRequests(ctx, user.ID, user.Email, false, false, false, false, repository.PRScopeDefault, repository.PRListFilter{})
+	mine, err := repo.ListPurchaseRequests(ctx, user.ID, user.Email, false, false, nil, repository.PRScopeDefault, repository.PRListFilter{})
 	if err != nil || len(mine) == 0 {
 		t.Fatalf("list scoped: err=%v count=%d", err, len(mine))
 	}
@@ -471,7 +471,7 @@ func TestTeamLeadVisibilityGate(t *testing.T) {
 	})
 
 	has := func(callerID int64, callerEmail string, seesAll, isAdmin bool, scope repository.PRListScope) bool {
-		prs, err := repo.ListPurchaseRequests(ctx, callerID, callerEmail, seesAll, isAdmin, false, false, scope, repository.PRListFilter{})
+		prs, err := repo.ListPurchaseRequests(ctx, callerID, callerEmail, seesAll, isAdmin, nil, scope, repository.PRListFilter{})
 		if err != nil {
 			t.Fatalf("list: %v", err)
 		}
@@ -536,7 +536,7 @@ func TestOwnPRVisibleInBothScopes(t *testing.T) {
 	})
 
 	has := func(seesAll bool, scope repository.PRListScope) bool {
-		prs, err := repo.ListPurchaseRequests(ctx, proc.ID, proc.Email, seesAll, false, false, false, scope, repository.PRListFilter{})
+		prs, err := repo.ListPurchaseRequests(ctx, proc.ID, proc.Email, seesAll, false, nil, scope, repository.PRListFilter{})
 		if err != nil {
 			t.Fatalf("list: %v", err)
 		}

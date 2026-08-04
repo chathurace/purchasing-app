@@ -696,44 +696,61 @@ type PRListFilter struct {
 }
 
 // approvablePredicate is a SQL boolean fragment, true when the caller is an
-// approver on the purchase request aliased `pr`: a named pr_approvals approver, a
-// legal/security recommendation-card actor, the budget owner of the PR's budget
-// unit, or a named budget-chain step approver (email match). It binds $1 (caller
-// user id), $2 (hasLegal), $3 (hasSecurity), $4 (caller email, lowercased);
-// callers MUST supply those four args in that order.
+// approver on the purchase request aliased `pr`: a named pr_approvals approver, an
+// actor on a team-backed recommendation card (legal/security/compliance), the PR's
+// named budget approver, or a named budget-chain step approver (email match). It
+// binds $1 (caller user id), $2 (the team card types the caller may act on, as
+// text[] — see handler.callerRecCardTypes), $3 (caller email, lowercased);
+// callers MUST supply those three args in that order.
+//
+// $2 is an array rather than a flag per team so adding a team card needs no
+// bind-order change here.
+//
 // budgetEmailMatch is a SQL boolean fragment, true when the lowercased caller
-// email ($4) is a member of the PR's free-text, comma-separated
+// email ($3) is a member of the PR's free-text, comma-separated
 // budget_approver_email list (case-insensitive; empty segments ignored). This is
 // the approver the requester picked from the business unit's approver list.
-const budgetEmailMatch = `($4 <> '' AND $4 = ANY (
+const budgetEmailMatch = `($3 <> '' AND $3 = ANY (
 	SELECT lower(trim(e)) FROM unnest(string_to_array(pr.budget_approver_email, ',')) AS e WHERE trim(e) <> ''))`
+
+// recCardMatch is true when the card row aliased `ra` is one the caller may act on:
+// a team card whose role the caller holds, or the budget card they are the named
+// approver of.
+const recCardMatch = `(
+		ra.approval_type = ANY ($2::text[])
+		OR (ra.approval_type = 'budget' AND ` + budgetEmailMatch + `))`
+
+// recCardTypeArg normalizes the caller's team card types for the $2 bind — nil
+// becomes an empty array so `= ANY($2)` is a clean false rather than NULL.
+func recCardTypeArg(types []string) []string {
+	if types == nil {
+		return []string{}
+	}
+	return types
+}
 
 const approvablePredicate = `(
 	EXISTS (SELECT 1 FROM pr_approvals a WHERE a.purchase_request_id = pr.id AND a.approver_id = $1)
 	OR EXISTS (
 		SELECT 1 FROM pr_recommendation_approvals ra
 		JOIN pr_recommendations rec ON rec.id = ra.recommendation_id
-		WHERE rec.purchase_request_id = pr.id AND (
-			(ra.approval_type = 'legal'    AND $2)
-			OR (ra.approval_type = 'security' AND $3)
-			OR (ra.approval_type = 'budget' AND ` + budgetEmailMatch + `)
-		))
+		WHERE rec.purchase_request_id = pr.id AND ` + recCardMatch + `)
 	OR EXISTS (
 		SELECT 1 FROM pr_recommendation_budget_steps s
 		JOIN pr_recommendations recs ON recs.id = s.recommendation_id
-		WHERE recs.purchase_request_id = pr.id AND s.approver_email <> '' AND lower(s.approver_email) = $4))`
+		WHERE recs.purchase_request_id = pr.id AND s.approver_email <> '' AND lower(s.approver_email) = $3))`
 
 // teamLeadMatch is a SQL boolean fragment, true when the caller is the named team
 // lead of the PR aliased `pr` — a case-insensitive match of the PR's team lead
-// email against the caller's email. Binds $4 (caller email, lowercased); the
+// email against the caller's email. Binds $3 (caller email, lowercased); the
 // empty-string guard means a PR with no team lead never matches an empty caller.
-const teamLeadMatch = `(pr.team_lead_email <> '' AND pr.team_lead_email = $4)`
+const teamLeadMatch = `(pr.team_lead_email <> '' AND pr.team_lead_email = $3)`
 
 // myApprovalStateExpr is a SQL scalar expression resolving the caller's unified
 // approval state across all three systems: 'pending' if the caller's team-lead
 // decision is pending, any named row is pending, or an actionable card is still
 // outstanding; else 'rejected' if the caller rejected as team lead or on a named
-// row (cards cannot be rejected); else 'approved'. Binds $1/$2/$3/$4 as above.
+// row (cards cannot be rejected); else 'approved'. Binds $1/$2/$3 as above.
 // Only meaningful for PRs the caller actually approves; harmless ('approved')
 // otherwise.
 const myApprovalStateExpr = `
@@ -743,35 +760,33 @@ const myApprovalStateExpr = `
 		  OR EXISTS (
 			SELECT 1 FROM pr_recommendation_approvals ra
 			JOIN pr_recommendations rec ON rec.id = ra.recommendation_id
-			WHERE rec.purchase_request_id = pr.id AND ra.approved_by IS NULL AND (
-				(ra.approval_type = 'legal'    AND $2)
-				OR (ra.approval_type = 'security' AND $3)
-				OR (ra.approval_type = 'budget' AND ` + budgetEmailMatch + `)))
+			WHERE rec.purchase_request_id = pr.id AND ra.approved_by IS NULL AND ` + recCardMatch + `)
 		  OR EXISTS (
 			SELECT 1 FROM pr_recommendation_budget_steps s
 			JOIN pr_recommendations recs ON recs.id = s.recommendation_id
-			WHERE recs.purchase_request_id = pr.id AND lower(s.approver_email) = $4 AND s.decision = 'pending')
+			WHERE recs.purchase_request_id = pr.id AND lower(s.approver_email) = $3 AND s.decision = 'pending')
 		THEN 'pending'
 		WHEN (` + teamLeadMatch + ` AND pr.team_lead_status = 'rejected')
 		  OR EXISTS (SELECT 1 FROM pr_approvals a WHERE a.purchase_request_id = pr.id AND a.approver_id = $1 AND a.status = 'rejected')
 		  OR EXISTS (
 			SELECT 1 FROM pr_recommendation_budget_steps s
 			JOIN pr_recommendations recs ON recs.id = s.recommendation_id
-			WHERE recs.purchase_request_id = pr.id AND lower(s.approver_email) = $4 AND s.decision = 'rejected')
+			WHERE recs.purchase_request_id = pr.id AND lower(s.approver_email) = $3 AND s.decision = 'rejected')
 		THEN 'rejected'
 		ELSE 'approved'
 	END`
 
 // ListPurchaseRequests returns request summaries (no items/links/documents) with
 // an approval tally, the caller's own approval status, and their unified approval
-// state on each. callerID/callerEmail/hasLegal/hasSecurity resolve those
-// per-caller fields; scope selects which rows are returned (see PRListScope).
+// state on each. callerID/callerEmail/recCardTypes resolve those per-caller fields
+// (recCardTypes = the team-backed recommendation cards the caller may act on);
+// scope selects which rows are returned (see PRListScope).
 // seesAll/isAdmin only apply to PRScopeDefault.
 //
 // Visibility gate: a PR is broadly visible only once its team lead has approved
 // it. Before that only the requester, the team lead (email match), and admins may
 // see it — procurement/named-approvers/recommendation-card actors are excluded.
-func (r *Repository) ListPurchaseRequests(ctx context.Context, callerID int64, callerEmail string, seesAll, isAdmin, hasLegal, hasSecurity bool, scope PRListScope, filter PRListFilter) ([]*PurchaseRequest, error) {
+func (r *Repository) ListPurchaseRequests(ctx context.Context, callerID int64, callerEmail string, seesAll, isAdmin bool, recCardTypes []string, scope PRListScope, filter PRListFilter) ([]*PurchaseRequest, error) {
 	query := `
 		SELECT pr.id, pr.reference, pr.title, pr.requester_id, pr.business_unit_id, pr.comments, pr.status,
 		       pr.rejection_reason, pr.created_at, pr.updated_at, u.email, u.name,
@@ -788,8 +803,8 @@ func (r *Repository) ListPurchaseRequests(ctx context.Context, callerID int64, c
 		FROM purchase_requests pr
 		JOIN users u ON u.id = pr.requester_id
 		LEFT JOIN users au ON au.id = pr.assignee_id`
-	// $1/$2/$3/$4 are always bound because myApprovalStateExpr references all four.
-	args := []any{callerID, hasLegal, hasSecurity, normEmail(callerEmail)}
+	// $1/$2/$3 are always bound because myApprovalStateExpr references all three.
+	args := []any{callerID, recCardTypeArg(recCardTypes), normEmail(callerEmail)}
 
 	// wheres accumulates the caller's scope visibility plus any page filters; they
 	// are ANDed, so filters only ever narrow what the caller may already see.
@@ -889,13 +904,13 @@ func (r *Repository) ListPurchaseRequests(ctx context.Context, callerID int64, c
 // IsApproverForPR reports whether the caller is an approver on a single PR — the
 // per-PR form of approvablePredicate. Used to gate read access to a PR's
 // quotations and contracts.
-func (r *Repository) IsApproverForPR(ctx context.Context, prID, callerID int64, callerEmail string, hasLegal, hasSecurity bool) (bool, error) {
+func (r *Repository) IsApproverForPR(ctx context.Context, prID, callerID int64, callerEmail string, recCardTypes []string) (bool, error) {
 	var ok bool
 	err := r.pool.QueryRow(ctx, `
 		SELECT EXISTS (
 			SELECT 1 FROM purchase_requests pr
-			WHERE pr.id = $5 AND `+approvablePredicate+`)`,
-		callerID, hasLegal, hasSecurity, normEmail(callerEmail), prID).Scan(&ok)
+			WHERE pr.id = $4 AND `+approvablePredicate+`)`,
+		callerID, recCardTypeArg(recCardTypes), normEmail(callerEmail), prID).Scan(&ok)
 	return ok, err
 }
 
@@ -904,14 +919,14 @@ func (r *Repository) IsApproverForPR(ctx context.Context, prID, callerID int64, 
 // A team lead always counts (their queue is visible pre-approval); other card
 // actors count only once the team lead has approved, matching the Approvals-tab
 // scope in ListPurchaseRequests.
-func (r *Repository) HasApprovableWork(ctx context.Context, callerID int64, callerEmail string, hasLegal, hasSecurity bool) (bool, error) {
+func (r *Repository) HasApprovableWork(ctx context.Context, callerID int64, callerEmail string, recCardTypes []string) (bool, error) {
 	var ok bool
 	err := r.pool.QueryRow(ctx, `
 		SELECT EXISTS (
 			SELECT 1 FROM purchase_requests pr
 			WHERE pr.requester_id <> $1 AND (`+teamLeadMatch+`
 				OR (pr.team_lead_status = 'approved' AND `+approvablePredicate+`)))`,
-		callerID, hasLegal, hasSecurity, normEmail(callerEmail)).Scan(&ok)
+		callerID, recCardTypeArg(recCardTypes), normEmail(callerEmail)).Scan(&ok)
 	return ok, err
 }
 
