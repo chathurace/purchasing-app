@@ -2,6 +2,7 @@ import { useRef } from "react";
 import { Box, Button, Card, CardContent, Divider, Link as MuiLink, Stack, Typography } from "@wso2/oxygen-ui";
 import { Plus } from "@wso2/oxygen-ui-icons-react";
 import type { Document } from "../types/api";
+import { useConfirmAction } from "./ConfirmDialog";
 
 interface Props {
   documents: Document[];
@@ -36,6 +37,8 @@ export function DocumentList({
 }: Props) {
   const fileRef = useRef<HTMLInputElement>(null);
   const pattern = extPattern(accept);
+  // Removing an attachment deletes the stored file — always confirm first.
+  const [confirmNode, confirmRemove] = useConfirmAction();
 
   const onPick = (file: File | null) => {
     if (!file) return;
@@ -93,7 +96,24 @@ export function DocumentList({
                     {(doc.size_bytes / 1024).toFixed(0)} KB
                   </Typography>
                   {canEdit && (
-                    <Button variant="text" size="small" color="error" onClick={() => onDelete(doc.id)}>
+                    <Button
+                      variant="text"
+                      size="small"
+                      color="error"
+                      onClick={() =>
+                        confirmRemove({
+                          title: "Remove document",
+                          message: (
+                            <>
+                              Remove <strong>{doc.filename}</strong>? The file is deleted and cannot
+                              be recovered.
+                            </>
+                          ),
+                          confirmLabel: "Remove",
+                          onConfirm: () => onDelete(doc.id),
+                        })
+                      }
+                    >
                       Remove
                     </Button>
                   )}
@@ -103,6 +123,7 @@ export function DocumentList({
           </Stack>
         )}
       </CardContent>
+      {confirmNode}
     </Card>
   );
 }

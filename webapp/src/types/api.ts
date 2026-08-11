@@ -419,6 +419,32 @@ export const REGIONS = [
   "EMEA — Other", "Global / Multi-region",
 ];
 
+// Procurement triage priority, set from the PR's assignment card. P3 is the
+// default every PR is created with — the requester never picks one.
+export type PRPriority = "P1" | "P2" | "P3";
+
+// PR_PRIORITIES is the ordered (highest first) option list for the picker; the
+// colour is the traffic-light convention the priorities were defined with.
+export const PR_PRIORITIES: {
+  value: PRPriority;
+  label: string;
+  color: "error" | "warning" | "success";
+}[] = [
+  { value: "P1", label: "P1 — High", color: "error" },
+  { value: "P2", label: "P2 — Medium", color: "warning" },
+  { value: "P3", label: "P3 — Normal", color: "success" },
+];
+
+// prPriority normalizes a PR's priority for display, defaulting rows that predate
+// the column (or a summary read that omitted it) to P3.
+export function prPriority(pr: { priority?: PRPriority | null }): PRPriority {
+  return pr.priority ?? "P3";
+}
+
+export function prPriorityColor(p: PRPriority): "error" | "warning" | "success" {
+  return PR_PRIORITIES.find((o) => o.value === p)?.color ?? "success";
+}
+
 export interface PurchaseRequest {
   id: number;
   // Human-readable reference (PR-YYYY-NNNNNNN) assigned at submission; null for
@@ -473,6 +499,10 @@ export interface PurchaseRequest {
   my_can_assign?: boolean;
   my_can_manage_collaborators?: boolean;
   my_can_work?: boolean;
+  // Procurement triage priority (P1 highest .. P3 default), on list + detail
+  // reads. my_can_set_priority (detail reads only) = the caller may change it.
+  priority: PRPriority;
+  my_can_set_priority?: boolean;
   // Requisition fields — core columns (list + detail); budget_approver_*/details
   // are detail-only.
   team: string;
@@ -615,11 +645,16 @@ export interface Quotation {
   updated_at: string;
   items: QuotationItem[];
   vendor?: Vendor | null;
-  // documents holds the other supporting documents; the single primary quotation
-  // PDF is exposed separately as quotation_document.
+  // documents holds the other supporting documents; the two primary quotation
+  // PDFs — the initial quote from the vendor and the final (post-negotiation) one
+  // — are exposed separately. Both are optional, and the final one never gates
+  // selecting the quotation. Summary reads carry them too, so the PR-page cards
+  // can render both slots without fetching the detail.
   documents?: Document[];
-  quotation_document_id?: number | null;
-  quotation_document?: Document | null;
+  initial_quotation_document_id?: number | null;
+  initial_quotation_document?: Document | null;
+  final_quotation_document_id?: number | null;
+  final_quotation_document?: Document | null;
 }
 
 export interface QuotationInput {
@@ -629,6 +664,202 @@ export interface QuotationInput {
   valid_until: string | null;
   notes: string;
   items: { description: string; quantity: number; unit_price: number }[];
+  // extraction_id adopts a PDF already staged on the PR by the extraction flow as
+  // this quotation's initial document, so the client doesn't re-upload it.
+  extraction_id?: number | null;
+}
+
+// --- Quotation PDF extraction (Claude) ---
+
+// ExtractionSuggestion is what the model read out of the PDF. Every field is
+// optional: the prompt tells the model to omit rather than guess, so null means
+// "not stated in the document" and must be shown as blank, never defaulted.
+// A tax line as printed on the quotation. A list, not one field: split taxes
+// (CGST + SGST, ICMS + PIS + COFINS) are normal and must stay separate.
+export interface ExtractionTaxLine {
+  label: string;
+  rate: number | null; // percent, 20 for 20%
+  amount: number | null;
+}
+
+// A non-tax charge line — shipping, freight, installation, handling.
+export interface ExtractionCharge {
+  label: string;
+  amount: number | null;
+}
+
+export interface ExtractionSuggestion {
+  vendor_name: string;
+  currency: string;
+  subtotal_amount: number | null;
+  discount_amount: number | null;
+  taxes: ExtractionTaxLine[];
+  other_charges: ExtractionCharge[];
+  total_amount: number | null;
+  total_includes_tax: boolean | null;
+  valid_until: string | null;
+  quote_reference: string;
+  quote_date: string | null;
+  items: { description: string; quantity: number; unit_price: number }[];
+  confidence: "high" | "medium" | "low" | "";
+  notes: string;
+}
+
+export interface QuotationExtraction {
+  id: number;
+  purchase_request_id: number;
+  document_id: number;
+  quotation_id: number | null;
+  status: "pending" | "succeeded" | "failed";
+  model: string;
+  error_message?: string;
+  input_tokens: number;
+  output_tokens: number;
+  created_at: string;
+  applied_at: string | null;
+  filename?: string;
+}
+
+// VendorMatch ranks an existing vendor against the extracted vendor name. The
+// model never returns an id — the user picks from these (or creates a vendor).
+export interface VendorMatch {
+  vendor: Vendor;
+  score: number;
+}
+
+export interface ExtractionResponse {
+  extraction: QuotationExtraction;
+  suggestion?: ExtractionSuggestion;
+  vendor_matches: VendorMatch[];
+  // items_total is the sum of the line items, for the non-blocking mismatch
+  // warning against the stated total (same pattern as invoice entered_total).
+  items_total: number;
+  // Sums of the tax and non-tax charge lines that stated an amount.
+  tax_total: number;
+  charges_total: number;
+}
+
+export interface ExtractionStatus {
+  enabled: boolean;
+  model: string;
+  max_pdf_bytes: number;
+}
+
+// --- Quotation comparison (one per PR) ---
+//
+// The WSO2 vendor-quote comparison sheet: every vendor's initial quote beside its
+// final (post-negotiation) one. Only the sheet's *inputs* are stored server-side
+// (who generated it, the approved budget, the currency, the missing-final consent);
+// every figure below is derived on each read from the quotations and what was read
+// out of their PDFs, so editing a quotation updates the comparison.
+// See docs/quotation-comparison.md.
+
+export interface QuotationComparisonRecord {
+  id: number;
+  purchase_request_id: number;
+  approved_budget: number | null;
+  currency: string;
+  use_initial_for_final: boolean;
+  generated_at: string;
+  generated_by: number | null;
+  generator?: UserSummary | null;
+  updated_at: string;
+}
+
+// Where a column's figures came from: read out of that slot's own PDF, taken from
+// the quotation record (no read available), or the initial quote standing in for a
+// final one the vendor never sent.
+export type ComparisonSource = "pdf" | "record" | "initial";
+
+export interface ComparisonMoneyLine {
+  label: string;
+  rate?: number | null;
+  amount: number | null;
+}
+
+export interface ComparisonLineItem {
+  description: string;
+  quantity: number;
+  unit_price: number;
+  amount: number;
+}
+
+export interface ComparisonQuote {
+  available: boolean;
+  source: ComparisonSource;
+  document_id?: number | null;
+  filename?: string;
+  currency: string;
+  items: ComparisonLineItem[];
+  items_total: number;
+  subtotal: number | null;
+  discount: number | null;
+  taxes: ComparisonMoneyLine[];
+  tax_total: number;
+  charges: ComparisonMoneyLine[];
+  charges_total: number;
+  // grand_total is always tax-inclusive. Null when the source stated nothing — show
+  // it blank, never 0.00.
+  grand_total: number | null;
+  stated_total: number | null;
+  added_tax: boolean;
+  derived_total: boolean;
+  items_mismatch: boolean;
+  valid_until: string | null;
+  quote_reference?: string;
+  confidence?: string;
+  // applied: these are the figures the quotation record itself carries.
+  applied: boolean;
+}
+
+// One item line with the initial and final quote side by side. Paired on the item
+// description; a side the other quote doesn't list is null.
+export interface ComparisonItemRow {
+  description: string;
+  initial_quantity: number | null;
+  initial_unit_price: number | null;
+  initial_amount: number | null;
+  final_quantity: number | null;
+  final_unit_price: number | null;
+  final_amount: number | null;
+}
+
+export interface ComparisonVendor {
+  quotation_id: number;
+  vendor_id: number;
+  vendor_name: string;
+  notes: string;
+  status: QuotationStatus;
+  currency: string;
+  initial: ComparisonQuote;
+  final: ComparisonQuote;
+  final_is_initial: boolean;
+  items: ComparisonItemRow[];
+  negotiated_saving: number | null;
+  variance_vs_budget: number | null;
+  saving_vs_highest: number | null;
+  lowest: boolean;
+}
+
+export interface QuotationComparison {
+  exists: boolean;
+  comparison?: QuotationComparisonRecord | null;
+  can_manage: boolean;
+  currency: string;
+  mixed_currency: boolean;
+  approved_budget: number | null;
+  vendors: ComparisonVendor[];
+  // Vendors whose final quote could not be read from a PDF of their own — what the
+  // confirmation modal warns about before generating, and what the card keeps
+  // flagging afterwards.
+  missing_final: string[];
+  quotation_count: number;
+}
+
+export interface QuotationComparisonInput {
+  approved_budget: number | null;
+  currency: string;
+  use_initial_for_final: boolean;
 }
 
 export interface Contract {
@@ -957,6 +1188,8 @@ export function activityLabel(action: string, qualifier: string): string {
       return qualifier === "unassign" ? "Unassigned" : "Assigned";
     case "update_pr_collaborators":
       return "Collaborators updated";
+    case "update_pr_priority":
+      return qualifier ? `Priority set to ${qualifier}` : "Priority updated";
     case "create_recommendation":
       return "Recommendation created";
     case "update_recommendation":

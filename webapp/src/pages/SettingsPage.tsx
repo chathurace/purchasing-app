@@ -25,6 +25,7 @@ import {
 import { useConfigLookup, useConfigOptionsAdmin } from "../hooks/useConfigOptions";
 import { useCanManageBusinessUnits } from "../hooks/useCanManageBusinessUnits";
 import { useIsAdmin } from "../hooks/useIsAdmin";
+import { useConfirmAction } from "../components/ConfirmDialog";
 import { StorageSettings } from "../components/StorageSettings";
 import { TeamsSection } from "../components/TeamsSection";
 
@@ -185,6 +186,8 @@ function ListSection({
   const [draft, setDraft] = useState("");
   const [editId, setEditId] = useState<number | null>(null);
   const [editValue, setEditValue] = useState("");
+  // Deleting an option is irreversible; deactivating pulls it out of the pickers.
+  const [confirmNode, confirmAction] = useConfirmAction();
 
   const submitAdd = () => {
     const v = draft.trim();
@@ -328,7 +331,25 @@ function ListSection({
                     size="small"
                     variant="outlined"
                     color="inherit"
-                    onClick={() => onToggle(o)}
+                    onClick={() => {
+                      // Reactivating is additive — only guard the removing direction.
+                      if (!o.is_active) {
+                        onToggle(o);
+                        return;
+                      }
+                      confirmAction({
+                        title: "Deactivate option",
+                        message: (
+                          <>
+                            Deactivate <strong>{o.value}</strong>? It stops being offered in{" "}
+                            {list.label.toLowerCase()} pickers. Requests that already use it keep the
+                            value.
+                          </>
+                        ),
+                        confirmLabel: "Deactivate",
+                        onConfirm: () => onToggle(o),
+                      });
+                    }}
                   >
                     {o.is_active ? "Deactivate" : "Reactivate"}
                   </Button>
@@ -336,7 +357,19 @@ function ListSection({
                     size="small"
                     variant="outlined"
                     color="error"
-                    onClick={() => onDelete(o)}
+                    onClick={() =>
+                      confirmAction({
+                        title: "Delete option",
+                        message: (
+                          <>
+                            Delete <strong>{o.value}</strong> from {list.label.toLowerCase()}? This
+                            cannot be undone — deactivate instead to keep it on record.
+                          </>
+                        ),
+                        confirmLabel: "Delete",
+                        onConfirm: () => onDelete(o),
+                      })
+                    }
                   >
                     Delete
                   </Button>
@@ -376,6 +409,7 @@ function ListSection({
           Add
         </Button>
       </Box>
+      {confirmNode}
     </Card>
   );
 }

@@ -15,9 +15,10 @@ import {
 import { useGRN } from "../hooks/useGrns";
 import { GRNFields } from "../components/GRNFields";
 import { DocumentList } from "../components/DocumentList";
+import { useConfirmAction } from "../components/ConfirmDialog";
 import { ChainStepper } from "../components/ChainStepper";
 import { DirectParentCard } from "../components/CaseSections";
-import { RelatedDocuments } from "../components/RelatedDocuments";
+import { RelatedEntities } from "../components/RelatedEntities";
 import {
   deleteGRN,
   deleteGRNDocument,
@@ -48,6 +49,7 @@ export function GrnDetailPage() {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<GRNInput | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [confirmNode, confirmDelete] = useConfirmAction();
 
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ["grns", grnId] });
@@ -91,19 +93,19 @@ export function GrnDetailPage() {
 
   if (isLoading)
     return (
-      <Box sx={{ maxWidth: 800, mx: "auto", p: { xs: 2, md: 4 } }}>
+      <Box sx={{ maxWidth: 1200, mx: "auto", p: { xs: 2, md: 4 } }}>
         <CircularProgress size={24} />
       </Box>
     );
   if (error || !g)
     return (
-      <Box sx={{ maxWidth: 800, mx: "auto", p: { xs: 2, md: 4 } }}>
+      <Box sx={{ maxWidth: 1200, mx: "auto", p: { xs: 2, md: 4 } }}>
         <Alert severity="error">Failed to load GRN.</Alert>
       </Box>
     );
 
   return (
-    <Box sx={{ maxWidth: 800, mx: "auto", p: { xs: 2, md: 4 } }}>
+    <Box sx={{ maxWidth: 1200, mx: "auto", p: { xs: 2, md: 4 } }}>
       <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 2 }}>
         <MuiLink component={Link} to="/grns" variant="body2">
           GRNs
@@ -147,9 +149,19 @@ export function GrnDetailPage() {
             <Button
               variant="outlined"
               color="error"
-              onClick={() => {
-                if (confirm(`Delete ${grnRef(g.id)}? This cannot be undone.`)) deleteGRNMutation.mutate();
-              }}
+              onClick={() =>
+                confirmDelete({
+                  title: "Delete goods received note",
+                  message: (
+                    <>
+                      Delete <strong>{grnRef(g.id)}</strong>? Its line items and attached documents
+                      go with it. This cannot be undone.
+                    </>
+                  ),
+                  confirmLabel: "Delete",
+                  onConfirm: () => deleteGRNMutation.mutate(),
+                })
+              }
               disabled={deleteGRNMutation.isPending}
             >
               Delete
@@ -232,7 +244,8 @@ export function GrnDetailPage() {
         />
       </Box>
 
-      <RelatedDocuments prId={g.purchase_request_id} current={{ kind: "grn", id: g.id }} />
+      <RelatedEntities prId={g.purchase_request_id} current={{ kind: "grn", id: g.id }} />
+      {confirmNode}
     </Box>
   );
 }

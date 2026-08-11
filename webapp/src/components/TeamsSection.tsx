@@ -15,6 +15,7 @@ import { ApiError } from "../api/client";
 import { listTeams, updateTeamEmail, addTeamMember, removeTeamMember } from "../api/teams";
 import { ROLE_LABELS } from "../types/api";
 import type { Team } from "../types/api";
+import { useConfirmAction } from "./ConfirmDialog";
 import { DirectoryUserPicker } from "./DirectoryUserPicker";
 
 // TeamsSection manages the Legal / Security / Compliance / Procurement teams from the Settings
@@ -118,6 +119,8 @@ function TeamCard({
 }) {
   const [email, setEmail] = useState(team.team_email);
   const emailDirty = email.trim() !== team.team_email;
+  // Removing a member revokes the team's role — confirm before it happens.
+  const [confirmNode, confirmRemove] = useConfirmAction();
 
   // Tolerate an older API response that predates admin_members.
   const adminMembers = team.admin_members ?? [];
@@ -226,7 +229,21 @@ function TeamCard({
                   color="error"
                   size="small"
                   disabled={busy}
-                  onClick={() => onRemoveMember(m.id)}
+                  onClick={() =>
+                    confirmRemove({
+                      title: `Remove from ${team.name}`,
+                      message: (
+                        <>
+                          Remove <strong>{m.email || m.name || `#${m.id}`}</strong> from{" "}
+                          {team.name}? This revokes their{" "}
+                          <strong>{ROLE_LABELS[team.member_role]}</strong> role, so they lose the
+                          team's approval and access rights.
+                        </>
+                      ),
+                      confirmLabel: "Remove",
+                      onConfirm: () => onRemoveMember(m.id),
+                    })
+                  }
                   sx={{ flexShrink: 0 }}
                 >
                   Remove
@@ -285,6 +302,7 @@ function TeamCard({
           />
         </Box>
       </CardContent>
+      {confirmNode}
     </Card>
   );
 }

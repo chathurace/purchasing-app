@@ -8,6 +8,7 @@ import (
 
 	"github.com/cs/purchasing-app/internal/directory"
 	"github.com/cs/purchasing-app/internal/email"
+	"github.com/cs/purchasing-app/internal/extraction"
 	"github.com/cs/purchasing-app/internal/middleware"
 	"github.com/cs/purchasing-app/internal/model"
 	"github.com/cs/purchasing-app/internal/repository"
@@ -17,9 +18,13 @@ import (
 )
 
 type QuotationsHandler struct {
-	Repo       *repository.Repository
-	Storage    storage.Store
-	Mailer     email.Mailer
+	Repo    *repository.Repository
+	Storage storage.Store
+	Mailer  email.Mailer
+	// Extraction reads quotation details out of an uploaded PDF via Claude. It is
+	// always non-nil but may be disabled (no API key), in which case the
+	// extraction endpoints 503 and the UI hides the feature.
+	Extraction *extraction.Service
 	Directory  *directory.Service
 	AppBaseURL string
 	Log        zerolog.Logger
@@ -38,6 +43,10 @@ type quotationInput struct {
 	ValidUntil  *string              `json:"valid_until"`
 	Notes       string               `json:"notes"`
 	Items       []quotationItemInput `json:"items"`
+	// ExtractionID, when set on create, adopts a PDF already staged on this PR by
+	// the extraction flow into the new quotation's initial-PDF slot — so the
+	// client doesn't re-upload bytes the server already has. Ignored on update.
+	ExtractionID *int64 `json:"extraction_id"`
 }
 
 func (in quotationInput) toRepo() repository.QuotationInput {
@@ -134,8 +143,54 @@ func (h *QuotationsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	recordProcessEvent(r, h.Repo, q.PurchaseRequestID, model.ProcessAddQuotation, "")
 	ensureCollaborator(r, h.Repo, q.PurchaseRequestID)
+	// Adopt a staged extraction's PDF as this quotation's initial document. Failure
+	// is non-fatal: the quotation is already created, and the user can attach the
+	// PDF from the card — so we log and carry on rather than losing their input.
+	if in.ExtractionID != nil {
+		if err := h.adoptExtractionDocument(r, q, *in.ExtractionID, user.ID); err != nil {
+			reqLog(r).Warn().Err(err).
+				Int64("extraction_id", *in.ExtractionID).Int64("quotation_id", q.ID).
+				Msg("adopt extraction document")
+		} else if reloaded, err := h.Repo.GetQuotation(r.Context(), q.ID); err == nil {
+			q = reloaded
+		}
+	}
 	h.notifyQuotationAdded(r, pr)
 	writeJSON(w, http.StatusCreated, q)
+}
+
+// adoptExtractionDocument promotes the PDF staged by an extraction onto the newly
+// created quotation: it re-owns the document and fills the initial-PDF slot, then
+// marks the extraction applied. The document's stored bytes are untouched.
+func (h *QuotationsHandler) adoptExtractionDocument(r *http.Request, q *repository.Quotation, extractionID, userID int64) error {
+	docID, err := h.Repo.TakePendingExtractionDocument(r.Context(), extractionID, q.PurchaseRequestID)
+	if err != nil {
+		return err
+	}
+	if err := h.Repo.SetDocumentOwner(r.Context(), docID, model.OwnerQuotation, q.ID); err != nil {
+		return err
+	}
+	if _, err := h.Repo.SetQuotationDocument(r.Context(), q.ID, repository.QuotationDocInitial, docID); err != nil {
+		return err
+	}
+	return h.Repo.MarkExtractionApplied(r.Context(), extractionID, q.ID, userID)
+}
+
+// markExtractionApplied stamps the extraction whose reviewed values were just written
+// onto an existing quotation — the post-create "Apply" on a card's PDF slot. Create
+// has its own path (adoptExtractionDocument) because it also re-owns the staged PDF.
+//
+// The extraction must belong to this quotation's PR and have succeeded; anything else
+// is a client sending an id it has no business applying here.
+func (h *QuotationsHandler) markExtractionApplied(r *http.Request, q *repository.Quotation, extractionID, userID int64) error {
+	ext, err := h.Repo.GetExtraction(r.Context(), extractionID)
+	if err != nil {
+		return err
+	}
+	if ext.PurchaseRequestID != q.PurchaseRequestID || ext.Status != repository.ExtractionSucceeded {
+		return repository.ErrInvalidState
+	}
+	return h.Repo.MarkExtractionApplied(r.Context(), extractionID, q.ID, userID)
 }
 
 // notifyQuotationAdded tells the Procurement team + the PR's assignee/collaborators
@@ -199,6 +254,17 @@ func (h *QuotationsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 	recordProcessEvent(r, h.Repo, q.PurchaseRequestID, model.ProcessUpdateQuotation, "")
 	ensureCollaborator(r, h.Repo, q.PurchaseRequestID)
+	// These values came from reviewing an extraction ("Apply" on a card's PDF slot), so
+	// stamp it applied — that is what tells the reader which PDF's numbers the
+	// quotation is now carrying. Best-effort: the update itself already succeeded.
+	if in.ExtractionID != nil {
+		user := middleware.UserFromCtx(r.Context())
+		if err := h.markExtractionApplied(r, q, *in.ExtractionID, user.ID); err != nil {
+			reqLog(r).Warn().Err(err).
+				Int64("extraction_id", *in.ExtractionID).Int64("quotation_id", q.ID).
+				Msg("mark extraction applied")
+		}
+	}
 	updated, err := h.Repo.GetQuotation(r.Context(), q.ID)
 	if err != nil {
 		reqLog(r).Error().Err(err).Msg("reload quotation after mutation")
@@ -296,11 +362,30 @@ func (h *QuotationsHandler) DeleteDocument(w http.ResponseWriter, r *http.Reques
 	deleteOwnedDoc(w, r, h.Repo, h.Storage, model.OwnerQuotation, q.ID, docID)
 }
 
-// --- primary quotation PDF (single; replaceable + removable) ---
+// --- primary quotation PDFs: initial + final (each replaceable + removable) ---
 
-// UploadQuotationPDF attaches (or replaces) the quotation's single primary PDF.
-// On replace, the previously attached PDF is deleted.
-func (h *QuotationsHandler) UploadQuotationPDF(w http.ResponseWriter, r *http.Request) {
+// UploadInitialQuotationPDF / UploadFinalQuotationPDF attach (or replace) the
+// quotation's initial and final PDFs; the Delete pair removes them. The final PDF
+// is optional and never gates selecting the quotation.
+func (h *QuotationsHandler) UploadInitialQuotationPDF(w http.ResponseWriter, r *http.Request) {
+	h.uploadQuotationPDF(w, r, repository.QuotationDocInitial)
+}
+
+func (h *QuotationsHandler) UploadFinalQuotationPDF(w http.ResponseWriter, r *http.Request) {
+	h.uploadQuotationPDF(w, r, repository.QuotationDocFinal)
+}
+
+func (h *QuotationsHandler) DeleteInitialQuotationPDF(w http.ResponseWriter, r *http.Request) {
+	h.deleteQuotationPDF(w, r, repository.QuotationDocInitial)
+}
+
+func (h *QuotationsHandler) DeleteFinalQuotationPDF(w http.ResponseWriter, r *http.Request) {
+	h.deleteQuotationPDF(w, r, repository.QuotationDocFinal)
+}
+
+// uploadQuotationPDF attaches (or replaces) one of the quotation's two primary
+// PDFs. On replace, the previously attached PDF is deleted.
+func (h *QuotationsHandler) uploadQuotationPDF(w http.ResponseWriter, r *http.Request, slot repository.QuotationDocSlot) {
 	q, ok := h.load(w, r)
 	if !ok {
 		return
@@ -309,7 +394,7 @@ func (h *QuotationsHandler) UploadQuotationPDF(w http.ResponseWriter, r *http.Re
 	if !ok {
 		return
 	}
-	prevID, err := h.Repo.SetQuotationDocument(r.Context(), q.ID, doc.ID)
+	prevID, err := h.Repo.SetQuotationDocument(r.Context(), q.ID, slot, doc.ID)
 	if err != nil {
 		_ = h.Repo.DeleteOwnedDocument(r.Context(), model.OwnerQuotation, q.ID, doc.ID)
 		_ = h.Storage.Delete(doc.StoredPath)
@@ -333,13 +418,13 @@ func (h *QuotationsHandler) UploadQuotationPDF(w http.ResponseWriter, r *http.Re
 	writeJSON(w, http.StatusOK, updated)
 }
 
-// DeleteQuotationPDF removes the quotation's primary PDF.
-func (h *QuotationsHandler) DeleteQuotationPDF(w http.ResponseWriter, r *http.Request) {
+// deleteQuotationPDF removes one of the quotation's two primary PDFs.
+func (h *QuotationsHandler) deleteQuotationPDF(w http.ResponseWriter, r *http.Request, slot repository.QuotationDocSlot) {
 	q, ok := h.load(w, r)
 	if !ok {
 		return
 	}
-	path, err := h.Repo.ClearQuotationDocument(r.Context(), q.ID)
+	path, err := h.Repo.ClearQuotationDocument(r.Context(), q.ID, slot)
 	if err != nil {
 		if errors.Is(err, repository.ErrInvalidState) {
 			writeError(w, http.StatusConflict, "no quotation PDF is attached")

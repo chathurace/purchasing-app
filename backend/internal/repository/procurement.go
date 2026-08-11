@@ -480,17 +480,39 @@ type Quotation struct {
 	ValidUntil        *string `json:"valid_until"` // YYYY-MM-DD or null
 	Notes             string  `json:"notes"`
 	Status            string  `json:"status"`
-	// QuotationDocumentID references the single primary quotation PDF (if any),
-	// pulled out of Documents on detail reads and exposed as QuotationDocument.
-	QuotationDocumentID *int64          `json:"quotation_document_id"`
-	CreatedAt           time.Time       `json:"created_at"`
-	UpdatedAt           time.Time       `json:"updated_at"`
-	Items               []QuotationItem `json:"items"`
-	Vendor              *Vendor         `json:"vendor,omitempty"`
-	// Documents are the other supporting documents; the primary quotation PDF is
-	// exposed separately as QuotationDocument.
-	Documents         []Document `json:"documents,omitempty"`
-	QuotationDocument *Document  `json:"quotation_document,omitempty"`
+	// Initial/FinalQuotationDocumentID reference the quotation's two primary PDFs
+	// (if attached): the initial quote received from the vendor and the final
+	// (post-negotiation) one. Both are pulled out of Documents on detail reads and
+	// exposed as InitialQuotationDocument / FinalQuotationDocument.
+	InitialQuotationDocumentID *int64          `json:"initial_quotation_document_id"`
+	FinalQuotationDocumentID   *int64          `json:"final_quotation_document_id"`
+	CreatedAt                  time.Time       `json:"created_at"`
+	UpdatedAt                  time.Time       `json:"updated_at"`
+	Items                      []QuotationItem `json:"items"`
+	Vendor                     *Vendor         `json:"vendor,omitempty"`
+	// Documents are the other supporting documents; the two primary quotation PDFs
+	// are exposed separately.
+	Documents                []Document `json:"documents,omitempty"`
+	InitialQuotationDocument *Document  `json:"initial_quotation_document,omitempty"`
+	FinalQuotationDocument   *Document  `json:"final_quotation_document,omitempty"`
+}
+
+// QuotationDocSlot names one of a quotation's two primary PDF slots. The zero
+// value is invalid — always pass one of the constants below.
+type QuotationDocSlot string
+
+const (
+	QuotationDocInitial QuotationDocSlot = "initial"
+	QuotationDocFinal   QuotationDocSlot = "final"
+)
+
+// column returns the quotations column backing the slot. Only ever called with
+// the two constants above, so the default is a safety net.
+func (s QuotationDocSlot) column() string {
+	if s == QuotationDocFinal {
+		return "final_quotation_document_id"
+	}
+	return "initial_quotation_document_id"
 }
 
 type QuotationInput struct {
@@ -574,11 +596,40 @@ func replaceQuotationItems(ctx context.Context, tx pgx.Tx, quotationID int64, it
 
 // ListQuotations returns quotation summaries with vendor info. If prID is
 // non-nil, results are scoped to that purchase request.
+// The summary carries the two primary PDFs (initial/final) so the quotation cards
+// on the PR page can render — and offer uploads for — both slots without a
+// per-card detail fetch. The other supporting documents stay detail-only.
 const quotationSummarySelect = `
 	SELECT q.id, q.purchase_request_id, q.vendor_id, q.total_amount, q.currency, q.valid_until, q.notes,
-	       q.status, q.created_at, q.updated_at, v.name
+	       q.status, q.created_at, q.updated_at, v.name,
+	       iq.id, iq.filename, iq.content_type, iq.size_bytes, iq.created_at,
+	       fq.id, fq.filename, fq.content_type, fq.size_bytes, fq.created_at
 	FROM quotations q
-	JOIN vendors v ON v.id = q.vendor_id`
+	JOIN vendors v ON v.id = q.vendor_id
+	LEFT JOIN documents iq ON iq.id = q.initial_quotation_document_id
+	LEFT JOIN documents fq ON fq.id = q.final_quotation_document_id`
+
+// summaryDoc holds the LEFT JOINed columns of one primary PDF slot.
+type summaryDoc struct {
+	id          pgtype.Int8
+	filename    pgtype.Text
+	contentType pgtype.Text
+	sizeBytes   pgtype.Int8
+	createdAt   pgtype.Timestamptz
+}
+
+func (d summaryDoc) toDoc() *Document {
+	if !d.id.Valid {
+		return nil
+	}
+	return &Document{
+		ID:          d.id.Int64,
+		Filename:    d.filename.String,
+		ContentType: d.contentType.String,
+		SizeBytes:   d.sizeBytes.Int64,
+		CreatedAt:   d.createdAt.Time,
+	}
+}
 
 func scanQuotationSummaries(rows pgx.Rows) ([]*Quotation, error) {
 	defer rows.Close()
@@ -587,12 +638,23 @@ func scanQuotationSummaries(rows pgx.Rows) ([]*Quotation, error) {
 		q := &Quotation{}
 		var validUntil pgtype.Date
 		var vendorName string
+		var initial, final summaryDoc
 		if err := rows.Scan(&q.ID, &q.PurchaseRequestID, &q.VendorID, &q.TotalAmount, &q.Currency, &validUntil,
-			&q.Notes, &q.Status, &q.CreatedAt, &q.UpdatedAt, &vendorName); err != nil {
+			&q.Notes, &q.Status, &q.CreatedAt, &q.UpdatedAt, &vendorName,
+			&initial.id, &initial.filename, &initial.contentType, &initial.sizeBytes, &initial.createdAt,
+			&final.id, &final.filename, &final.contentType, &final.sizeBytes, &final.createdAt); err != nil {
 			return nil, err
 		}
 		q.ValidUntil = formatDate(validUntil)
 		q.Vendor = &Vendor{ID: q.VendorID, Name: vendorName}
+		if doc := initial.toDoc(); doc != nil {
+			q.InitialQuotationDocumentID = &doc.ID
+			q.InitialQuotationDocument = doc
+		}
+		if doc := final.toDoc(); doc != nil {
+			q.FinalQuotationDocumentID = &doc.ID
+			q.FinalQuotationDocument = doc
+		}
 		out = append(out, q)
 	}
 	return out, rows.Err()
@@ -637,20 +699,23 @@ func (r *Repository) ListQuotationsForPR(ctx context.Context, prID int64) ([]*Qu
 func (r *Repository) GetQuotation(ctx context.Context, id int64) (*Quotation, error) {
 	q := &Quotation{}
 	var validUntil pgtype.Date
-	var quotationDocID pgtype.Int8
+	var initialDocID, finalDocID pgtype.Int8
 	err := r.pool.QueryRow(ctx, `
 		SELECT q.id, q.purchase_request_id, q.vendor_id, q.total_amount, q.currency, q.valid_until, q.notes,
-		       q.status, q.quotation_document_id, q.created_at, q.updated_at
+		       q.status, q.initial_quotation_document_id, q.final_quotation_document_id, q.created_at, q.updated_at
 		FROM quotations q
 		WHERE q.id = $1`, id).
 		Scan(&q.ID, &q.PurchaseRequestID, &q.VendorID, &q.TotalAmount, &q.Currency, &validUntil, &q.Notes,
-			&q.Status, &quotationDocID, &q.CreatedAt, &q.UpdatedAt)
+			&q.Status, &initialDocID, &finalDocID, &q.CreatedAt, &q.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
 	q.ValidUntil = formatDate(validUntil)
-	if quotationDocID.Valid {
-		q.QuotationDocumentID = &quotationDocID.Int64
+	if initialDocID.Valid {
+		q.InitialQuotationDocumentID = &initialDocID.Int64
+	}
+	if finalDocID.Valid {
+		q.FinalQuotationDocumentID = &finalDocID.Int64
 	}
 	if q.Vendor, err = r.GetVendor(ctx, q.VendorID); err != nil {
 		return nil, err
@@ -658,7 +723,7 @@ func (r *Repository) GetQuotation(ctx context.Context, id int64) (*Quotation, er
 	if q.Items, err = r.listQuotationItems(ctx, id); err != nil {
 		return nil, err
 	}
-	// All quotation-owned documents; the primary PDF (if any) is pulled out
+	// All quotation-owned documents; the two primary PDFs (if any) are pulled out
 	// separately so Documents holds only the other supporting documents.
 	allDocs, err := r.ListOwnedDocuments(ctx, ownerQuotation, id)
 	if err != nil {
@@ -666,12 +731,15 @@ func (r *Repository) GetQuotation(ctx context.Context, id int64) (*Quotation, er
 	}
 	q.Documents = make([]Document, 0, len(allDocs))
 	for i := range allDocs {
-		if q.QuotationDocumentID != nil && allDocs[i].ID == *q.QuotationDocumentID {
-			doc := allDocs[i]
-			q.QuotationDocument = &doc
-			continue
+		doc := allDocs[i]
+		switch {
+		case q.InitialQuotationDocumentID != nil && doc.ID == *q.InitialQuotationDocumentID:
+			q.InitialQuotationDocument = &doc
+		case q.FinalQuotationDocumentID != nil && doc.ID == *q.FinalQuotationDocumentID:
+			q.FinalQuotationDocument = &doc
+		default:
+			q.Documents = append(q.Documents, doc)
 		}
-		q.Documents = append(q.Documents, allDocs[i])
 	}
 	return q, nil
 }
@@ -695,10 +763,11 @@ func (r *Repository) listQuotationItems(ctx context.Context, quotationID int64) 
 	return items, rows.Err()
 }
 
-// SetQuotationDocument attaches (or replaces) the quotation's single primary
-// PDF. Returns the id of the previously attached document (if any, and
-// different) so the caller can delete the old file.
-func (r *Repository) SetQuotationDocument(ctx context.Context, quotationID, docID int64) (*int64, error) {
+// SetQuotationDocument attaches (or replaces) one of the quotation's two primary
+// PDFs (initial or final). Returns the id of the previously attached document in
+// that slot (if any, and different) so the caller can delete the old file.
+func (r *Repository) SetQuotationDocument(ctx context.Context, quotationID int64, slot QuotationDocSlot, docID int64) (*int64, error) {
+	col := slot.column()
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return nil, err
@@ -707,11 +776,11 @@ func (r *Repository) SetQuotationDocument(ctx context.Context, quotationID, docI
 
 	var prev pgtype.Int8
 	if err := tx.QueryRow(ctx, `
-		SELECT quotation_document_id FROM quotations WHERE id = $1`, quotationID).Scan(&prev); err != nil {
+		SELECT `+col+` FROM quotations WHERE id = $1`, quotationID).Scan(&prev); err != nil {
 		return nil, err
 	}
 	if _, err := tx.Exec(ctx, `
-		UPDATE quotations SET quotation_document_id = $2, updated_at = NOW() WHERE id = $1`,
+		UPDATE quotations SET `+col+` = $2, updated_at = NOW() WHERE id = $1`,
 		quotationID, docID); err != nil {
 		return nil, err
 	}
@@ -724,10 +793,11 @@ func (r *Repository) SetQuotationDocument(ctx context.Context, quotationID, docI
 	return nil, nil
 }
 
-// ClearQuotationDocument removes the primary quotation PDF (clearing the FK and
-// deleting the document row) and returns the stored path of the removed file for
-// the caller to unlink. Returns ErrInvalidState if no primary PDF is set.
-func (r *Repository) ClearQuotationDocument(ctx context.Context, quotationID int64) (string, error) {
+// ClearQuotationDocument removes one of the primary quotation PDFs (clearing the
+// FK and deleting the document row) and returns the stored path of the removed
+// file for the caller to unlink. Returns ErrInvalidState if that slot is empty.
+func (r *Repository) ClearQuotationDocument(ctx context.Context, quotationID int64, slot QuotationDocSlot) (string, error) {
+	col := slot.column()
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return "", err
@@ -736,7 +806,7 @@ func (r *Repository) ClearQuotationDocument(ctx context.Context, quotationID int
 
 	var docID pgtype.Int8
 	if err := tx.QueryRow(ctx, `
-		SELECT quotation_document_id FROM quotations WHERE id = $1`, quotationID).Scan(&docID); err != nil {
+		SELECT `+col+` FROM quotations WHERE id = $1`, quotationID).Scan(&docID); err != nil {
 		return "", err
 	}
 	if !docID.Valid {
@@ -749,7 +819,7 @@ func (r *Repository) ClearQuotationDocument(ctx context.Context, quotationID int
 		}
 	}
 	if _, err := tx.Exec(ctx, `
-		UPDATE quotations SET quotation_document_id = NULL, updated_at = NOW() WHERE id = $1`, quotationID); err != nil {
+		UPDATE quotations SET `+col+` = NULL, updated_at = NOW() WHERE id = $1`, quotationID); err != nil {
 		return "", err
 	}
 	if _, err := tx.Exec(ctx, `DELETE FROM documents WHERE id = $1`, docID.Int64); err != nil {

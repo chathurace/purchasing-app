@@ -17,10 +17,20 @@ import {
   addPRCollaborator,
   removePRCollaborator,
   setPRAssignee,
+  setPRPriority,
 } from "../api/purchaseRequests";
 import { listTeams } from "../api/teams";
-import type { Me, PurchaseRequest, UserSummary } from "../types/api";
+import {
+  PR_PRIORITIES,
+  prPriority,
+  prPriorityColor,
+  type Me,
+  type PRPriority,
+  type PurchaseRequest,
+  type UserSummary,
+} from "../types/api";
 import { ApproverPicker } from "./ApproverPicker";
+import { useConfirmAction } from "./ConfirmDialog";
 
 function userLabel(u: UserSummary): string {
   return u.name ? `${u.name} (${u.email})` : u.email || `#${u.id}`;
@@ -35,6 +45,8 @@ function userLabel(u: UserSummary): string {
 export function AssignmentCard({ pr, me }: { pr: PurchaseRequest; me: Me | undefined }) {
   const qc = useQueryClient();
   const [error, setError] = useState<string | null>(null);
+  // Unassigning and dropping a collaborator both withdraw someone's access — confirm both.
+  const [confirmNode, confirmRemove] = useConfirmAction();
 
   const isProcurementAdmin =
     !!me && (me.roles.includes("procurement_admin") || me.roles.includes("admin"));
@@ -75,6 +87,15 @@ export function AssignmentCard({ pr, me }: { pr: PurchaseRequest; me: Me | undef
     onError: (e: unknown) => setError(e instanceof ApiError ? e.message : "Failed to update assignee"),
   });
 
+  const priorityMutation = useMutation({
+    mutationFn: (priority: PRPriority) => setPRPriority(pr.id, priority),
+    onSuccess: () => {
+      invalidate();
+      setError(null);
+    },
+    onError: (e: unknown) => setError(e instanceof ApiError ? e.message : "Failed to update priority"),
+  });
+
   const addCollab = useMutation({
     mutationFn: (userId: number) => addPRCollaborator(pr.id, userId),
     onSuccess: () => {
@@ -97,6 +118,7 @@ export function AssignmentCard({ pr, me }: { pr: PurchaseRequest; me: Me | undef
 
   const busy = assignMutation.isPending;
   const assigned = !!pr.assignee_id;
+  const priority = prPriority(pr);
   const collaborators = pr.collaborators ?? [];
   // Assignee + existing collaborators are hidden from the collaborator add-list.
   const collabSelectedIds = [
@@ -125,6 +147,37 @@ export function AssignmentCard({ pr, me }: { pr: PurchaseRequest; me: Me | undef
           />
         </Box>
 
+        {/* Priority — procurement triage. P3 (green) until someone raises it;
+            only procurement can change it, everyone else sees the chip. */}
+        <Box sx={{ mb: 2, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 1 }}>
+          <Typography variant="body2" color="text.secondary">
+            Priority:
+          </Typography>
+          {pr.my_can_set_priority ? (
+            <TextField
+              select
+              size="small"
+              value={priority}
+              disabled={priorityMutation.isPending}
+              onChange={(e) => priorityMutation.mutate(e.target.value as PRPriority)}
+              sx={{ minWidth: "12rem" }}
+            >
+              {PR_PRIORITIES.map((o) => (
+                <MenuItem key={o.value} value={o.value}>
+                  <Chip size="small" variant="outlined" color={o.color} label={o.label} />
+                </MenuItem>
+              ))}
+            </TextField>
+          ) : (
+            <Chip
+              size="small"
+              variant="outlined"
+              color={prPriorityColor(priority)}
+              label={PR_PRIORITIES.find((o) => o.value === priority)?.label ?? priority}
+            />
+          )}
+        </Box>
+
         {/* Assignee */}
         <Box sx={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 1 }}>
           <Typography variant="body2" color="text.secondary">
@@ -143,9 +196,24 @@ export function AssignmentCard({ pr, me }: { pr: PurchaseRequest; me: Me | undef
                 size="small"
                 value={pr.assignee_id ?? ""}
                 disabled={busy}
-                onChange={(e) =>
-                  assignMutation.mutate(e.target.value === "" ? null : Number(e.target.value))
-                }
+                onChange={(e) => {
+                  if (e.target.value !== "") {
+                    assignMutation.mutate(Number(e.target.value));
+                    return;
+                  }
+                  // Clearing the assignee is a removal — confirm it.
+                  confirmRemove({
+                    title: "Unassign this request",
+                    message: (
+                      <>
+                        Remove <strong>{pr.assignee ? userLabel(pr.assignee) : "the assignee"}</strong>{" "}
+                        as assignee? Procurement work stays blocked until someone is assigned again.
+                      </>
+                    ),
+                    confirmLabel: "Unassign",
+                    onConfirm: () => assignMutation.mutate(null),
+                  });
+                }}
                 sx={{ minWidth: "16rem" }}
               >
                 <MenuItem value="">Unassigned</MenuItem>
@@ -173,7 +241,15 @@ export function AssignmentCard({ pr, me }: { pr: PurchaseRequest; me: Me | undef
                 <Button
                   variant="outlined"
                   color="inherit"
-                  onClick={() => assignMutation.mutate(null)}
+                  onClick={() =>
+                    confirmRemove({
+                      title: "Unassign yourself",
+                      message:
+                        "Hand this request back? It becomes unassigned, and procurement work is blocked until someone is assigned again.",
+                      confirmLabel: "Unassign me",
+                      onConfirm: () => assignMutation.mutate(null),
+                    })
+                  }
                   disabled={busy}
                 >
                   {busy ? "Working…" : "Unassign me"}
@@ -201,7 +277,20 @@ export function AssignmentCard({ pr, me }: { pr: PurchaseRequest; me: Me | undef
               selectedIds={collabSelectedIds}
               selectedUsers={collaborators}
               onAdd={(u) => addCollab.mutate(u.id)}
-              onRemove={(id) => removeCollab.mutate(id)}
+              onRemove={(id) => {
+                const c = collaborators.find((u) => u.id === id);
+                confirmRemove({
+                  title: "Remove collaborator",
+                  message: (
+                    <>
+                      Remove <strong>{c ? userLabel(c) : "this collaborator"}</strong>? They lose
+                      collaborator access to this request.
+                    </>
+                  ),
+                  confirmLabel: "Remove",
+                  onConfirm: () => removeCollab.mutate(id),
+                });
+              }}
               disabled={addCollab.isPending || removeCollab.isPending}
             />
           ) : collaborators.length > 0 ? (
@@ -223,6 +312,7 @@ export function AssignmentCard({ pr, me }: { pr: PurchaseRequest; me: Me | undef
           </Alert>
         )}
       </CardContent>
+      {confirmNode}
     </Card>
   );
 }

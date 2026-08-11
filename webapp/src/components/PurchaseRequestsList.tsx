@@ -19,7 +19,13 @@ import {
 } from "@wso2/oxygen-ui";
 import { Plus } from "@wso2/oxygen-ui-icons-react";
 import { StatusBadge } from "./StatusBadge";
-import { prReference, type Me, type PurchaseRequest } from "../types/api";
+import {
+  prPriority,
+  prPriorityColor,
+  prReference,
+  type Me,
+  type PurchaseRequest,
+} from "../types/api";
 
 type Props = {
   title: string;
@@ -144,6 +150,7 @@ export function PurchaseRequestsList({
               <TableRow>
                 <TableCell>Ref</TableCell>
                 <TableCell>Title</TableCell>
+                <TableCell>Priority</TableCell>
                 <TableCell>Status</TableCell>
                 <TableCell>Assignee</TableCell>
                 <TableCell>Approvals</TableCell>
@@ -168,6 +175,14 @@ export function PurchaseRequestsList({
                         —
                       </Typography>
                     )}
+                  </TableCell>
+                  <TableCell>
+                    <Chip
+                      size="small"
+                      variant="outlined"
+                      color={prPriorityColor(prPriority(pr))}
+                      label={prPriority(pr)}
+                    />
                   </TableCell>
                   <TableCell>
                     <StatusBadge status={pr.status} />

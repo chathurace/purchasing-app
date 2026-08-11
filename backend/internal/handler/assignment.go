@@ -89,6 +89,8 @@ func (h *PurchaseRequestsHandler) attachAssignmentActionable(r *http.Request, pr
 	if !middleware.HasProcurementAccess(ctx) || !model.IsTeamLeadApproved(pr.TeamLeadStatus) {
 		return
 	}
+	// Priority is procurement triage — any procurement user sets it, assigned or not.
+	pr.MyCanSetPriority = true
 	switch {
 	case isAdmin:
 		pr.MyCanAssign = true
@@ -163,6 +165,44 @@ func (h *PurchaseRequestsHandler) SetAssignee(w http.ResponseWriter, r *http.Req
 	if in.AssigneeID != nil {
 		h.notifyPRAssignment(r, pr, *in.AssigneeID, "assignee")
 	}
+	h.reloadPR(w, r, pr.ID)
+}
+
+// SetPriority sets the PR's procurement triage priority (P1 / P2 / P3). Any
+// procurement / procurement_admin user (and admin, as everywhere) may set it —
+// unlike assignment there is no owner rule, since priority is a queue-wide triage
+// signal the whole procurement team reads. Requires team-lead approval first
+// (procurement can't see the PR before then); the PR need not be assigned yet.
+func (h *PurchaseRequestsHandler) SetPriority(w http.ResponseWriter, r *http.Request) {
+	if !middleware.HasProcurementAccess(r.Context()) {
+		writeError(w, http.StatusForbidden, "procurement access required")
+		return
+	}
+	pr, ok := h.load(w, r)
+	if !ok {
+		return
+	}
+	if !model.IsTeamLeadApproved(pr.TeamLeadStatus) {
+		writeError(w, http.StatusConflict, "purchase request is awaiting team lead approval")
+		return
+	}
+	var in struct {
+		Priority string `json:"priority"`
+	}
+	if err := decodeJSON(r, &in); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if !model.ValidPRPriority(in.Priority) {
+		writeError(w, http.StatusBadRequest, "priority must be one of P1, P2, P3")
+		return
+	}
+	if err := h.Repo.SetPRPriority(r.Context(), pr.ID, in.Priority); err != nil {
+		reqLog(r).Error().Err(err).Msg("set PR priority")
+		writeError(w, http.StatusInternalServerError, "failed to update priority")
+		return
+	}
+	recordProcessEvent(r, h.Repo, pr.ID, model.ProcessUpdatePRPriority, in.Priority)
 	h.reloadPR(w, r, pr.ID)
 }
 

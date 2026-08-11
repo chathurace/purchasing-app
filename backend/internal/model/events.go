@@ -28,6 +28,7 @@ const (
 
 	ProcessAssignPR              = "assign_pr" // qualifier: assign | unassign
 	ProcessUpdatePRCollaborators = "update_pr_collaborators"
+	ProcessUpdatePRPriority      = "update_pr_priority" // qualifier: P1 | P2 | P3
 
 	ProcessCreateRecommendation  = "create_recommendation"
 	ProcessUpdateRecommendation  = "update_recommendation"
@@ -45,10 +46,21 @@ const (
 	ProcessRaiseRFI              = "raise_rfi"
 	ProcessClearRFI              = "clear_rfi"
 
-	ProcessAddQuotation    = "add_quotation"
-	ProcessUpdateQuotation = "update_quotation"
-	ProcessDeleteQuotation = "delete_quotation"
-	ProcessSelectQuotation = "select_quotation"
+	ProcessAddQuotation = "add_quotation"
+	// ProcessExtractQuotation records a Claude-backed read of a quotation PDF.
+	// qualifier: initial | final | staged (staged = extracted before the quotation
+	// existed, from the PR page's add-quotation form).
+	ProcessExtractQuotation = "extract_quotation"
+	ProcessUpdateQuotation  = "update_quotation"
+	ProcessDeleteQuotation  = "delete_quotation"
+	ProcessSelectQuotation  = "select_quotation"
+
+	// Quotation comparison (the vendor-quote comparison sheet). Regenerating an
+	// existing comparison, or editing its approved budget / currency / consent,
+	// records the update action — the figures themselves are always derived.
+	ProcessCreateQuotationComparison = "create_quotation_comparison"
+	ProcessUpdateQuotationComparison = "update_quotation_comparison"
+	ProcessDeleteQuotationComparison = "delete_quotation_comparison"
 
 	ProcessAddDraftContract = "add_draft_contract" // qualifier: recommendation
 	ProcessUpdateContract   = "update_contract"
@@ -85,6 +97,12 @@ const (
 
 	// add_draft_contract source
 	QualifierFromRecommendation = "recommendation"
+
+	// extract_quotation — which PDF was read. "staged" means the extraction ran
+	// before the quotation existed (the PR page's add-quotation form).
+	QualifierInitial = "initial"
+	QualifierFinal   = "final"
+	QualifierStaged  = "staged"
 
 	// set_user_active
 	QualifierActive   = "active"
@@ -129,7 +147,7 @@ var ValidProcessActions = setOf(
 	ProcessSubmitPR, ProcessUpdatePR, ProcessRejectPR,
 	ProcessAddApprover, ProcessRemoveApprover, ProcessPRApproval, ProcessRerequestPRApproval,
 	ProcessTeamLeadApproval,
-	ProcessAssignPR, ProcessUpdatePRCollaborators,
+	ProcessAssignPR, ProcessUpdatePRCollaborators, ProcessUpdatePRPriority,
 	ProcessCreateRecommendation, ProcessUpdateRecommendation, ProcessDeleteRecommendation,
 	ProcessRecApprovalLegal, ProcessRecApprovalSecurity, ProcessRecApprovalCompliance,
 	ProcessRecApprovalBudget,
@@ -138,6 +156,8 @@ var ValidProcessActions = setOf(
 	ProcessAssignRecLegal, ProcessAssignRecSecurity, ProcessAssignRecCompliance,
 	ProcessRaiseRFI, ProcessClearRFI,
 	ProcessAddQuotation, ProcessUpdateQuotation, ProcessDeleteQuotation, ProcessSelectQuotation,
+	ProcessExtractQuotation,
+	ProcessCreateQuotationComparison, ProcessUpdateQuotationComparison, ProcessDeleteQuotationComparison,
 	ProcessAddDraftContract, ProcessUpdateContract, ProcessDeleteContract, ProcessSignContract,
 	ProcessCreateGRN, ProcessUpdateGRN, ProcessDeleteGRN,
 	ProcessCreateInvoice, ProcessUpdateInvoice, ProcessDeleteInvoice, ProcessInvoiceStatus,

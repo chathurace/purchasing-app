@@ -23,6 +23,7 @@ import (
 	"github.com/cs/purchasing-app/internal/crypto"
 	"github.com/cs/purchasing-app/internal/directory"
 	"github.com/cs/purchasing-app/internal/email"
+	"github.com/cs/purchasing-app/internal/extraction"
 	"github.com/cs/purchasing-app/internal/handler"
 	"github.com/cs/purchasing-app/internal/middleware"
 	"github.com/cs/purchasing-app/internal/repository"
@@ -121,6 +122,20 @@ func main() {
 	)
 	log.Info().Bool("scim_enabled", dirSvc.Enabled()).Msg("user directory initialized")
 
+	// Quotation PDF extraction (Claude). Disabled unless anthropic.enabled is set,
+	// in which case the endpoints 503 and the UI hides the feature.
+	extractSvc := extraction.New(extraction.Config{
+		Enabled:     cfg.Anthropic.Enabled,
+		APIKey:      cfg.Anthropic.APIKey,
+		Model:       cfg.Anthropic.Model,
+		MaxPDFBytes: cfg.Anthropic.MaxPDFBytes,
+		Timeout:     time.Duration(cfg.Anthropic.TimeoutSeconds) * time.Second,
+	}, log)
+	log.Info().
+		Bool("extraction_enabled", extractSvc.Enabled()).
+		Str("model", extractSvc.Model()).
+		Msg("quotation extraction initialized")
+
 	router := handler.NewRouter(handler.Deps{
 		Repo:           repo,
 		Storage:        storageMgr,
@@ -131,6 +146,7 @@ func main() {
 		GDriveAppID:    cfg.Storage.GDrive.OAuth.AppID,
 		Auth:           auth,
 		Directory:      dirSvc,
+		Extraction:     extractSvc,
 		Mailer:         mailer,
 		AppBaseURL:     cfg.Email.AppBaseURL,
 		AllowedOrigins: cfg.CORS.AllowedOrigins,

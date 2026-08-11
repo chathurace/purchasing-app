@@ -20,16 +20,21 @@ export const selectQuotation = (id: number) =>
 export const deleteQuotation = (id: number) =>
   apiFetch<void>(`/api/v1/quotations/${id}`, { method: "DELETE" });
 
-// --- primary quotation PDF (single; replaceable + removable) ---
+// --- primary quotation PDFs: initial + final (each replaceable + removable) ---
 
-export const uploadQuotationPDF = (id: number, file: File) => {
+export type QuotationPdfSlot = "initial" | "final";
+
+const pdfPath = (id: number, slot: QuotationPdfSlot) =>
+  `/api/v1/quotations/${id}/${slot}-quotation-document`;
+
+export const uploadQuotationPDF = (id: number, slot: QuotationPdfSlot, file: File) => {
   const fd = new FormData();
   fd.append("file", file);
-  return apiFetch<Quotation>(`/api/v1/quotations/${id}/quotation-document`, { method: "POST", body: fd });
+  return apiFetch<Quotation>(pdfPath(id, slot), { method: "POST", body: fd });
 };
 
-export const deleteQuotationPDF = (id: number) =>
-  apiFetch<Quotation>(`/api/v1/quotations/${id}/quotation-document`, { method: "DELETE" });
+export const deleteQuotationPDF = (id: number, slot: QuotationPdfSlot) =>
+  apiFetch<Quotation>(pdfPath(id, slot), { method: "DELETE" });
 
 // --- other supporting documents (zero or more) ---
 

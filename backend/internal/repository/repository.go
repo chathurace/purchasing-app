@@ -458,14 +458,19 @@ type PurchaseRequest struct {
 	Collaborators []UserSummary `json:"collaborators,omitempty"`
 	// MyCanAssign / MyCanManageCollaborators / MyCanWork are per-caller display
 	// flags (detail reads only), set by the handler — see the flag helpers there.
-	MyCanAssign              bool       `json:"my_can_assign"`
-	MyCanManageCollaborators bool       `json:"my_can_manage_collaborators"`
-	MyCanWork                bool       `json:"my_can_work"`
-	CreatedAt                time.Time  `json:"created_at"`
-	UpdatedAt                time.Time  `json:"updated_at"`
-	Items                    []Item     `json:"items"`
-	Links                    []Link     `json:"links"`
-	Documents                []Document `json:"documents"`
+	MyCanAssign              bool `json:"my_can_assign"`
+	MyCanManageCollaborators bool `json:"my_can_manage_collaborators"`
+	MyCanWork                bool `json:"my_can_work"`
+	// Priority is the procurement triage level (P1 highest .. P3 default). Set by
+	// procurement from the assignment card; read everywhere (list + detail).
+	// MyCanSetPriority is the matching per-caller display flag (detail reads only).
+	Priority         string     `json:"priority"`
+	MyCanSetPriority bool       `json:"my_can_set_priority"`
+	CreatedAt        time.Time  `json:"created_at"`
+	UpdatedAt        time.Time  `json:"updated_at"`
+	Items            []Item     `json:"items"`
+	Links            []Link     `json:"links"`
+	Documents        []Document `json:"documents"`
 	// Requester is populated on detail/list reads for display.
 	Requester *UserSummary `json:"requester,omitempty"`
 	// Approvals is the full per-approver decision list (detail reads only).
@@ -792,7 +797,7 @@ func (r *Repository) ListPurchaseRequests(ctx context.Context, callerID int64, c
 		       pr.rejection_reason, pr.created_at, pr.updated_at, u.email, u.name,
 		       pr.team, pr.entity, pr.category, pr.estimated_value, pr.currency,
 		       pr.team_lead_email, pr.team_lead_status,
-		       pr.assignee_id, au.email, au.name,
+		       pr.assignee_id, au.email, au.name, pr.priority,
 		       (SELECT count(*) FROM pr_approvals a WHERE a.purchase_request_id = pr.id) AS approvals_total,
 		       (SELECT count(*) FROM pr_approvals a WHERE a.purchase_request_id = pr.id AND a.status = 'approved') AS approvals_approved,
 		       COALESCE(
@@ -875,7 +880,7 @@ func (r *Repository) ListPurchaseRequests(ctx context.Context, callerID int64, c
 			&pr.Status, &pr.RejectionReason, &pr.CreatedAt, &pr.UpdatedAt, &email, &name,
 			&pr.Team, &pr.Entity, &pr.Category, &pr.EstimatedValue, &pr.Currency,
 			&pr.TeamLeadEmail, &pr.TeamLeadStatus,
-			&assigneeID, &assigneeEmail, &assigneeName,
+			&assigneeID, &assigneeEmail, &assigneeName, &pr.Priority,
 			&pr.ApprovalsTotal, &pr.ApprovalsApproved, &myStatus, &myState); err != nil {
 			return nil, err
 		}
@@ -1032,6 +1037,26 @@ func (r *Repository) SetPRAssignee(ctx context.Context, prID int64, assigneeID *
 	return nil
 }
 
+// SetPRPriority sets the PR's procurement triage priority (P1/P2/P3). The caller
+// (handler) validates the value and the actor's role; an unknown PR is
+// ErrInvalidState.
+func (r *Repository) SetPRPriority(ctx context.Context, prID int64, priority string) error {
+	if !model.ValidPRPriority(priority) {
+		return ErrInvalidState
+	}
+	ct, err := r.pool.Exec(ctx, `
+		UPDATE purchase_requests
+		SET priority = $2, updated_at = NOW()
+		WHERE id = $1`, prID, priority)
+	if err != nil {
+		return err
+	}
+	if ct.RowsAffected() == 0 {
+		return ErrInvalidState
+	}
+	return nil
+}
+
 // AddPRCollaborator adds a procurement user as a collaborator on the PR (idempotent).
 // The user must be able to work on procurement (see CanBeAssignedPR), else
 // ErrNotProcurementUser.
@@ -1119,7 +1144,7 @@ func (r *Repository) GetPurchaseRequest(ctx context.Context, id int64) (*Purchas
 		       pr.budget_approver_name, pr.budget_approver_email, pr.details,
 		       pr.team_lead_email, pr.team_lead_status, pr.team_lead_notes,
 		       pr.team_lead_decided_at, pr.team_lead_decided_by,
-		       pr.assignee_id, pr.assigned_at, au.email, au.name
+		       pr.assignee_id, pr.assigned_at, au.email, au.name, pr.priority
 		FROM purchase_requests pr
 		JOIN users u ON u.id = pr.requester_id
 		LEFT JOIN users au ON au.id = pr.assignee_id
@@ -1128,7 +1153,7 @@ func (r *Repository) GetPurchaseRequest(ctx context.Context, id int64) (*Purchas
 		&pr.Team, &pr.Entity, &pr.Category, &pr.EstimatedValue, &pr.Currency,
 		&pr.BudgetApproverName, &pr.BudgetApproverEmail, &details,
 		&pr.TeamLeadEmail, &pr.TeamLeadStatus, &pr.TeamLeadNotes, &tlDecidedAt, &tlDecidedBy,
-		&assigneeID, &assignedAt, &assigneeEmail, &assigneeName)
+		&assigneeID, &assignedAt, &assigneeEmail, &assigneeName, &pr.Priority)
 	if err != nil {
 		return nil, err
 	}

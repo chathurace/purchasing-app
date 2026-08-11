@@ -14,7 +14,7 @@ import { useContract } from "../hooks/useContracts";
 import { useProcurementAccess } from "../hooks/useProcurementAccess";
 import { EntityStatusBadge } from "../components/EntityStatusBadge";
 import { ContractContent } from "../components/ContractContent";
-import { RelatedDocuments } from "../components/RelatedDocuments";
+import { RelatedEntities } from "../components/RelatedEntities";
 import { ChainStepper } from "../components/ChainStepper";
 import { DirectParentCard } from "../components/CaseSections";
 import { ContractFulfillment } from "../components/ContractFulfillment";
@@ -35,19 +35,19 @@ export function ContractDetailPage() {
 
   if (isLoading)
     return (
-      <Box sx={{ maxWidth: 800, mx: "auto", p: { xs: 2, md: 4 } }}>
+      <Box sx={{ maxWidth: 1200, mx: "auto", p: { xs: 2, md: 4 } }}>
         <CircularProgress size={24} />
       </Box>
     );
   if (error || !c)
     return (
-      <Box sx={{ maxWidth: 800, mx: "auto", p: { xs: 2, md: 4 } }}>
+      <Box sx={{ maxWidth: 1200, mx: "auto", p: { xs: 2, md: 4 } }}>
         <Alert severity="error">Failed to load contract.</Alert>
       </Box>
     );
 
   return (
-    <Box sx={{ maxWidth: 800, mx: "auto", p: { xs: 2, md: 4 } }}>
+    <Box sx={{ maxWidth: 1200, mx: "auto", p: { xs: 2, md: 4 } }}>
       <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 2 }}>
         <MuiLink component={Link} to="/contracts" variant="body2">
           Contracts
@@ -95,7 +95,7 @@ export function ContractDetailPage() {
           get a read-only view of the contract itself without fulfillment. */}
       {procurement && <ContractFulfillment contract={c} />}
 
-      <RelatedDocuments prId={c.purchase_request_id} current={{ kind: "contract", id: c.id }} />
+      <RelatedEntities prId={c.purchase_request_id} current={{ kind: "contract", id: c.id }} />
     </Box>
   );
 }

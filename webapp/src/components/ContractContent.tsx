@@ -21,6 +21,7 @@ import {
   uploadSignedDocument,
 } from "../api/contracts";
 import type { Contract, Document } from "../types/api";
+import { useConfirmAction } from "./ConfirmDialog";
 
 // ContractContent renders a contract's document model: the draft-contract PDFs
 // (one or more, each with its own notes) and the single signed-contract PDF
@@ -65,6 +66,8 @@ function DocRow({
   doc,
   canEdit,
   removeLabel,
+  confirmTitle,
+  confirmMessage,
   onRemove,
   removing,
   invalidate,
@@ -73,6 +76,10 @@ function DocRow({
   doc: Document;
   canEdit: boolean;
   removeLabel: string;
+  // Each caller words its own guard — removing a draft and un-signing a contract
+  // are not the same act.
+  confirmTitle: string;
+  confirmMessage: React.ReactNode;
   onRemove: () => void;
   removing: boolean;
   invalidate: () => void;
@@ -80,6 +87,7 @@ function DocRow({
   const [editing, setEditing] = useState(false);
   const [notes, setNotes] = useState(doc.notes);
   const [error, setError] = useState<string | null>(null);
+  const [confirmNode, confirmRemove] = useConfirmAction();
 
   const saveNotes = useMutation({
     mutationFn: () => updateContractDocumentNotes(contractId, doc.id, notes.trim()),
@@ -121,7 +129,14 @@ function DocRow({
                 size="small"
                 color="error"
                 disabled={removing}
-                onClick={onRemove}
+                onClick={() =>
+                  confirmRemove({
+                    title: confirmTitle,
+                    message: confirmMessage,
+                    confirmLabel: removeLabel,
+                    onConfirm: onRemove,
+                  })
+                }
               >
                 {removeLabel}
               </Button>
@@ -166,6 +181,7 @@ function DocRow({
           )
         )}
       </CardContent>
+      {confirmNode}
     </Card>
   );
 }
@@ -280,6 +296,13 @@ function DraftContractsSection({
           doc={d}
           canEdit={canEdit}
           removeLabel="Remove"
+          confirmTitle="Remove draft contract"
+          confirmMessage={
+            <>
+              Remove <strong>{d.filename}</strong> and its notes? The file is deleted and cannot be
+              recovered.
+            </>
+          }
           removing={removeMutation.isPending}
           onRemove={() => removeMutation.mutate(d.id)}
           invalidate={invalidate}
@@ -323,6 +346,13 @@ function SignedContractSection({
           doc={signed}
           canEdit={canEdit}
           removeLabel="Remove"
+          confirmTitle="Remove signed contract"
+          confirmMessage={
+            <>
+              Remove <strong>{signed.filename}</strong>? The file is deleted and the contract goes
+              back to <strong>draft</strong> until a signed PDF is attached again.
+            </>
+          }
           removing={removeMutation.isPending}
           onRemove={() => removeMutation.mutate()}
           invalidate={invalidate}

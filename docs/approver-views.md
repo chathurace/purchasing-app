@@ -56,5 +56,5 @@ approve. Vendors/Cost centers/Settings keep their prior `procurement_admin`/`adm
 - `usePurchaseRequests` sends `scope=mine` for non-procurement; `useApprovalRequests` sends
   `scope=approvals`. New `pages/ApprovalsListPage.tsx` at `/approvals`.
 - Quotation/contract **detail** pages gate mutation controls on `useProcurementAccess()` so approvers see
-  read-only; the related-case components (`RelatedDocuments`, `CaseSections`, `ChainStepper`,
+  read-only; the related-case components (`RelatedEntities`, `CaseSections`, `ChainStepper`,
   `ContractFulfillment`) already fetch only for procurement and no-op otherwise.

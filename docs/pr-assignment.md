@@ -13,6 +13,8 @@ by the assignee/admin).
 Sequence: *team lead approves → procurement assigns → quotations / recommendation*. Assignment is
 only possible after team-lead approval, because procurement can't see the PR before then.
 
+The same card also carries the PR's **priority** — see [Priority](#priority) below.
+
 ## Data model — migration `044_pr_assignment.sql`
 
 - `purchase_requests.assignee_id` (FK `users`, `ON DELETE SET NULL`), `assigned_at`, `assigned_by`.
@@ -21,6 +23,10 @@ only possible after team-lead approval, because procurement can't see the PR bef
 
 The columns exist (empty) from PR creation and are populated later by procurement — the requester
 never picks them.
+
+Migration `051_pr_priority.sql` adds `purchase_requests.priority` — `TEXT NOT NULL DEFAULT 'P3'`
+with `CHECK (priority IN ('P1','P2','P3'))`, so every PR (including every pre-existing row) starts
+at P3.
 
 ## Rules
 
@@ -81,7 +87,38 @@ assignee dropdown lists the Procurement team plus the current user when they're 
 - **List page**: an **Assignee** column — "Assigned to you" (indigo), the assignee's name, or an
   amber "Unassigned" badge for a team-lead-approved-but-unassigned PR.
 
+## Priority
+
+Procurement triages every PR as **P1 (red, high)**, **P2 (yellow, medium)** or **P3 (green, normal —
+the default)**. It's a queue-wide signal, not an ownership one, so the rules are simpler than
+assignment's:
+
+| Action | Who |
+| --- | --- |
+| Change the priority | any `procurement` / `procurement_admin` user (and `admin`, as everywhere) |
+| See the priority | anyone who can see the PR |
+
+Unlike procurement *work*, setting the priority does **not** require the PR to be assigned — it's
+how an unassigned PR gets triaged in the first place. It does require team-lead approval, because
+procurement can't see the PR before then (the endpoint 409s, matching `SetAssignee`).
+
+- **Backend**: `repository.SetPRPriority` (re-validates against `model.ValidPRPriority`);
+  `handler.SetPriority` at `PUT /purchase-requests/{id}/priority`, body `{priority}` — 403 for a
+  non-procurement caller, 409 before team-lead approval, 400 on an unknown value. `priority` rides
+  along on both the list and detail selects; the per-caller flag `my_can_set_priority` is set in
+  `attachAssignmentActionable` (independent of whether the PR is assigned). Process event
+  `update_pr_priority`, with the new priority as the **qualifier** (`P1`/`P2`/`P3`).
+- **Frontend**: `PRPriority` + the ordered `PR_PRIORITIES` option list (value/label/colour) and the
+  `prPriority`/`prPriorityColor` helpers in `types/api.ts`; `setPRPriority` in
+  `api/purchaseRequests.ts`. The `AssignmentCard` shows a coloured `<select>` when
+  `my_can_set_priority`, otherwise a read-only chip. The list page shows a **Priority** column
+  (coloured `P1`/`P2`/`P3` chip) between Title and Status.
+
 ## Tests
+
+`assignment_integration_test.go` (`TestSetPriority`) covers the priority endpoint: a new PR defaults
+to P3, procurement raises it to P1 (unassigned), the requester gets 403, an unknown value 400, and a
+pre-team-lead-approval attempt 409.
 
 `internal/handler/team_lead_integration_test.go` (`TestTeamLeadApprovalFlow`) drives the real
 handlers: unassigned → quotation create 409; self-assign 200 (+ an `assign_pr` process event);

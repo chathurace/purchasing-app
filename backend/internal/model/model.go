@@ -41,6 +41,23 @@ func IsTeamLeadApproved(status string) bool {
 	return status == TeamLeadApproved
 }
 
+// Purchase-request priority, set by procurement during triage (the assignment
+// card). P3 is the default every PR is created with; the requester never picks
+// one. Ordered highest-first, matching the DB CHECK on purchase_requests.priority.
+const (
+	PriorityP1 = "P1"
+	PriorityP2 = "P2"
+	PriorityP3 = "P3"
+)
+
+// PRPriorityDefault is the priority a PR carries until procurement changes it.
+const PRPriorityDefault = PriorityP3
+
+// ValidPRPriority reports whether s is a known priority.
+func ValidPRPriority(s string) bool {
+	return s == PriorityP1 || s == PriorityP2 || s == PriorityP3
+}
+
 // Quotation statuses.
 const (
 	QuoReceived        = "received"
@@ -178,6 +195,11 @@ const (
 	OwnerInvoice               = "invoice"
 	OwnerRecommendationComment = "pr_recommendation_comment"
 	OwnerRecommendationRFI     = "pr_recommendation_rfi"
+	// OwnerQuotationExtraction holds a quotation PDF uploaded for extraction
+	// *before* its quotation exists. On create the document is re-owned to the new
+	// quotation and adopted into its initial-PDF slot, so this owner type is a
+	// staging state rather than a resting place.
+	OwnerQuotationExtraction = "quotation_extraction"
 )
 
 // Roles maintained within the app.
