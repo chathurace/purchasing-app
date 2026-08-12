@@ -18,6 +18,7 @@ import { useCanManageVendors } from "../hooks/useCanManageVendors";
 import { updateVendor } from "../api/vendors";
 import { ApiError } from "../api/client";
 import { VendorFields } from "../components/VendorFields";
+import { useConfirmAction } from "../components/ConfirmDialog";
 import { vendorRef, type Vendor, type VendorInput } from "../types/api";
 
 function toInput(v: Vendor): VendorInput {
@@ -49,6 +50,8 @@ export function VendorDetailPage() {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<VendorInput | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  // Deactivation is how a vendor is retired (they can't be deleted) — confirm it.
+  const [confirmNode, confirmAction] = useConfirmAction();
 
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ["vendors"] });
@@ -105,7 +108,7 @@ export function VendorDetailPage() {
   };
 
   return (
-    <Box sx={{ maxWidth: 800, mx: "auto", p: { xs: 2, md: 4 } }}>
+    <Box sx={{ maxWidth: 1200, mx: "auto", p: { xs: 2, md: 4 } }}>
       <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 2 }}>
         <MuiLink component={Link} to="/vendors" variant="body2">
           Vendors
@@ -148,7 +151,25 @@ export function VendorDetailPage() {
             <Button
               variant="outlined"
               color="inherit"
-              onClick={() => toggleActive.mutate()}
+              onClick={() => {
+                // Reactivating is additive — only guard the removing direction.
+                if (!vendor.is_active) {
+                  toggleActive.mutate();
+                  return;
+                }
+                confirmAction({
+                  title: "Deactivate vendor",
+                  message: (
+                    <>
+                      Deactivate <strong>{vendor.name}</strong>? They stop being offered when adding
+                      quotations or contracts. Existing records keep the vendor, and you can
+                      reactivate them later.
+                    </>
+                  ),
+                  confirmLabel: "Deactivate",
+                  onConfirm: () => toggleActive.mutate(),
+                });
+              }}
               disabled={toggleActive.isPending}
             >
               {vendor.is_active ? "Deactivate" : "Reactivate"}
@@ -249,6 +270,7 @@ export function VendorDetailPage() {
           </Typography>
         </CardContent>
       </Card>
+      {confirmNode}
     </Box>
   );
 }

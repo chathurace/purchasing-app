@@ -22,6 +22,7 @@ import { useCanManageBusinessUnits } from "../hooks/useCanManageBusinessUnits";
 import { updateBusinessUnit } from "../api/businessUnits";
 import { ApiError } from "../api/client";
 import { BusinessUnitFields } from "../components/BusinessUnitFields";
+import { useConfirmAction } from "../components/ConfirmDialog";
 import {
   formatMoney,
   type BusinessUnit,
@@ -50,6 +51,8 @@ export function BusinessUnitDetailPage() {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<BusinessUnitInput | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  // Deactivation is how a unit is retired (it can't be deleted) — confirm it.
+  const [confirmNode, confirmAction] = useConfirmAction();
 
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ["business_units"] });
@@ -110,7 +113,7 @@ export function BusinessUnitDetailPage() {
   };
 
   return (
-    <Box sx={{ maxWidth: 800, mx: "auto", p: { xs: 2, md: 4 } }}>
+    <Box sx={{ maxWidth: 1200, mx: "auto", p: { xs: 2, md: 4 } }}>
       <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 2 }}>
         <MuiLink component={Link} to="/business-units" variant="body2">
           Business units
@@ -150,7 +153,25 @@ export function BusinessUnitDetailPage() {
             <Button
               variant="outlined"
               color="inherit"
-              onClick={() => toggleActive.mutate()}
+              onClick={() => {
+                // Reactivating is additive — only guard the removing direction.
+                if (!businessUnit.is_active) {
+                  toggleActive.mutate();
+                  return;
+                }
+                confirmAction({
+                  title: "Deactivate business unit",
+                  message: (
+                    <>
+                      Deactivate <strong>{businessUnit.name}</strong>? It stops being offered on the
+                      requisition form, so no new request can pick it or its approvers. Existing
+                      requests are unaffected, and you can reactivate it later.
+                    </>
+                  ),
+                  confirmLabel: "Deactivate",
+                  onConfirm: () => toggleActive.mutate(),
+                });
+              }}
               disabled={toggleActive.isPending}
             >
               {businessUnit.is_active ? "Deactivate" : "Reactivate"}
@@ -298,6 +319,7 @@ export function BusinessUnitDetailPage() {
           </Typography>
         </CardContent>
       </Card>
+      {confirmNode}
     </Box>
   );
 }

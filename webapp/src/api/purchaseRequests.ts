@@ -1,6 +1,7 @@
 import { apiFetch, downloadFile } from "./client";
 import type {
   Document,
+  PRPriority,
   PurchaseRequest,
   PurchaseRequestInput,
   RelatedDocuments,
@@ -90,6 +91,13 @@ export const setPRAssignee = (id: number, assigneeId: number | null) =>
   apiFetch<PurchaseRequest>(`/api/v1/purchase-requests/${id}/assignee`, {
     method: "PUT",
     body: { assignee_id: assigneeId },
+  });
+
+// Sets the PR's procurement triage priority (P1/P2/P3). Any procurement user.
+export const setPRPriority = (id: number, priority: PRPriority) =>
+  apiFetch<PurchaseRequest>(`/api/v1/purchase-requests/${id}/priority`, {
+    method: "PUT",
+    body: { priority },
   });
 
 export const addPRCollaborator = (id: number, userId: number) =>

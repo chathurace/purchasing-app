@@ -42,6 +42,19 @@ type Config struct {
 		PageSize           int      `yaml:"page_size"`            // SCIM page size; default 100
 	} `yaml:"scim"`
 
+	// Anthropic configures Claude-backed quotation PDF extraction (reading vendor
+	// / currency / total / line items out of an uploaded quotation). When disabled
+	// (the default) the extraction endpoints report unavailable and the UI hides
+	// the feature, so dev and CI run without an API key. The key is server-side
+	// only — it is never sent to the browser.
+	Anthropic struct {
+		Enabled        bool   `yaml:"enabled"`
+		APIKey         string `yaml:"api_key"`
+		Model          string `yaml:"model"`           // default claude-opus-5
+		MaxPDFBytes    int64  `yaml:"max_pdf_bytes"`   // default 20MB
+		TimeoutSeconds int    `yaml:"timeout_seconds"` // per-extraction cap; default 180
+	} `yaml:"anthropic"`
+
 	Storage struct {
 		Backend   string `yaml:"backend"` // "local" (default) or "gdrive"
 		FilesRoot string `yaml:"files_root"`
@@ -134,6 +147,15 @@ func Load(path string) (*Config, error) {
 	if cfg.SCIM.PageSize == 0 {
 		cfg.SCIM.PageSize = 100
 	}
+	if cfg.Anthropic.Model == "" {
+		cfg.Anthropic.Model = "claude-opus-5"
+	}
+	if cfg.Anthropic.MaxPDFBytes == 0 {
+		cfg.Anthropic.MaxPDFBytes = 20 << 20
+	}
+	if cfg.Anthropic.TimeoutSeconds == 0 {
+		cfg.Anthropic.TimeoutSeconds = 180
+	}
 	if cfg.Email.AppBaseURL == "" && len(cfg.CORS.AllowedOrigins) > 0 {
 		cfg.Email.AppBaseURL = cfg.CORS.AllowedOrigins[0]
 	}
@@ -158,6 +180,9 @@ func Load(path string) (*Config, error) {
 		if cfg.SCIM.ClientID == "" || cfg.SCIM.ClientSecret == "" {
 			return nil, fmt.Errorf("scim.client_id and scim.client_secret are required when scim.enabled is true")
 		}
+	}
+	if cfg.Anthropic.Enabled && cfg.Anthropic.APIKey == "" {
+		return nil, fmt.Errorf("anthropic.api_key is required when anthropic.enabled is true")
 	}
 	switch cfg.Storage.Backend {
 	case "local":

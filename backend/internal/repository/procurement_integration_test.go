@@ -111,9 +111,10 @@ func TestProcurementLifecycle(t *testing.T) {
 	}
 }
 
-// TestQuotationDocuments asserts the primary quotation PDF is partitioned out of
-// the other supporting documents, and that Set/Clear behave (replace returns the
-// previous id; clear removes the FK + the document row).
+// TestQuotationDocuments asserts the two primary quotation PDFs (initial/final)
+// are partitioned out of the other supporting documents, that the slots are
+// independent, and that Set/Clear behave (replace returns the previous id; clear
+// removes the FK + the document row).
 func TestQuotationDocuments(t *testing.T) {
 	repo, ctx := newTestRepo(t)
 
@@ -141,55 +142,90 @@ func TestQuotationDocuments(t *testing.T) {
 		}
 		return d.ID
 	}
-	primary := addDoc("quotation.pdf", "p/quotation.pdf")
+	initial := addDoc("quotation.pdf", "p/quotation.pdf")
+	final := addDoc("quotation-final.pdf", "p/quotation-final.pdf")
 	other := addDoc("spec.pdf", "p/spec.pdf")
 
-	// Before designating a primary, both are "other" documents.
+	// Before designating the primaries, all three are "other" documents.
 	got, err := repo.GetQuotation(ctx, quo.ID)
 	if err != nil {
 		t.Fatalf("get quotation: %v", err)
 	}
-	if got.QuotationDocument != nil || len(got.Documents) != 2 {
-		t.Fatalf("before set: primary=%v documents=%d, want nil primary + 2 others", got.QuotationDocument, len(got.Documents))
+	if got.InitialQuotationDocument != nil || got.FinalQuotationDocument != nil || len(got.Documents) != 3 {
+		t.Fatalf("before set: initial=%v final=%v documents=%d, want nil primaries + 3 others",
+			got.InitialQuotationDocument, got.FinalQuotationDocument, len(got.Documents))
 	}
 
-	// Designate the primary; it is pulled out of Documents.
-	if prev, err := repo.SetQuotationDocument(ctx, quo.ID, primary); err != nil || prev != nil {
-		t.Fatalf("set primary = (%v, %v), want (nil, nil)", prev, err)
+	// Designate the initial PDF; it is pulled out of Documents. The final slot is
+	// independent and stays empty (a quotation is usable without it).
+	if prev, err := repo.SetQuotationDocument(ctx, quo.ID, repository.QuotationDocInitial, initial); err != nil || prev != nil {
+		t.Fatalf("set initial = (%v, %v), want (nil, nil)", prev, err)
 	}
 	got, _ = repo.GetQuotation(ctx, quo.ID)
-	if got.QuotationDocument == nil || got.QuotationDocument.ID != primary {
-		t.Fatalf("primary doc = %+v, want id %d", got.QuotationDocument, primary)
+	if got.InitialQuotationDocument == nil || got.InitialQuotationDocument.ID != initial {
+		t.Fatalf("initial doc = %+v, want id %d", got.InitialQuotationDocument, initial)
+	}
+	if got.FinalQuotationDocument != nil {
+		t.Fatalf("final doc = %+v, want nil", got.FinalQuotationDocument)
+	}
+	if len(got.Documents) != 2 {
+		t.Fatalf("other documents = %+v, want 2", got.Documents)
+	}
+
+	// Designate the final PDF; both primaries now sit outside Documents.
+	if prev, err := repo.SetQuotationDocument(ctx, quo.ID, repository.QuotationDocFinal, final); err != nil || prev != nil {
+		t.Fatalf("set final = (%v, %v), want (nil, nil)", prev, err)
+	}
+	got, _ = repo.GetQuotation(ctx, quo.ID)
+	if got.FinalQuotationDocument == nil || got.FinalQuotationDocument.ID != final {
+		t.Fatalf("final doc = %+v, want id %d", got.FinalQuotationDocument, final)
 	}
 	if len(got.Documents) != 1 || got.Documents[0].ID != other {
 		t.Fatalf("other documents = %+v, want [%d]", got.Documents, other)
 	}
 
-	// Replacing the primary returns the previously attached id so the caller can
-	// clean up the old file/row (the handler does this — mirror it here).
-	replacement := addDoc("quotation-v2.pdf", "p/quotation-v2.pdf")
-	prev, err := repo.SetQuotationDocument(ctx, quo.ID, replacement)
-	if err != nil || prev == nil || *prev != primary {
-		t.Fatalf("replace primary = (%v, %v), want (%d, nil)", prev, err, primary)
+	// The summaries used by the PR-page cards carry both primaries.
+	summaries, err := repo.ListQuotations(ctx, &pr.ID)
+	if err != nil || len(summaries) != 1 {
+		t.Fatalf("list quotations = (%d rows, %v), want 1 row", len(summaries), err)
 	}
-	if err := repo.DeleteOwnedDocument(ctx, model.OwnerQuotation, quo.ID, *prev); err != nil {
-		t.Fatalf("delete replaced primary: %v", err)
+	if s := summaries[0]; s.InitialQuotationDocument == nil || s.InitialQuotationDocument.ID != initial ||
+		s.FinalQuotationDocument == nil || s.FinalQuotationDocument.ID != final {
+		t.Fatalf("summary primaries = (%+v, %+v), want ids (%d, %d)",
+			summaries[0].InitialQuotationDocument, summaries[0].FinalQuotationDocument, initial, final)
 	}
 
-	// Clearing removes the FK and deletes the document row.
-	if _, err := repo.ClearQuotationDocument(ctx, quo.ID); err != nil {
-		t.Fatalf("clear primary: %v", err)
+	// Replacing a primary returns the previously attached id so the caller can
+	// clean up the old file/row (the handler does this — mirror it here).
+	replacement := addDoc("quotation-v2.pdf", "p/quotation-v2.pdf")
+	prev, err := repo.SetQuotationDocument(ctx, quo.ID, repository.QuotationDocInitial, replacement)
+	if err != nil || prev == nil || *prev != initial {
+		t.Fatalf("replace initial = (%v, %v), want (%d, nil)", prev, err, initial)
+	}
+	if err := repo.DeleteOwnedDocument(ctx, model.OwnerQuotation, quo.ID, *prev); err != nil {
+		t.Fatalf("delete replaced initial: %v", err)
+	}
+
+	// Clearing removes the FK and deletes the document row — per slot.
+	if _, err := repo.ClearQuotationDocument(ctx, quo.ID, repository.QuotationDocInitial); err != nil {
+		t.Fatalf("clear initial: %v", err)
 	}
 	got, _ = repo.GetQuotation(ctx, quo.ID)
-	if got.QuotationDocument != nil || got.QuotationDocumentID != nil {
-		t.Fatalf("after clear: primary=%+v id=%v, want nil", got.QuotationDocument, got.QuotationDocumentID)
+	if got.InitialQuotationDocument != nil || got.InitialQuotationDocumentID != nil {
+		t.Fatalf("after clear: initial=%+v id=%v, want nil", got.InitialQuotationDocument, got.InitialQuotationDocumentID)
+	}
+	if got.FinalQuotationDocument == nil || got.FinalQuotationDocument.ID != final {
+		t.Fatalf("clearing the initial slot disturbed the final one: %+v", got.FinalQuotationDocument)
 	}
 	if len(got.Documents) != 1 || got.Documents[0].ID != other {
 		t.Fatalf("after clear, other documents = %+v, want [%d]", got.Documents, other)
 	}
 	// Clearing again (nothing set) is refused.
-	if _, err := repo.ClearQuotationDocument(ctx, quo.ID); err != repository.ErrInvalidState {
-		t.Fatalf("clear with no primary = %v, want ErrInvalidState", err)
+	if _, err := repo.ClearQuotationDocument(ctx, quo.ID, repository.QuotationDocInitial); err != repository.ErrInvalidState {
+		t.Fatalf("clear with no initial = %v, want ErrInvalidState", err)
+	}
+	if _, err := repo.ClearQuotationDocument(ctx, quo.ID, repository.QuotationDocFinal); err != nil {
+		t.Fatalf("clear final: %v", err)
 	}
 }
 
@@ -357,10 +393,10 @@ func TestBudgetApprovalChain(t *testing.T) {
 	// A named step approver is recognised as an approver of the PR (the budget-step
 	// branch of approvablePredicate), matched case-insensitively by email; an
 	// unrelated address is not.
-	if ok, err := repo.IsApproverForPR(ctx, pr.ID, 0, "FINANCE@example.com", false, false); err != nil || !ok {
+	if ok, err := repo.IsApproverForPR(ctx, pr.ID, 0, "FINANCE@example.com", nil); err != nil || !ok {
 		t.Fatalf("named step approver IsApproverForPR = %v (err %v), want true", ok, err)
 	}
-	if ok, _ := repo.IsApproverForPR(ctx, pr.ID, 0, "stranger@example.com", false, false); ok {
+	if ok, _ := repo.IsApproverForPR(ctx, pr.ID, 0, "stranger@example.com", nil); ok {
 		t.Fatal("unrelated email should not be an approver")
 	}
 

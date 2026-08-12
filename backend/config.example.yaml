@@ -34,6 +34,20 @@ scim:
   cache_ttl_seconds: 600       # directory refresh interval
   page_size: 100               # SCIM pagination count
 
+# Claude-backed quotation PDF extraction — reads vendor / currency / total /
+# validity / line items out of an uploaded quotation PDF and offers them as
+# editable suggestions on the PR page (nothing is saved without a procurement user
+# confirming). When enabled is false (the default), the endpoints report
+# unavailable and the UI hides the feature, so dev needs no API key. The key is
+# used server-side only and is never sent to the browser.
+# See docs/quotation-extraction.md.
+anthropic:
+  enabled: false
+  api_key: "<anthropic-api-key>"
+  model: "claude-opus-5"
+  max_pdf_bytes: 20971520      # 20MB; the API caps a request at 32MB
+  timeout_seconds: 180         # per-extraction cap
+
 storage:
   backend: "local"             # "local" (filesystem) or "gdrive" (Google Drive)
   files_root: "../files"       # local backend only; relative to the backend working dir

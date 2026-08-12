@@ -7,7 +7,8 @@ storage. No workflow engine.
 ## Stack
 
 - **Backend** (`backend/`): Go 1.25 · `go-chi/chi/v5` · `jackc/pgx/v5` (pgxpool) ·
-  `coreos/go-oidc/v3` (SSO) · `rs/zerolog`. Config from **`config.yaml`** (not env vars).
+  `coreos/go-oidc/v3` (SSO) · `anthropics/anthropic-sdk-go` (quotation PDF extraction) ·
+  `rs/zerolog`. Config from **`config.yaml`** (not env vars).
 - **Frontend** (`webapp/`): React 18 + TypeScript · Vite · React Router v6 · TanStack Query v5 ·
   `oidc-client-ts` · Tailwind CSS.
 - **DB**: local PostgreSQL, database `purchasing`.
@@ -16,8 +17,8 @@ storage. No workflow engine.
 
 ## Roles (maintained in-app, not from the SSO token)
 
-`staff`, `procurement`, `procurement_admin`, `admin`, plus `legal` / `security` (the legal/security approval
-cards on a PR's procurement recommendation; they also retain read access to contracts). New SSO
+`staff`, `procurement`, `procurement_admin`, `admin`, plus `legal` / `security` / `compliance` (the
+team approval cards on a PR's procurement recommendation; they also retain read access to contracts). New SSO
 users are auto-provisioned as `staff` on first login. The `bootstrap_admin.email` in `config.yaml` is
 granted `admin` on every login. Admins manage users from the **Users** page — see
 `docs/user-management.md`.
@@ -31,6 +32,16 @@ granted `admin` on every login. Admins manage users from the **Users** page — 
   `psql -h localhost -d purchasing -f <file>`.
 - **Config**: `backend/config.yaml` is gitignored; `config.example.yaml` is the committed template.
 - **Local Postgres only** for dev. DB: `postgres://chathura@localhost:5432/purchasing?sslmode=disable`.
+- **Remove/delete guard**: no destructive control fires straight from a click. Every remove/delete —
+  and every *deactivate*, which is how vendors/business units/users/config options are retired since
+  they can't be deleted — goes through the shared modal: `useConfirmAction()` in
+  `components/ConfirmDialog.tsx` returns `[confirmNode, ask]`; render `confirmNode` in the component
+  and call `ask({title, message, confirmLabel, onConfirm})` from the button (`danger` defaults to
+  true, so the confirm button is red). Name the thing being destroyed in the message and say what
+  else goes with it (child rows, files, a status rewind). Guard only the destructive direction —
+  reactivate/add needs no modal — and *don't* guard form-local row removals (a draft approver chip, a
+  line item) that Cancel already undoes. `window.confirm` is not used anywhere; the reversible
+  reject/regenerate flows use `ConfirmDialog` directly since they track `busy`.
 
 ## Quick start
 
@@ -84,15 +95,27 @@ Whenever test data is added by claude, clean up all those test data after testin
   `docs/contracts.md` (as-built contract model). The procurement workflow up to contract signing:
   vendors, quotations (with line items), and contracts. **RFQs were removed** (migration `021`): a PR
   now has zero or more quotations attached **directly** (`quotations.purchase_request_id`), and
-  procurement users associate a quotation inline on the PR page (vendor + optional description + a PDF)
-  without leaving it. The quotation detail page still carries the richer fields (line items, total,
-  currency, valid-until). A quotation has a **single primary "quotation PDF"** plus **zero or more
-  other documents** (migration `036`, `quotations.quotation_document_id` FK → `documents`, mirroring
-  `contracts.signed_document_id`): the primary is pulled out of the doc list on detail reads
-  (`quotation_document` vs `documents`), managed at `.../quotations/{id}/quotation-document`
-  (upload replaces; delete removes) while other docs use `.../quotations/{id}/documents`. On the PR
-  page each quotation is an **expandable row** (basic info + a link to download the quotation PDF and
-  any other docs; lazily fetched via `GetQuotation`). Selecting a quotation advances the PR to `vendor_selected`; the contract
+  procurement users associate a quotation inline on the PR page (vendor + optional description + the
+  initial quotation PDF) without leaving it. The quotation detail page still carries the richer fields
+  (line items, total, currency, valid-until). A quotation has **two primary PDFs — an "initial
+  quotation" and a "final quotation"** — plus **zero or more other documents** (migrations `036` +
+  `048`, `quotations.initial_quotation_document_id`/`final_quotation_document_id` FKs → `documents`,
+  mirroring `contracts.signed_document_id`): both primaries are pulled out of the doc list on reads
+  (`initial_quotation_document`/`final_quotation_document` vs `documents`) and are each managed at
+  `.../quotations/{id}/{initial,final}-quotation-document` (upload replaces; delete removes — repo
+  `SetQuotationDocument`/`ClearQuotationDocument` take a `QuotationDocSlot`), while other docs use
+  `.../quotations/{id}/documents`. **Only the initial** PDF can be attached while creating a
+  quotation; the **final** one is uploaded afterwards from the quotation's card, is optional, and
+  **never gates selecting** the quotation for the recommendation. On the PR page each quotation is a
+  **card** (`QuotationCard`) showing vendor, description and both PDF slots inline — each slot with an
+  Upload/Replace + Remove control (`QuotationPdfSlotRow`) **plus that PDF's own extracted
+  total/validity/line items** (see the extraction entry below). The card-level "More details"
+  expander (and its lazy `GetQuotation` fetch) **was removed**: the initial and final PDFs
+  legitimately disagree, so one card-level summary could only ever show one of them; the card
+  header now links to `/quotations/{id}` for the stored record and any other documents. The two
+  primaries ride along on
+  the *summary* reads (`quotationSummarySelect` LEFT JOINs them) so the cards need no detail fetch.
+  Selecting a quotation advances the PR to `vendor_selected`; the contract
   itself is created and managed from the recommendation's **contract card** (below). **Contract
   review/approval was removed** (migration `032`): a contract is simply `draft` until its **signed
   PDF** is attached, then `signed` — approvals live only on the PR (the recommendation cards). A
@@ -119,16 +142,21 @@ Whenever test data is added by claude, clean up all those test data after testin
 - **Procurement recommendation** — migration `022`; backend in
   `repository/recommendations.go` + `handler/recommendations.go`. Once a PR has ≥1 quotation, procurement
   adds a **single** recommendation (vendor — restricted to a quoted vendor — + description + the
-  required approvals: budget owner / legal / security, budget default-checked) inline on the PR page.
+  required approvals: budget owner / legal / security / compliance, budget default-checked) inline on
+  the PR page.
   Each required approval is an **approval card** with an approve toggle and a comment thread (text +
-  doc attachments, owner type `pr_recommendation_comment`). Card actors: legal→`legal` role,
-  security→`security` role, budget→the PR's **named budget approver** (the person the requester picked
+  doc attachments, owner type `pr_recommendation_comment`). Card actors: each **team card** maps to its
+  role via `model.RecTeamApprovalRoles` (legal→`legal`, security→`security`, compliance→`compliance` —
+  adding a team card is a one-line change there plus a seeded `teams` row);
+  budget→the PR's **named budget approver** (the person the requester picked
   from the business unit's approvers, stored in `budget_approver_email`): `IsBudgetApproverForPR` /
   `BudgetApproversForPR` match the caller's email against it (case-insensitive); admin passes any.
   The card a caller may act on is server-computed
   into `recommendation.my_actionable_types` (comment/view) plus per-card `can_comment`/`can_approve`/
-  `can_assign` flags — see the **Teams & approval assignees** entry below for the legal/security
-  assignee split (comment = whole team, approve = the assignee only).
+  `can_assign` flags — see the **Teams & approval assignees** entry below for the team-card
+  assignee split (comment = whole team, approve = the assignee only). Caller-side card membership is
+  resolved once by `handler.callerRecCardTypes` and passed to the repository as the `text[]` `$2` bind
+  of `approvablePredicate`/`myApprovalStateExpr` (`$3` = caller email).
   **All required cards must be approved before a quotation can be selected**
   (`RecommendationFullyApproved`, enforced in `SelectQuotation`). Editing the recommendation resets all cards to pending. PR view/list
   access is extended so card actors can see and find the PRs awaiting them. The recommendation view
@@ -211,6 +239,17 @@ Whenever test data is added by claude, clean up all those test data after testin
   "Assign to me"/"Unassign me" + `ApproverPicker` for collaborators) between the team-lead card and the
   procurement sections; `ProcurementSection`/recommendation authoring are gated on `my_can_work`. The
   list page shows an **Assignee** column ("Assigned to you" / assignee / amber "Unassigned").
+  The same card carries the PR's **priority** (migration `051`): `purchase_requests.priority`, a
+  `P1` (red, high) / `P2` (yellow) / `P3` (green, **default**) triage level with a DB CHECK, so every
+  existing row starts at P3 and the requisition form never collects it. Any
+  procurement/procurement_admin (and admin) user sets it via `PUT .../priority` (`{priority}` →
+  `repository.SetPRPriority`; 403 non-procurement, 409 before team-lead approval, 400 on an unknown
+  value); unlike procurement *work* it does **not** require the PR to be assigned — that's how an
+  unassigned PR gets triaged. Per-caller flag `my_can_set_priority`
+  (`attachAssignmentActionable`) switches the card between a coloured `<select>` and a read-only
+  chip; the list page shows a **Priority** column. Process event `update_pr_priority` with the new
+  level as the qualifier. Frontend `PRPriority`/`PR_PRIORITIES`/`prPriority`/`prPriorityColor` in
+  `types/api.ts` are the one place the levels and their colours are defined.
 - **User management (admin)** — see `docs/user-management.md`. Admins add users *by email* (pending
   invites — `users.sub` is now nullable, claimed on first login by email match), grant/revoke roles
   (`staff` is a non-removable baseline), and deactivate users (`users.is_active`; blocks login). An
@@ -235,7 +274,8 @@ Whenever test data is added by claude, clean up all those test data after testin
   HasRole(procurement_admin)`; frontend `useCanViewAuditLog`/`canViewAuditLog` nav flag); capped at
   the latest 2000 rows/section. Read-only — no new event action.
 - **Teams & approval assignees** — see `docs/teams-approval-assignee.md` (migrations `038` teams,
-  `039` assignee). A **team** (`teams` table, seeded fixed set Legal/Security/Procurement) is a name
+  `039` assignee, `047` the Compliance team + `compliance` role). A **team** (`teams` table, seeded
+  fixed set Legal/Security/Compliance/Procurement) is a name
   + a fixed/display-only `member_role` + a shared `team_email`.
   Membership **is** the role — there is no membership table; adding/removing a member grants/revokes
   `member_role` (reusing `EnsureUserHasRole`/`RemoveUserRole`). A team may also have an **admin-role
@@ -246,7 +286,7 @@ Whenever test data is added by claude, clean up all those test data after testin
   Managed in a **Teams** section on the
   Settings page (`components/TeamsSection.tsx`); members + email are procurement_admin/admin
   (`middleware.HasTeamAdmin`), reading is open (`GET /teams`, needed by the assignee dropdown). The
-  legal/security recommendation approval cards gain an **assignee**
+  team recommendation approval cards (legal/security/compliance) gain an **assignee**
   (`pr_recommendation_approvals.assignee_id`): the previously all-or-nothing card is split three ways,
   serialized as `can_comment`/`can_approve`/`can_assign` — **comment** = any team member (as before),
   **approve** = **the assignee only** (`canApproveRecType`), **assign** = any team member or procurement
@@ -254,7 +294,10 @@ Whenever test data is added by claude, clean up all those test data after testin
   CC the `team_email`); a **Send reminder** button re-sends. Email uses the existing SMTP mailer
   (`Mailer.SendCC` added for the CC); disabled in dev = logged. Endpoints
   `PUT/POST .../recommendation/approvals/{type}/assignee[/remind]`; process events
-  `assign_rec_legal`/`assign_rec_security` (qualifier `assign`/`unassign`).
+  `assign_rec_legal`/`assign_rec_security`/`assign_rec_compliance` (qualifier `assign`/`unassign`).
+  **Compliance** (migration `047`) is a straight clone of Security: a `compliance` role + seeded team,
+  a `compliance` approval card (optional, assignee-approved, gates quotation selection like the
+  others), and process events `rec_approval_compliance`/`assign_rec_compliance`.
 - **Business units (was budget units, was cost centers)** — see `docs/business-units.md` (migration
   `046`, which renames `budget_units` → **`business_units`**, drops the bracket/currency/value model,
   and — dev-only, no data migration — **truncates** existing data). A business unit is just a **name**,
@@ -287,6 +330,109 @@ Whenever test data is added by claude, clean up all those test data after testin
   `ListPurchaseRequests`). "Completed" = `order_signed` (+ reserved `completed`); the procurement
   card splits `order_signed` into **awaiting delivery** (not fully paid) vs **completed** (≥1 invoice,
   all `paid`, via `invoices.purchase_request_id`/`status`). No migration, no new event action (read).
+- **Quotation PDF extraction (Claude)** — see `docs/quotation-extraction.md` and
+  `docs/plans/20-quotation-pdf-extraction.md` (migration `049`). A quotation PDF is run
+  through the Anthropic API to read vendor / currency / **totals block** (subtotal, discount,
+  every tax line, shipping & other charges, grand total, tax-inclusive flag) / validity /
+  line items, and the result is offered as **editable suggestions** a procurement user confirms — nothing
+  is written onto a quotation automatically. Backend `internal/extraction` mirrors
+  `internal/directory`: config-gated by a new **`anthropic:`** block (`enabled: false`
+  default, so dev/CI need no key; the key is server-side only), one *streaming* call per
+  PDF using `claude-opus-5` + adaptive thinking + `output_config.format` (JSON schema, all
+  fields nullable), with the stable system prompt as the cached prefix. Results stage in
+  **`quotation_extractions`** (`raw_json`, token counts, `pending|succeeded|failed`,
+  `applied_at/by`; unique partial index on `document_id` where not failed ⇒ re-running on a
+  PDF replaces the live row while failures are kept). Two flows share it all: **pre-create**
+  (the primary one — drop a PDF on the PR page, review the pre-filled form, and one
+  `CreateQuotation` carries `extraction_id`, which *adopts* the already-stored document into
+  the initial-PDF slot via a new `SetDocumentOwner` + the existing `SetQuotationDocument`,
+  so bytes are never uploaded twice — the staging doc's owner type is
+  `quotation_extraction`) and **post-create** ("Read details" per PDF slot on the quotation
+  card → Apply → `UpdateQuotation`). Trust rules are the design: the model returns a vendor
+  **name**, never an id (`MatchVendors` ranks `vendors` 100/80/60/40 after normalising case,
+  punctuation and legal forms; the UI preselects only at ≥80, and when *nothing* ranks
+  `VendorSelect` opens its new-vendor form prefilled with the extracted name — new optional
+  `suggestedName`/`defaultAdding` props — so creating it is one click, with a caption warning
+  the name came from the PDF); omitted fields stay nil so a
+  missing total shows blank, never `0`; the total is cross-checked against the line items
+  with the same non-blocking warning invoices use for `entered_total`; **split taxes stay
+  split** (`taxes` is a list — CGST+SGST / ICMS+PIS+COFINS are never summed) and "no tax
+  stated" is an empty list + null `total_includes_tax`, never a zero; `stop_reason` is
+  checked before reading content so refusals/truncation surface as messages. Results are
+  displayed **per document, not per quotation**: the initial and final PDF are separate
+  documents whose figures and line items legitimately differ, so each PDF slot on the PR
+  page carries its own collapsible "Read from this PDF" panel
+  (`components/ExtractedQuotationDetails.tsx`, sharing its line-item table and totals block
+  with the editable `QuotationExtractionReview.tsx`) with an `applied`/`not applied` chip
+  showing whose numbers the quotation actually holds — stamped by **both** apply paths
+  (create via `adoptExtractionDocument`, update via `markExtractionApplied` when the body
+  carries an `extraction_id`; the latter also rejects another PR's extraction), and
+  **exclusive per quotation** (`MarkExtractionApplied` clears the stamp on the quotation's
+  other extractions, since one stored total can only come from one PDF). Both stamps are
+  best-effort — the quotation write already succeeded. The **tax breakdown lives with the
+  extraction, not on `quotations`** (which stores one total/currency/validity/items) — those
+  figures are a property of a document and the two documents disagree, so adding columns
+  would force one to win. The single stored total is **always tax-inclusive**:
+  `lib/extractionTotals.ts` (pure, shared by both panels so shown/warned/saved can't drift)
+  adds tax when the PDF says the total excludes it *or* when the printed total equals a
+  pre-tax base, derives the total from the breakdown when none is printed, and otherwise
+  leaves an explicit grand total alone; any adjustment is stated in words under the field.
+  The line-item cross-check is made at the same level (`reconciledTotal` = items − discount
+  + taxes + charges), so a taxed quotation isn't flagged merely for being taxed. **Uploading
+  a PDF into a card slot reads it immediately** and opens the editable review inside that
+  slot; "Read details" disables itself once a PDF has been read (replacing the PDF makes a
+  new document, so it re-enables). Endpoints
+  `GET /quotation-extractions/{status,{id}}`, `POST /purchase-requests/{id}/quotation-extractions`,
+  `GET /purchase-requests/{id}/quotation-extractions` (succeeded rows, one per document,
+  procurement-gated like `ListForPR`, no vendor ranking; frontend `usePRExtractions` fetches
+  it once per PR and cards look up their slots by `document_id`),
+  `POST /quotations/{id}/extract?slot=initial|final`, gated like all procurement work
+  (`HasProcurementAccess` + team-lead 409 + `assignmentWorkGate`); process event
+  `extract_quotation` (qualifier `initial|final|staged`). Frontend gate
+  `useCanExtractQuotations` (feature hidden when unconfigured). Schema gotcha, verified live:
+  a property may not carry **both `enum` and a union `type`** — the validator checks each enum
+  value against a single declared type and 400s, so `confidence` is `enum`-only with `null` as
+  a member (`TestSchemaEnumsCarryNoType` guards it; `live_schema_test.go` is the opt-in live
+  contract check via `PURCHASING_LIVE_ANTHROPIC_KEY`). The schema and a synthetic quotation
+  are verified against the real API; **accuracy against real PDFs is still untested** —
+  `resources/files/` holds four sample PDFs as a first eval set (one is Portuguese/BRL).
+- **Quotation comparison** — see `docs/quotation-comparison.md` (migration `050`). The app's
+  version of `resources/files/WSO2_Vendor_Quote_Comparison_Template.xlsx`: every vendor's
+  **initial quote beside its final (post-negotiation) quote**, with the variances and savings that
+  follow. Procurement gets a **"Do quotation comparison"** button in the Quotations card header
+  once a PR has **≥2** quotations; the card (`components/QuotationComparisonCard.tsx`) renders at
+  **page** level between the procurement section and the recommendation, because the people it
+  exists for — the recommendation's approvers — have no procurement access and so could never
+  assemble it client-side. **Nothing is snapshotted**: `quotation_comparisons` (one row per PR)
+  stores only `generated_at/by`, the **approved budget** (the sheet's header field — the
+  requisition form no longer collects an estimated value, so procurement types it on the card),
+  the `currency`, and `use_initial_for_final`; every figure is assembled per read by
+  `assembleComparison` (`handler/comparisons.go`) from the quotations + their per-document
+  extractions, so **a quotation edited after generating updates the comparison** with no
+  mechanism (5s poll, plus the PR page invalidating `["quotation-comparison", prId]` on every
+  quotation write). Column sources, in precedence order: `pdf` (that slot's own extraction —
+  split taxes stay split), `record` (the quotation row's stored total/items — the only source
+  when extraction is unconfigured, and *not* used for the initial column when the stored figures
+  are the final PDF's), `initial` (the stand-in below). A `0`-total placeholder quotation carries
+  **no** figures, never `0.00`. Totals are tax-inclusive via `extraction.TaxInclusiveTotal` — the
+  **Go twin of `lib/extractionTotals.ts`**, which must stay in step (both unit-tested over the
+  same cases) or one PDF would show two totals on one page. **Missing final quotes**: the modal
+  names the vendors (`missing_final` is computed whether or not a comparison exists) and
+  confirming posts `use_initial_for_final`, which the server also enforces (409 naming them);
+  those columns are labelled "initial figures — final quotation not available", stay flagged, and
+  switch to the real numbers as soon as a final PDF is read. Layout for a card rather than a
+  spreadsheet: one **summary matrix** (metrics × vendors — initial, final, negotiated saving,
+  variance vs budget, saving vs highest, "lowest" chip), a **rate-comparison** grouped column
+  chart (`components/RateComparisonChart.tsx`, inline SVG, validated blue/orange categorical
+  pair, light+dark), then a collapsible **per-vendor** section with the initial/final item table
+  (rows paired server-side on the description) and both totals blocks. Cross-vendor metrics skip
+  quotes in another currency (`mixed_currency` says so) — converting would invent a rate. The
+  sheet's **UoM** column has no data behind it and the **recommendation block is out of scope**
+  (that decision comes after the comparison and has its own card). Endpoints `GET/POST/PUT/DELETE
+  /purchase-requests/{id}/quotation-comparison` (read = `callerCanView`; writes = procurement +
+  team-lead 409 + `assignmentWorkGate`); process events `create|update|delete_quotation_comparison`.
+  All **detail pages were widened 800/900 → 1200** (the width the list pages already use) to give
+  the card room.
 - **User directory (SCIM autocomplete)** — see `docs/user-directory.md` (issue #2496). Name/email
   form fields offer type-to-search suggestions sourced from the connected identity server (WSO2 IS /
   Asgardeo) via its **SCIM2 Users** API. The backend (`internal/directory`) fetches the **full**

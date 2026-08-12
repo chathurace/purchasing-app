@@ -48,11 +48,10 @@ func (h *ContractsHandler) List(w http.ResponseWriter, r *http.Request) {
 	if middleware.HasProcurementAccess(ctx) {
 		contracts, err = h.Repo.ListContracts(ctx, nil)
 	} else {
-		// Approvers (incl. legal/security) get a read-only view scoped to the PRs
-		// they approve, rather than the full contract set.
+		// Approvers (incl. the legal/security/compliance teams) get a read-only view
+		// scoped to the PRs they approve, rather than the full contract set.
 		user := middleware.UserFromCtx(ctx)
-		contracts, err = h.Repo.ListContractsForApprover(ctx, user.ID,
-			middleware.HasRole(ctx, model.RoleLegal), middleware.HasRole(ctx, model.RoleSecurity))
+		contracts, err = h.Repo.ListContractsForApprover(ctx, user.ID, user.Email, callerRecCardTypes(ctx))
 	}
 	if err != nil {
 		reqLog(r).Error().Err(err).Msg("list contracts")
@@ -269,8 +268,7 @@ func (h *ContractsHandler) loadViewable(w http.ResponseWriter, r *http.Request) 
 	}
 	user := middleware.UserFromCtx(ctx)
 	if user != nil {
-		ok, err := h.Repo.IsApproverForPR(ctx, c.PurchaseRequestID, user.ID, user.Email,
-			middleware.HasRole(ctx, model.RoleLegal), middleware.HasRole(ctx, model.RoleSecurity))
+		ok, err := h.Repo.IsApproverForPR(ctx, c.PurchaseRequestID, user.ID, user.Email, callerRecCardTypes(ctx))
 		if err != nil {
 			reqLog(r).Error().Err(err).Msg("check contract approver access")
 			writeError(w, http.StatusInternalServerError, "failed to load contract")

@@ -7,54 +7,58 @@ import {
   Button,
   Card,
   CardContent,
-  Chip,
   CircularProgress,
-  Divider,
   Link as MuiLink,
   Stack,
   TextField,
   Typography,
 } from "@wso2/oxygen-ui";
-import {
-  ChevronDown,
-  ChevronRight,
-  FileText,
-  Paperclip,
-  Plus,
-} from "@wso2/oxygen-ui-icons-react";
+import { FileText, Plus, Sparkles } from "@wso2/oxygen-ui-icons-react";
 import { usePurchaseRequest } from "../hooks/usePurchaseRequests";
 import { useBusinessUnitLookup } from "../hooks/useBusinessUnits";
 import { useMe } from "../hooks/useMe";
 import { useProcurementAccess } from "../hooks/useProcurementAccess";
-import { useQuotationsForPR, useQuotation } from "../hooks/useQuotations";
+import { useQuotationsForPR } from "../hooks/useQuotations";
 import { StatusBadge } from "../components/StatusBadge";
 import { EntityStatusBadge } from "../components/EntityStatusBadge";
 import { RequisitionForm, requisitionTitle } from "../components/RequisitionForm";
 import { TeamLeadApprovalCard } from "../components/TeamLeadApprovalCard";
 import { AssignmentCard } from "../components/AssignmentCard";
-import { RelatedDocuments } from "../components/RelatedDocuments";
+import { RelatedEntities } from "../components/RelatedEntities";
+import { QuotationExtractionReview } from "../components/QuotationExtractionReview";
+import { ExtractedQuotationDetails } from "../components/ExtractedQuotationDetails";
+import { useConfirmAction } from "../components/ConfirmDialog";
+import {
+  QuotationComparisonButton,
+  QuotationComparisonCard,
+} from "../components/QuotationComparisonCard";
+import { comparisonKey } from "../hooks/useQuotationComparison";
 import { ChainStepper } from "../components/ChainStepper";
 import { VendorSelect } from "../components/VendorSelect";
 import { RecommendationSection } from "../components/RecommendationSection";
-import {
-  deleteDocument,
-  downloadDocument,
-  rejectPurchaseRequest,
-  updatePurchaseRequest,
-  uploadDocument,
-} from "../api/purchaseRequests";
+import { rejectPurchaseRequest, updatePurchaseRequest } from "../api/purchaseRequests";
 import {
   createQuotation,
+  deleteQuotationPDF,
   downloadQuotationDocument,
+  updateQuotation,
   uploadQuotationPDF,
 } from "../api/quotations";
+import type { QuotationPdfSlot } from "../api/quotations";
+import { extractForPR, extractForQuotation } from "../api/quotationExtractions";
+import {
+  useCanExtractQuotations,
+  usePRExtractions,
+} from "../hooks/useQuotationExtraction";
 import { ApiError } from "../api/client";
 import { EDITABLE_STATUSES, formatMoney, prReference, quoRef } from "../types/api";
 import type {
   Document,
+  ExtractionResponse,
   PurchaseRequest,
   PurchaseRequestInput,
   Quotation,
+  QuotationInput,
 } from "../types/api";
 
 function toInput(pr: PurchaseRequest): PurchaseRequestInput {
@@ -87,7 +91,6 @@ export function PurchaseRequestDetailPage() {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<PurchaseRequestInput | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
-  const fileRef = useRef<HTMLInputElement>(null);
 
   const canEdit = useMemo(() => {
     if (!pr || !me) return false;
@@ -120,44 +123,21 @@ export function PurchaseRequestDetailPage() {
     onError: (e) => setActionError(e instanceof ApiError ? e.message : "Failed to save"),
   });
 
-  const uploadMutation = useMutation({
-    mutationFn: (file: File) => uploadDocument(prId, file),
-    onSuccess: invalidate,
-    onError: (e) => setActionError(e instanceof ApiError ? e.message : "Upload failed"),
-  });
-
-  const deleteMutation = useMutation({
-    mutationFn: (docId: number) => deleteDocument(prId, docId),
-    onSuccess: invalidate,
-    onError: (e) => setActionError(e instanceof ApiError ? e.message : "Delete failed"),
-  });
-
   if (isLoading)
     return (
-      <Box sx={{ maxWidth: 900, mx: "auto", p: { xs: 2, md: 4 } }}>
+      <Box sx={{ maxWidth: 1200, mx: "auto", p: { xs: 2, md: 4 } }}>
         <CircularProgress size={24} />
       </Box>
     );
   if (error || !pr)
     return (
-      <Box sx={{ maxWidth: 900, mx: "auto", p: { xs: 2, md: 4 } }}>
+      <Box sx={{ maxWidth: 1200, mx: "auto", p: { xs: 2, md: 4 } }}>
         <Alert severity="error">Failed to load request.</Alert>
       </Box>
     );
 
-  const onPickFile = (file: File | null) => {
-    if (!file) return;
-    if (!/\.(pdf|docx)$/i.test(file.name)) {
-      setActionError(`Only .pdf and .docx files are allowed (got ${file.name}).`);
-      return;
-    }
-    setActionError(null);
-    uploadMutation.mutate(file);
-    if (fileRef.current) fileRef.current.value = "";
-  };
-
   return (
-    <Box sx={{ maxWidth: 900, mx: "auto", p: { xs: 2, md: 4 } }}>
+    <Box sx={{ maxWidth: 1200, mx: "auto", p: { xs: 2, md: 4 } }}>
       <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 2 }}>
         <MuiLink component={Link} to={procurement ? "/requests" : "/my-requests"} variant="body2">
           {procurement ? "Purchase requests" : "My requests"}
@@ -235,226 +215,411 @@ export function PurchaseRequestDetailPage() {
         </Card>
       )}
 
-      {/* Documents */}
-      <Card variant="outlined" sx={{ mt: 3 }}>
-        <CardContent>
-          <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1.5 }}>
-            <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
-              Documents
-            </Typography>
-            {canEdit && (
-              <Button variant="text" component="label" startIcon={<Plus size={16} />}>
-                Add document
-                <input
-                  ref={fileRef}
-                  type="file"
-                  accept=".pdf,.docx"
-                  hidden
-                  onChange={(e) => onPickFile(e.target.files?.[0] ?? null)}
-                />
-              </Button>
-            )}
-          </Stack>
-          {pr.documents.length === 0 ? (
-            <Typography variant="body2" color="text.secondary">
-              No documents attached.
-            </Typography>
-          ) : (
-            <Stack divider={<Divider />}>
-              {pr.documents.map((doc) => (
-                <DocumentRow
-                  key={doc.id}
-                  prId={pr.id}
-                  doc={doc}
-                  canEdit={canEdit}
-                  onDelete={() => deleteMutation.mutate(doc.id)}
-                />
-              ))}
-            </Stack>
-          )}
-        </CardContent>
-      </Card>
-
       <TeamLeadApprovalCard pr={pr} me={me} />
 
       <AssignmentCard pr={pr} me={me} />
 
       {procurement && pr.my_can_work && <ProcurementSection pr={pr} />}
 
+      {/* Rendered at page level, not inside ProcurementSection: the comparison is
+          what the recommendation's approvers read, and they have no procurement
+          access. It renders nothing until procurement has generated one. */}
+      <QuotationComparisonCard prId={pr.id} />
+
       <RecommendationSection pr={pr} />
 
-      <RelatedDocuments prId={pr.id} current={{ kind: "pr", id: pr.id }} />
+      {/* Quotations are excluded by the case graph (they are this page's direct
+          children); the recommendation's contract has its own card above, so it
+          is excluded here too — leaving the fulfillment records (GRNs, invoices)
+          and any contract not on the recommendation. */}
+      <RelatedEntities
+        prId={pr.id}
+        current={{ kind: "pr", id: pr.id }}
+        exclude={
+          pr.recommendation?.contract_id != null
+            ? [{ kind: "contract", id: pr.recommendation.contract_id }]
+            : []
+        }
+      />
     </Box>
   );
 }
 
-// QuotationRow renders a single quotation on the PR page as an expandable row.
-// Collapsed it shows the reference, vendor, notes/total and status; expanded it
-// loads the full quotation and shows basic info plus a link to download the
-// quotation PDF (and any other documents).
-function QuotationRow({ q }: { q: Quotation }) {
-  const [open, setOpen] = useState(false);
-  return (
-    <Box component="li" sx={{ py: 1, listStyle: "none" }}>
-      <Stack direction="row" justifyContent="space-between" alignItems="flex-start" gap={1.5}>
-        <Box
-          component="button"
-          type="button"
-          onClick={() => setOpen((v) => !v)}
-          aria-expanded={open}
-          sx={{
-            display: "flex",
-            minWidth: 0,
-            alignItems: "flex-start",
-            gap: 1,
-            textAlign: "left",
-            border: 0,
-            background: "none",
-            p: 0,
-            cursor: "pointer",
-            color: "inherit",
-          }}
-        >
-          <Box component="span" sx={{ mt: 0.25, color: "text.secondary", flexShrink: 0 }}>
-            {open ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-          </Box>
-          <Box sx={{ minWidth: 0 }}>
-            <Typography variant="body2" color="primary.main" sx={{ fontWeight: 600 }}>
-              {quoRef(q.id)} — {q.vendor?.name ?? `Vendor #${q.vendor_id}`}
-            </Typography>
-            {q.notes && (
-              <Typography variant="body2" color="text.secondary" noWrap>
-                {q.notes}
-              </Typography>
-            )}
-            {q.total_amount > 0 && (
-              <Typography variant="caption" color="text.secondary" sx={{ display: "block" }}>
-                {formatMoney(q.total_amount, q.currency)}
-              </Typography>
-            )}
-          </Box>
-        </Box>
-        <EntityStatusBadge status={q.status} />
-      </Stack>
-      {open && <QuotationExpanded quotationId={q.id} />}
-    </Box>
-  );
-}
+// QuotationCard renders a single quotation on the PR page as a card: vendor,
+// description and the two primary PDF slots (initial + final), each of which carries
+// its own extracted figures. There is no summary expander: the totals, validity and
+// line items now live in the slot that they were read from — the initial and final
+// PDFs disagree, so a single card-level summary could only show one of them. The
+// header links to the quotation's own page for the stored record (other documents).
+// The final PDF is uploaded from here after the quotation exists — it is optional and
+// does not gate selecting the quotation for the recommendation.
+function QuotationCard({ q, canEdit }: { q: Quotation; canEdit: boolean }) {
+  const [error, setError] = useState<string | null>(null);
+  // review holds a read of one PDF awaiting the user's approval, tagged with the slot
+  // it came from so the editable panel renders inside that slot's block rather than
+  // floating at the bottom of the card.
+  const [review, setReview] = useState<{
+    slot: QuotationPdfSlot;
+    result: ExtractionResponse;
+  } | null>(null);
+  const canExtract = useCanExtractQuotations();
+  const qc = useQueryClient();
 
-// QuotationExpanded lazily loads the full quotation (the PR-page list only
-// carries summaries) to show its basic info, the primary quotation PDF and any
-// other attached documents.
-function QuotationExpanded({ quotationId }: { quotationId: number }) {
-  const { data: q, isLoading } = useQuotation(quotationId);
-  if (isLoading || !q) {
-    return (
-      <Typography variant="caption" color="text.secondary" sx={{ ml: 3, mt: 1, display: "block" }}>
-        Loading…
-      </Typography>
-    );
-  }
-  const others = q.documents ?? [];
+  // What each of this PR's quotation PDFs said, looked up per slot by document id.
+  // The query key is per-PR, so every card on the page shares one request.
+  const { data: prExtractions } = usePRExtractions(
+    q.purchase_request_id,
+    canExtract,
+  );
+  const extractedFor = (docID: number | null | undefined) =>
+    docID == null
+      ? null
+      : ((prExtractions ?? []).find(
+          (e) => e.extraction.document_id === docID,
+        ) ?? null);
+
+  const invalidate = () => {
+    qc.invalidateQueries({
+      queryKey: ["quotations", "pr", q.purchase_request_id],
+    });
+    qc.invalidateQueries({ queryKey: ["quotations", q.id] });
+    qc.invalidateQueries({ queryKey: ["quotations"] });
+    qc.invalidateQueries({
+      queryKey: ["purchase-requests", q.purchase_request_id, "related"],
+    });
+    qc.invalidateQueries({
+      queryKey: ["quotation-extractions", "pr", q.purchase_request_id],
+    });
+    // The comparison is derived from these figures, so a changed quotation refreshes
+    // it immediately rather than on its next poll.
+    qc.invalidateQueries({ queryKey: comparisonKey(q.purchase_request_id) });
+  };
+
+  // Uploading a PDF reads it straight away and opens the editable review in the same
+  // slot: the point of attaching a quotation PDF is the numbers in it, so making the
+  // user click "Read details" as a second step was busywork. The read is still only a
+  // suggestion — nothing reaches the quotation until they approve it.
+  const uploadMutation = useMutation({
+    mutationFn: ({ slot, file }: { slot: QuotationPdfSlot; file: File }) =>
+      uploadQuotationPDF(q.id, slot, file),
+    onSuccess: (_res, { slot }) => {
+      invalidate();
+      setError(null);
+      if (canExtract && canEdit) extractMutation.mutate(slot);
+    },
+    onError: (e) =>
+      setError(e instanceof ApiError ? e.message : "Upload failed"),
+  });
+
+  const removeMutation = useMutation({
+    mutationFn: (slot: QuotationPdfSlot) => deleteQuotationPDF(q.id, slot),
+    onSuccess: (_res, slot) => {
+      invalidate();
+      setError(null);
+      // The PDF the review belongs to is gone; the review would be reviewing nothing.
+      setReview((r) => (r?.slot === slot ? null : r));
+    },
+    onError: (e) =>
+      setError(e instanceof ApiError ? e.message : "Failed to remove the PDF"),
+  });
+
+  // extractMutation reads an attached PDF; applyMutation writes the reviewed values
+  // onto the quotation. Nothing is applied without the user confirming.
+  const extractMutation = useMutation({
+    mutationFn: (slot: QuotationPdfSlot) => extractForQuotation(q.id, slot),
+    onSuccess: (res, slot) => {
+      setReview({ slot, result: res });
+      setError(null);
+      // The result is stored, so the per-slot panel shows it whether or not the user
+      // goes on to apply it to the quotation.
+      qc.invalidateQueries({
+        queryKey: ["quotation-extractions", "pr", q.purchase_request_id],
+      });
+    },
+    onError: (e) =>
+      setError(
+        e instanceof ApiError
+          ? e.message
+          : "Could not read details from that PDF",
+      ),
+  });
+
+  const applyMutation = useMutation({
+    mutationFn: (input: QuotationInput) => updateQuotation(q.id, input),
+    onSuccess: () => {
+      invalidate();
+      setReview(null);
+      setError(null);
+    },
+    onError: (e) =>
+      setError(
+        e instanceof ApiError ? e.message : "Failed to apply the details",
+      ),
+  });
+
+  const onPick = (slot: QuotationPdfSlot, file: File | null) => {
+    if (!file) return;
+    if (!/\.pdf$/i.test(file.name)) {
+      setError(`Only .pdf files are allowed (got ${file.name}).`);
+      return;
+    }
+    setError(null);
+    uploadMutation.mutate({ slot, file });
+  };
+
+  const busy =
+    uploadMutation.isPending ||
+    removeMutation.isPending ||
+    extractMutation.isPending;
+
   return (
-    <Box
-      sx={{
-        ml: 3,
-        mt: 1,
-        p: 1.5,
-        border: 1,
-        borderColor: "divider",
-        borderRadius: 2,
-        bgcolor: "background.default",
-      }}
+    <Card
+      component="li"
+      variant="outlined"
+      sx={{ listStyle: "none", borderRadius: 2 }}
     >
-      <Stack spacing={1.5}>
-        <Box
-          sx={{
-            display: "grid",
-            gridTemplateColumns: "1fr 1fr",
-            columnGap: 2,
-            rowGap: 0.5,
-          }}
-        >
-          <Box>
-            <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600 }}>
-              Total
-            </Typography>
-            <Typography variant="body2">{formatMoney(q.total_amount, q.currency)}</Typography>
-          </Box>
-          <Box>
-            <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600 }}>
-              Valid until
-            </Typography>
-            <Typography variant="body2">{q.valid_until ?? "—"}</Typography>
-          </Box>
-        </Box>
+      <CardContent>
+        <Stack spacing={1.5}>
+          <Stack
+            direction="row"
+            justifyContent="space-between"
+            alignItems="flex-start"
+            gap={1.5}
+          >
+            <Box sx={{ minWidth: 0 }}>
+              {/* Links to the quotation's own page — the two slot panels cover the
+                  figures, but the stored record (other documents, full line items)
+                  lives there. */}
+              <MuiLink
+                component={Link}
+                to={`/quotations/${q.id}`}
+                variant="body2"
+                sx={{ fontWeight: 600 }}
+              >
+                {quoRef(q.id)} — {q.vendor?.name ?? `Vendor #${q.vendor_id}`}
+              </MuiLink>
+              {q.notes ? (
+                <Typography
+                  variant="body2"
+                  color="text.secondary"
+                  sx={{ whiteSpace: "pre-wrap" }}
+                >
+                  {q.notes}
+                </Typography>
+              ) : (
+                <Typography variant="body2" color="text.secondary">
+                  No description.
+                </Typography>
+              )}
+            </Box>
+            <EntityStatusBadge status={q.status} />
+          </Stack>
 
-        {q.notes && (
-          <Typography variant="body2" color="text.secondary" sx={{ whiteSpace: "pre-wrap" }}>
-            {q.notes}
+          {error && <Alert severity="error">{error}</Alert>}
+
+          <Stack spacing={1}>
+            {(["initial", "final"] as QuotationPdfSlot[]).map((slot) => {
+              const doc =
+                (slot === "initial"
+                  ? q.initial_quotation_document
+                  : q.final_quotation_document) ?? null;
+              const extracted = extractedFor(doc?.id);
+              return (
+                <QuotationPdfSlotRow
+                  key={slot}
+                  label={slot === "initial" ? "Initial quotation" : "Final quotation"}
+                  slot={slot}
+                  doc={doc}
+                  quotationId={q.id}
+                  canEdit={canEdit}
+                  busy={busy}
+                  onPick={onPick}
+                  onRemove={(s) => removeMutation.mutate(s)}
+                  onExtract={
+                    canExtract && canEdit
+                      ? () => extractMutation.mutate(slot)
+                      : undefined
+                  }
+                  extracting={
+                    extractMutation.isPending && extractMutation.variables === slot
+                  }
+                  extracted={extracted}
+                  review={
+                    review?.slot === slot ? (
+                      <QuotationExtractionReview
+                        result={review.result}
+                        submitLabel="Apply to quotation"
+                        submitting={applyMutation.isPending}
+                        initialNotes={q.notes}
+                        onSubmit={(input) => applyMutation.mutate(input)}
+                        onDiscard={() => setReview(null)}
+                      />
+                    ) : null
+                  }
+                />
+              );
+            })}
+          </Stack>
+
+        </Stack>
+      </CardContent>
+    </Card>
+  );
+}
+
+// QuotationPdfSlotRow renders one of a quotation's two primary PDF slots: the
+// attached file (downloadable) with Replace/Remove, or an Upload button when the
+// slot is empty.
+function QuotationPdfSlotRow({
+  label,
+  slot,
+  doc,
+  quotationId,
+  canEdit,
+  busy,
+  onPick,
+  onRemove,
+  onExtract,
+  extracting,
+  extracted,
+  review,
+}: {
+  label: string;
+  slot: QuotationPdfSlot;
+  doc: Document | null;
+  quotationId: number;
+  canEdit: boolean;
+  busy: boolean;
+  onPick: (slot: QuotationPdfSlot, file: File | null) => void;
+  onRemove: (slot: QuotationPdfSlot) => void;
+  /** Re-read this PDF with Claude. Omitted when extraction is unavailable. */
+  onExtract?: () => void;
+  extracting?: boolean;
+  /**
+   * What was read out of *this* PDF, if it has been read. Per-slot on purpose: the
+   * initial and final quotation are separate documents whose figures and line items
+   * legitimately differ.
+   */
+  extracted?: ExtractionResponse | null;
+  /** The editable review panel, when this slot's PDF is awaiting approval. */
+  review?: React.ReactNode;
+}) {
+  // Already read = nothing to gain from spending another call on the same bytes.
+  // Uploading a replacement makes a new document, which has no extraction, so the
+  // button comes back by itself.
+  const alreadyRead = extracted != null || review != null;
+  const [confirmNode, confirmRemove] = useConfirmAction();
+  return (
+    <Stack
+      spacing={1}
+      sx={{ p: 1, border: 1, borderColor: "divider", borderRadius: 1.5 }}
+    >
+      <Stack
+        direction={{ xs: "column", sm: "row" }}
+        justifyContent="space-between"
+        alignItems={{ xs: "flex-start", sm: "center" }}
+        gap={0.5}
+      >
+        <Box sx={{ minWidth: 0 }}>
+          <Typography
+            variant="caption"
+            color="text.secondary"
+            sx={{ fontWeight: 600, display: "block" }}
+          >
+            {label}
           </Typography>
-        )}
-
-        {q.items.length > 0 && (
-          <Box component="ul" sx={{ listStyle: "disc", pl: 2, m: 0, color: "text.secondary" }}>
-            {q.items.map((it) => (
-              <Typography component="li" variant="body2" key={it.id}>
-                {it.description} — qty {it.quantity} × {formatMoney(it.unit_price, q.currency)}
-              </Typography>
-            ))}
-          </Box>
-        )}
-
-        <Box>
-          <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600, display: "block" }}>
-            Quotation PDF
-          </Typography>
-          {q.quotation_document ? (
+          {doc ? (
             <MuiLink
               component="button"
               type="button"
               variant="body2"
-              onClick={() => downloadQuotationDocument(q.id, q.quotation_document!)}
+              onClick={() => downloadQuotationDocument(quotationId, doc)}
               sx={{ display: "inline-flex", alignItems: "center", gap: 0.5 }}
             >
               <FileText size={14} />
-              {q.quotation_document.filename}
+              {doc.filename}
             </MuiLink>
           ) : (
             <Typography variant="body2" color="text.secondary">
-              None attached.
+              Not uploaded.
             </Typography>
           )}
         </Box>
-
-        {others.length > 0 && (
-          <Box>
-            <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600, display: "block" }}>
-              Other documents
-            </Typography>
-            <Stack spacing={0.25}>
-              {others.map((doc) => (
-                <MuiLink
-                  key={doc.id}
-                  component="button"
-                  type="button"
-                  variant="body2"
-                  onClick={() => downloadQuotationDocument(q.id, doc)}
-                  sx={{ display: "inline-flex", alignItems: "center", gap: 0.5, alignSelf: "flex-start" }}
-                >
-                  <Paperclip size={14} />
-                  {doc.filename}
-                </MuiLink>
-              ))}
-            </Stack>
-          </Box>
+        {canEdit && (
+          <Stack
+            direction="row"
+            spacing={0.5}
+            alignItems="center"
+            sx={{ flexShrink: 0 }}
+          >
+            <Button
+              variant="text"
+              size="small"
+              component="label"
+              disabled={busy}
+            >
+              {doc ? "Replace" : "Upload"}
+              <input
+                type="file"
+                accept=".pdf"
+                hidden
+                onChange={(e) => {
+                  onPick(slot, e.target.files?.[0] ?? null);
+                  e.target.value = "";
+                }}
+              />
+            </Button>
+            {doc && onExtract && (
+              <Button
+                variant="text"
+                size="small"
+                startIcon={<Sparkles size={14} />}
+                disabled={busy || alreadyRead}
+                onClick={onExtract}
+                title={
+                  alreadyRead
+                    ? "This PDF has already been read — upload a new one to read again"
+                    : "Read the vendor, total, taxes and line items from this PDF"
+                }
+              >
+                {extracting ? "Reading…" : alreadyRead ? "Read" : "Read details"}
+              </Button>
+            )}
+            {doc && (
+              <Button
+                variant="text"
+                color="error"
+                size="small"
+                disabled={busy}
+                onClick={() =>
+                  confirmRemove({
+                    title: `Remove ${label.toLowerCase()}`,
+                    message: (
+                      <>
+                        Remove <strong>{doc.filename}</strong>? The file is deleted, along with
+                        anything read from it. The quotation's stored figures are left as they are.
+                      </>
+                    ),
+                    confirmLabel: "Remove",
+                    onConfirm: () => onRemove(slot),
+                  })
+                }
+              >
+                Remove
+              </Button>
+            )}
+          </Stack>
         )}
-
-        <MuiLink component={Link} to={`/quotations/${q.id}`} variant="body2" sx={{ alignSelf: "flex-start" }}>
-          Open quotation →
-        </MuiLink>
       </Stack>
-    </Box>
+      {/* While a read is awaiting approval the editable panel replaces the read-only
+          one: two views of the same PDF side by side would just invite confusion
+          about which figures are live. */}
+      {review}
+      {!review && doc && extracted?.suggestion && (
+        <ExtractedQuotationDetails result={extracted} />
+      )}
+      {confirmNode}
+    </Stack>
   );
 }
 
@@ -471,6 +636,10 @@ function ProcurementSection({ pr }: { pr: PurchaseRequest }) {
   const [showReject, setShowReject] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  // extraction holds the reviewable result of reading the chosen PDF; while set,
+  // the review panel replaces the bare vendor+description form.
+  const [extraction, setExtraction] = useState<ExtractionResponse | null>(null);
+  const canExtract = useCanExtractQuotations();
 
   const closed = ["rejected", "cancelled", "order_signed", "completed"].includes(pr.status);
 
@@ -480,6 +649,20 @@ function ProcurementSection({ pr }: { pr: PurchaseRequest }) {
     qc.invalidateQueries({ queryKey: ["purchase-requests", pr.id] });
     qc.invalidateQueries({ queryKey: ["purchase-requests"] });
     qc.invalidateQueries({ queryKey: ["purchase-requests", pr.id, "related"] });
+    // A created-from-extraction quotation adopts the staged PDF, which moves the
+    // extraction onto the new quotation's initial slot.
+    qc.invalidateQueries({ queryKey: ["quotation-extractions", "pr", pr.id] });
+    // A new (or removed) quotation changes what the comparison compares.
+    qc.invalidateQueries({ queryKey: comparisonKey(pr.id) });
+  };
+
+  const resetForm = () => {
+    setVendorId(0);
+    setDescription("");
+    setFile(null);
+    setExtraction(null);
+    if (fileRef.current) fileRef.current.value = "";
+    setError(null);
   };
 
   // createMutation associates a quotation with this PR and (if attached) uploads
@@ -495,18 +678,47 @@ function ProcurementSection({ pr }: { pr: PurchaseRequest }) {
         notes: description.trim(),
         items: [],
       });
-      if (file) await uploadQuotationPDF(q.id, file);
+      // Only the initial quotation can be attached at creation; the final one is
+      // uploaded later from the quotation's card.
+      if (file) await uploadQuotationPDF(q.id, "initial", file);
       return q;
     },
     onSuccess: () => {
       invalidate();
-      setVendorId(0);
-      setDescription("");
-      setFile(null);
-      if (fileRef.current) fileRef.current.value = "";
+      resetForm();
+    },
+    onError: (e) =>
+      setError(e instanceof ApiError ? e.message : "Failed to add quotation"),
+  });
+
+  // extractMutation reads the chosen PDF before the quotation exists, so the form
+  // can be pre-filled from it. The PDF is stored server-side as part of this call
+  // and adopted as the quotation's initial document on create (via extraction_id),
+  // so it is never uploaded twice.
+  const extractMutation = useMutation({
+    mutationFn: (f: File) => extractForPR(pr.id, f),
+    onSuccess: (res) => {
+      setExtraction(res);
       setError(null);
     },
-    onError: (e) => setError(e instanceof ApiError ? e.message : "Failed to add quotation"),
+    onError: (e) =>
+      setError(
+        e instanceof ApiError
+          ? e.message
+          : "Could not read details from that PDF",
+      ),
+  });
+
+  // createFromExtraction writes the reviewed values in one call. The PDF is already
+  // stored, so there is no follow-up upload.
+  const createFromExtraction = useMutation({
+    mutationFn: (input: QuotationInput) => createQuotation(pr.id, input),
+    onSuccess: () => {
+      invalidate();
+      resetForm();
+    },
+    onError: (e) =>
+      setError(e instanceof ApiError ? e.message : "Failed to add quotation"),
   });
 
   const rejectMutation = useMutation({
@@ -541,11 +753,16 @@ function ProcurementSection({ pr }: { pr: PurchaseRequest }) {
           <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
             Quotations
           </Typography>
-          {!closed && !showReject && (
-            <Button variant="text" color="error" size="small" onClick={() => setShowReject(true)}>
-              Reject request
-            </Button>
-          )}
+          <Stack direction="row" spacing={1} alignItems="center">
+            {/* Offered once two or more vendors have quoted — the comparison card
+                itself renders below, where every viewer of the PR can read it. */}
+            <QuotationComparisonButton pr={pr} quotationCount={quotations?.length ?? 0} />
+            {!closed && !showReject && (
+              <Button variant="text" color="error" size="small" onClick={() => setShowReject(true)}>
+                Reject request
+              </Button>
+            )}
+          </Stack>
         </Stack>
 
         {error && (
@@ -603,9 +820,13 @@ function ProcurementSection({ pr }: { pr: PurchaseRequest }) {
         )}
 
         {quotations && quotations.length > 0 ? (
-          <Stack component="ul" divider={<Divider />} sx={{ listStyle: "none", p: 0, m: 0 }}>
+          <Stack
+            component="ul"
+            spacing={1.5}
+            sx={{ listStyle: "none", p: 0, m: 0 }}
+          >
             {quotations.map((q) => (
-              <QuotationRow key={q.id} q={q} />
+              <QuotationCard key={q.id} q={q} canEdit={!closed} />
             ))}
           </Stack>
         ) : (
@@ -647,43 +868,97 @@ function ProcurementSection({ pr }: { pr: PurchaseRequest }) {
                     Add a quotation
                   </Typography>
                   <Typography variant="caption" color="text.secondary">
-                    Record a vendor's quote against this request and attach its PDF.
+                    {canExtract
+                      ? "Attach the vendor's quotation PDF and its details will be read automatically for you to check. The final quotation can be uploaded on the card afterwards."
+                      : "Record a vendor's quote against this request and attach the initial quotation. The final quotation can be uploaded on the card afterwards."}
                   </Typography>
                 </Box>
               </Stack>
-              <VendorSelect value={vendorId} onChange={setVendorId} />
-              <TextField
-                size="small"
-                fullWidth
-                multiline
-                minRows={2}
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                placeholder="Description (optional)"
-              />
-              <Box>
-                <Typography variant="body2" sx={{ fontWeight: 500, mb: 0.5 }}>
-                  Quotation PDF (optional)
-                </Typography>
-                <Button variant="outlined" color="inherit" size="small" component="label">
-                  {file ? file.name : "Choose PDF"}
-                  <input
-                    ref={fileRef}
-                    type="file"
-                    accept=".pdf"
-                    hidden
-                    onChange={(e) => onPickFile(e.target.files?.[0] ?? null)}
+
+              {extraction ? (
+                // Reviewing an extracted PDF: the panel owns the whole form, since
+                // every field it collects came from (or corrects) the document.
+                <QuotationExtractionReview
+                  result={extraction}
+                  submitLabel="Add quotation"
+                  submitting={createFromExtraction.isPending}
+                  initialNotes={description}
+                  onSubmit={(input) => createFromExtraction.mutate(input)}
+                  onDiscard={resetForm}
+                />
+              ) : (
+                <>
+                  <VendorSelect value={vendorId} onChange={setVendorId} />
+                  <TextField
+                    size="small"
+                    fullWidth
+                    multiline
+                    minRows={2}
+                    value={description}
+                    onChange={(e) => setDescription(e.target.value)}
+                    placeholder="Description (optional)"
                   />
-                </Button>
-              </Box>
-              <Button
-                variant="contained"
-                fullWidth
-                disabled={createMutation.isPending || !vendorId}
-                onClick={() => createMutation.mutate()}
-              >
-                {createMutation.isPending ? "Adding…" : "Add quotation"}
-              </Button>
+                  <Box>
+                    <Typography
+                      variant="body2"
+                      sx={{ fontWeight: 500, mb: 0.5 }}
+                    >
+                      Initial quotation PDF (optional)
+                    </Typography>
+                    <Stack direction="row" spacing={1} alignItems="center">
+                      <Button
+                        variant="outlined"
+                        color="inherit"
+                        size="small"
+                        component="label"
+                      >
+                        {file ? file.name : "Choose PDF"}
+                        <input
+                          ref={fileRef}
+                          type="file"
+                          accept=".pdf"
+                          hidden
+                          onChange={(e) =>
+                            onPickFile(e.target.files?.[0] ?? null)
+                          }
+                        />
+                      </Button>
+                      {canExtract && file && (
+                        <Button
+                          variant="outlined"
+                          size="small"
+                          startIcon={<Sparkles size={14} />}
+                          disabled={extractMutation.isPending}
+                          onClick={() => extractMutation.mutate(file)}
+                        >
+                          {extractMutation.isPending
+                            ? "Reading PDF…"
+                            : "Read details from PDF"}
+                        </Button>
+                      )}
+                    </Stack>
+                    {canExtract && file && !extractMutation.isPending && (
+                      <Typography
+                        variant="caption"
+                        color="text.secondary"
+                        sx={{ mt: 0.5, display: "block" }}
+                      >
+                        Optional — reads the vendor, total, currency and line
+                        items so you don't have to retype them. You review
+                        everything before it's saved.
+                      </Typography>
+                    )}
+                  </Box>
+                  <Button
+                    variant="contained"
+                    fullWidth
+                    disabled={createMutation.isPending || !vendorId}
+                    onClick={() => createMutation.mutate()}
+                  >
+                    {createMutation.isPending ? "Adding…" : "Add quotation"}
+                  </Button>
+                </>
+              )}
             </Stack>
           </Box>
         )}
@@ -841,38 +1116,3 @@ function Row({ label, value, pre, hint }: { label: string; value?: string; pre?:
   );
 }
 
-function DocumentRow({
-  prId,
-  doc,
-  canEdit,
-  onDelete,
-}: {
-  prId: number;
-  doc: Document;
-  canEdit: boolean;
-  onDelete: () => void;
-}) {
-  return (
-    <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ py: 1 }}>
-      <MuiLink
-        component="button"
-        type="button"
-        variant="body2"
-        onClick={() => downloadDocument(prId, doc)}
-        sx={{ textAlign: "left" }}
-      >
-        {doc.filename}
-      </MuiLink>
-      <Stack direction="row" spacing={1.5} alignItems="center">
-        <Typography variant="caption" color="text.secondary">
-          {(doc.size_bytes / 1024).toFixed(0)} KB
-        </Typography>
-        {canEdit && (
-          <Button variant="text" color="error" size="small" onClick={onDelete}>
-            Remove
-          </Button>
-        )}
-      </Stack>
-    </Stack>
-  );
-}

@@ -1,5 +1,6 @@
 # Secrets — never commit
 private/
+resources/
 backend/config.yaml
 backend/config.choreo.yaml
 .env

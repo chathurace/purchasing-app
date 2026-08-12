@@ -10,13 +10,26 @@ import type { VendorInput } from "../types/api";
 interface Props {
   value: number; // selected vendor id (0 = none)
   onChange: (vendorId: number) => void;
+  /**
+   * Name to seed the new-vendor form with — e.g. the vendor read off a quotation PDF.
+   * Seeded at mount, so pass a `key` that changes when the suggestion does.
+   */
+  suggestedName?: string;
+  /**
+   * Start with the new-vendor form open instead of the picker. Used when we already
+   * know nothing in the list matches, so creating the vendor is a single click.
+   */
+  defaultAdding?: boolean;
 }
 
-export function VendorSelect({ value, onChange }: Props) {
+export function VendorSelect({ value, onChange, suggestedName, defaultAdding = false }: Props) {
   const qc = useQueryClient();
   const { data: vendors } = useVendors();
-  const [adding, setAdding] = useState(false);
-  const [draft, setDraft] = useState<VendorInput>(emptyVendor);
+  const seededName = suggestedName?.trim() ?? "";
+  const [adding, setAdding] = useState(defaultAdding);
+  const [draft, setDraft] = useState<VendorInput>(() =>
+    seededName ? { ...emptyVendor, name: seededName } : emptyVendor,
+  );
   const [error, setError] = useState<string | null>(null);
 
   const createMutation = useMutation({
@@ -82,6 +95,14 @@ export function VendorSelect({ value, onChange }: Props) {
             onChange={(e) => setDraft({ ...draft, name: e.target.value })}
             placeholder="Vendor name *"
           />
+          {/* Flagged while the name is still exactly what was read: a model can pick
+              the buyer's name off the page instead of the issuer's, and this form
+              creates a real vendor record. */}
+          {seededName !== "" && draft.name === seededName && (
+            <Typography variant="caption" color="text.secondary">
+              Name read from the PDF — check it before adding.
+            </Typography>
+          )}
           <Stack direction="row" spacing={1}>
             <TextField
               size="small"

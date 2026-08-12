@@ -26,6 +26,7 @@ import { useMe } from "../hooks/useMe";
 import { addUserRole, createUser, removeUserRole, setUserActive, updateUser } from "../api/users";
 import { ApiError } from "../api/client";
 import { useDirectory } from "../hooks/useDirectory";
+import { useConfirmAction } from "../components/ConfirmDialog";
 import { EmailAutocomplete } from "../components/EmailAutocomplete";
 import { ASSIGNABLE_ROLES, ROLE_LABELS, type AdminUser, type Role } from "../types/api";
 
@@ -282,6 +283,8 @@ function UserRow({
   const [name, setName] = useState(user.name);
   const [saving, setSaving] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
+  // Revoking a role and deactivating an account both take access away — confirm both.
+  const [confirmNode, confirmAction] = useConfirmAction();
 
   const startEdit = () => {
     setEmail(user.email);
@@ -362,7 +365,23 @@ function UserRow({
               key={r}
               size="small"
               label={ROLE_LABELS[r] ?? r}
-              onDelete={r !== "staff" ? () => onRemoveRole(r) : undefined}
+              onDelete={
+                r !== "staff"
+                  ? () =>
+                      confirmAction({
+                        title: "Revoke role",
+                        message: (
+                          <>
+                            Revoke <strong>{ROLE_LABELS[r] ?? r}</strong> from{" "}
+                            <strong>{user.email || user.name || `#${user.id}`}</strong>? They lose
+                            everything that role grants.
+                          </>
+                        ),
+                        confirmLabel: "Revoke",
+                        onConfirm: () => onRemoveRole(r),
+                      })
+                  : undefined
+              }
             />
           ))}
           {addable.length > 0 && (
@@ -425,7 +444,25 @@ function UserRow({
                 size="small"
                 variant="outlined"
                 color="inherit"
-                onClick={onToggleActive}
+                onClick={() => {
+                  // Reactivating restores access — only guard the deactivating direction.
+                  if (!user.is_active) {
+                    onToggleActive();
+                    return;
+                  }
+                  confirmAction({
+                    title: "Deactivate user",
+                    message: (
+                      <>
+                        Deactivate <strong>{user.email || user.name || `#${user.id}`}</strong>? They
+                        can no longer sign in. Their roles and history are kept, and you can
+                        reactivate them later.
+                      </>
+                    ),
+                    confirmLabel: "Deactivate",
+                    onConfirm: onToggleActive,
+                  });
+                }}
                 disabled={isSelf}
                 title={isSelf ? "You cannot deactivate your own account" : undefined}
               >
@@ -434,6 +471,7 @@ function UserRow({
             </>
           )}
         </Stack>
+        {confirmNode}
       </TableCell>
     </TableRow>
   );

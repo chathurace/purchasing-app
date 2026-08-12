@@ -6,6 +6,7 @@ import (
 	"github.com/cs/purchasing-app/internal/crypto"
 	"github.com/cs/purchasing-app/internal/directory"
 	"github.com/cs/purchasing-app/internal/email"
+	"github.com/cs/purchasing-app/internal/extraction"
 	"github.com/cs/purchasing-app/internal/middleware"
 	"github.com/cs/purchasing-app/internal/repository"
 	"github.com/cs/purchasing-app/internal/storage"
@@ -25,6 +26,7 @@ type Deps struct {
 	GDriveAppID    string
 	Auth           *middleware.AuthMiddleware
 	Directory      *directory.Service
+	Extraction     *extraction.Service
 	Mailer         email.Mailer
 	AppBaseURL     string
 	AllowedOrigins []string
@@ -43,7 +45,7 @@ func NewRouter(d Deps) http.Handler {
 	prs := &PurchaseRequestsHandler{Repo: d.Repo, Storage: d.Storage, Mailer: d.Mailer, Directory: d.Directory, AppBaseURL: d.AppBaseURL, Log: d.Log}
 	vendors := &VendorsHandler{Repo: d.Repo, Log: d.Log}
 	businessUnits := &BusinessUnitsHandler{Repo: d.Repo, Log: d.Log}
-	quotes := &QuotationsHandler{Repo: d.Repo, Storage: d.Storage, Mailer: d.Mailer, Directory: d.Directory, AppBaseURL: d.AppBaseURL, Log: d.Log}
+	quotes := &QuotationsHandler{Repo: d.Repo, Storage: d.Storage, Mailer: d.Mailer, Extraction: d.Extraction, Directory: d.Directory, AppBaseURL: d.AppBaseURL, Log: d.Log}
 	contracts := &ContractsHandler{Repo: d.Repo, Storage: d.Storage, Log: d.Log}
 	grns := &GRNsHandler{Repo: d.Repo, Storage: d.Storage, Log: d.Log}
 	invoices := &InvoicesHandler{Repo: d.Repo, Storage: d.Storage, Log: d.Log}
@@ -102,6 +104,23 @@ func NewRouter(d Deps) http.Handler {
 			r.Get("/purchase-requests/{id}/related", prs.Related)
 			r.Get("/purchase-requests/{id}/quotations", quotes.ListForPR)
 			r.Post("/purchase-requests/{id}/quotations", quotes.Create)
+			// Extract a quotation PDF *before* its quotation exists: the staged
+			// document is adopted into the initial-PDF slot when the returned
+			// extraction_id is passed to the create call above.
+			r.Post("/purchase-requests/{id}/quotation-extractions", quotes.ExtractForPR)
+			// What each of this PR's quotation PDFs said, one entry per document —
+			// the initial and final quotation carry separate figures.
+			r.Get("/purchase-requests/{id}/quotation-extractions", quotes.ListExtractionsForPR)
+
+			// Quotation comparison (one per PR): procurement generates it once
+			// there are two or more quotations; every figure on it is derived at
+			// read time, so it never goes stale. Readable by anyone who may view
+			// the PR — the approvers it exists for have no access to the quotation
+			// endpoints. See docs/quotation-comparison.md.
+			r.Get("/purchase-requests/{id}/quotation-comparison", prs.GetQuotationComparison)
+			r.Post("/purchase-requests/{id}/quotation-comparison", prs.GenerateQuotationComparison)
+			r.Put("/purchase-requests/{id}/quotation-comparison", prs.UpdateQuotationComparison)
+			r.Delete("/purchase-requests/{id}/quotation-comparison", prs.DeleteQuotationComparison)
 
 			// Approvals: the requester manages approvers; an approver records
 			// their own decision; the requester re-requests a rejected one.
@@ -116,6 +135,8 @@ func NewRouter(d Deps) http.Handler {
 			r.Put("/purchase-requests/{id}/assignee", prs.SetAssignee)
 			r.Post("/purchase-requests/{id}/collaborators", prs.AddCollaborator)
 			r.Delete("/purchase-requests/{id}/collaborators/{userID}", prs.RemoveCollaborator)
+			// Priority is procurement triage on the same card — any procurement user.
+			r.Put("/purchase-requests/{id}/priority", prs.SetPriority)
 
 			// Team lead approval: the requester's named team lead (or admin) approves
 			// or rejects the PR — the gate that lets procurement see and act on it.
@@ -219,11 +240,23 @@ func NewRouter(d Deps) http.Handler {
 			r.Put("/quotations/{id}", quotes.Update)
 			r.Post("/quotations/{id}/select", quotes.Select)
 			r.Delete("/quotations/{id}", quotes.Delete)
-			r.Post("/quotations/{id}/quotation-document", quotes.UploadQuotationPDF)
-			r.Delete("/quotations/{id}/quotation-document", quotes.DeleteQuotationPDF)
+			r.Post("/quotations/{id}/initial-quotation-document", quotes.UploadInitialQuotationPDF)
+			r.Delete("/quotations/{id}/initial-quotation-document", quotes.DeleteInitialQuotationPDF)
+			r.Post("/quotations/{id}/final-quotation-document", quotes.UploadFinalQuotationPDF)
+			r.Delete("/quotations/{id}/final-quotation-document", quotes.DeleteFinalQuotationPDF)
 			r.Post("/quotations/{id}/documents", quotes.UploadDocument)
 			r.Get("/quotations/{id}/documents/{docID}/download", quotes.DownloadDocument)
 			r.Delete("/quotations/{id}/documents/{docID}", quotes.DeleteDocument)
+
+			// Quotation PDF extraction (Claude). Reads vendor / currency / total /
+			// validity / line items out of a quotation PDF and stages the result
+			// for a procurement user to review and apply — nothing is written onto
+			// the quotation automatically. See docs/quotation-extraction.md.
+			// `status` is open to any authenticated user so the UI can hide the
+			// feature when no API key is configured; the rest is procurement work.
+			r.Get("/quotation-extractions/status", quotes.ExtractionStatus)
+			r.Get("/quotation-extractions/{id}", quotes.GetExtraction)
+			r.Post("/quotations/{id}/extract", quotes.ExtractForQuotation)
 
 			// Contracts
 			r.Get("/contracts", contracts.List)

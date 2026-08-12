@@ -1,17 +1,18 @@
 # Teams & approval assignees
 
 As-built reference for the Teams settings section and the assignee on the
-legal/security recommendation approval cards. Migrations `038` (teams) and `039`
-(assignee).
+team-backed recommendation approval cards (legal / security / compliance).
+Migrations `038` (teams), `039` (assignee) and `047` (the Compliance team + role).
 
 ## Teams
 
 A **team** (`teams` table) is a named group — seeded fixed set **Legal**,
-**Security**, **Procurement**. Legal/Security back the approval-card assignees
-(below); Procurement backs procurement-role membership and the team-email
-notifications. A team has:
+**Security**, **Compliance**, **Procurement**. Legal/Security/Compliance back the
+approval-card assignees (below); Procurement backs procurement-role membership and
+the team-email notifications. A team has:
 
-- `key` — stable id used in URLs (`legal` / `security` / `procurement`).
+- `key` — stable id used in URLs (`legal` / `security` / `compliance` /
+  `procurement`).
 - `name` — display label.
 - `member_role` — the role that designates membership. **Fixed / display-only**:
   the approval-card actor logic is keyed on this role, so it is shown but not
@@ -54,9 +55,9 @@ Procurement team's `admin_members` are listed with an **admin** badge and no Rem
 Member add/remove records the existing `grant_role` / `revoke_role` audit events
 (detail `team:<key>`).
 
-## Assignee on legal/security approval cards
+## Assignee on the team approval cards
 
-Each legal/security card on a PR's procurement recommendation now carries an
+Each team card (legal / security / compliance) on a PR's procurement recommendation carries an
 **assignee** (`pr_recommendation_approvals.assignee_id`, `ON DELETE SET NULL`). The
 budget card has none.
 
@@ -65,7 +66,8 @@ role). Computed per-caller in `attachRecActionable` and serialized as three flag
 on each card (`can_comment` / `can_approve` / `can_assign`):
 
 - **Comment** — any member of the card's team (legal → `legal` role, security →
-  `security` role), as before. (`canActOnRecType`)
+  `security` role, compliance → `compliance` role — the mapping is
+  `model.RecTeamApprovalRoles`), as before. (`canActOnRecType`)
 - **Approve** — **only the card's assignee** may toggle approve/revert.
   (`canApproveRecType`) The budget card has no assignee — the PR's named budget approver
   (email match; or admin) may approve; see `docs/business-units.md`.
@@ -97,6 +99,6 @@ the CC recipients. Sends are best-effort — a failure never blocks the action.
 | PUT | `.../recommendation/approvals/{type}/assignee` `{assignee_id, notify}` | team member or procurement |
 | POST | `.../recommendation/approvals/{type}/assignee/remind` | team member or procurement |
 
-`{type}` must be `legal` or `security`. Setting/clearing the assignee records a
-`assign_rec_legal` / `assign_rec_security` process event (qualifier
+`{type}` must be `legal`, `security` or `compliance`. Setting/clearing the assignee records a
+`assign_rec_legal` / `assign_rec_security` / `assign_rec_compliance` process event (qualifier
 `assign` / `unassign`).

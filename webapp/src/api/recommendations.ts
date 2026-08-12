@@ -97,7 +97,8 @@ export const setRecApproval = (prId: number, type: RecApprovalType, approved: bo
     body: { approved },
   });
 
-// Sets (or clears, with assigneeId null) the assignee of a legal/security card.
+// Sets (or clears, with assigneeId null) the assignee of a team card
+// (legal/security/compliance).
 // When notify is true and an assignee is set, the assignee is emailed a link to
 // the PR (CC the team email). Returns the refreshed purchase request.
 export const setRecAssignee = (
@@ -126,7 +127,7 @@ export const remindBudgetApprovers = (prId: number) =>
   );
 
 // budgetStepId attaches a budget-card comment to a specific step (the approval
-// type must be "budget"); omit it for legal/security card comments.
+// type must be "budget"); omit it for team-card comments.
 export const addRecComment = (
   prId: number,
   approvalType: RecApprovalType,

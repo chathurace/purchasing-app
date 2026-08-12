@@ -3,7 +3,7 @@
 // RelatedDocuments bundle. The chain is PR → Quotation → Contract; each record
 // has exactly one parent, so the upstream lineage is unambiguous while
 // downstream branches. All three views (chain stepper, direct parent/children,
-// related documents) are computed from this one payload — no extra fetches.
+// related entities) are computed from this one payload — no extra fetches.
 import {
   conRef,
   formatMoney,
@@ -105,10 +105,6 @@ function invRecord(inv: Invoice): CaseRecord {
     detail: `${vendor} · ${formatMoney(inv.total_amount, inv.currency)}`,
     status: inv.status,
   };
-}
-
-function pushGroup(groups: RecordGroup[], label: string, records: CaseRecord[]) {
-  if (records.length > 0) groups.push({ label, records });
 }
 
 // --- lineage helpers ---
@@ -246,10 +242,23 @@ export function directParent(data: RelatedDocuments, current: CaseCurrent): Dire
   return null; // a purchase request has no parent
 }
 
-// --- related documents (indirect ancestors, deeper descendants, siblings) ---
+// --- related entities (indirect ancestors, deeper descendants, siblings) ---
 
-export function relatedGroups(data: RelatedDocuments, current: CaseCurrent): RecordGroup[] {
+// relatedGroups lists the case records worth cross-linking from the current
+// page. `exclude` drops records the page already renders in full elsewhere (the
+// PR page, for instance, shows the recommendation's contract in its own card),
+// so the card never repeats what is already on screen.
+export function relatedGroups(
+  data: RelatedDocuments,
+  current: CaseCurrent,
+  exclude: CaseCurrent[] = [],
+): RecordGroup[] {
   const groups: RecordGroup[] = [];
+  const excluded = new Set(exclude.map((e) => `${e.kind}-${e.id}`));
+  const pushGroup = (label: string, records: CaseRecord[]) => {
+    const kept = records.filter((r) => !excluded.has(`${r.kind}-${r.id}`));
+    if (kept.length > 0) groups.push({ label, records: kept });
+  };
 
   // grnsForContracts / invoicesForContracts collect the fulfillment records that
   // belong to a set of contracts — used to surface a case's GRNs/invoices on the
@@ -260,23 +269,22 @@ export function relatedGroups(data: RelatedDocuments, current: CaseCurrent): Rec
 
   if (current.kind === "pr") {
     // Quotations are the direct children (shown inline); everything below is indirect.
-    pushGroup(groups, "Contracts", data.contracts.map(conRecord));
-    pushGroup(groups, "Goods received (GRNs)", data.grns.map(grnRecord));
-    pushGroup(groups, "Invoices", data.invoices.map(invRecord));
+    pushGroup("Contracts", data.contracts.map(conRecord));
+    pushGroup("Goods received (GRNs)", data.grns.map(grnRecord));
+    pushGroup("Invoices", data.invoices.map(invRecord));
     return groups;
   }
 
   if (current.kind === "quotation") {
-    pushGroup(groups, "Purchase request", [prRecord(data)]);
+    pushGroup("Purchase request", [prRecord(data)]);
     pushGroup(
-      groups,
       "Other quotations for this request",
       data.quotations.filter((x) => x.id !== current.id).map(quoRecord),
     );
     const myConIds = new Set(data.contracts.filter((c) => c.quotation_id === current.id).map((c) => c.id));
-    pushGroup(groups, "Resulting contracts", data.contracts.filter((c) => myConIds.has(c.id)).map(conRecord));
-    pushGroup(groups, "Goods received (GRNs)", grnsForContracts(myConIds));
-    pushGroup(groups, "Invoices", invoicesForContracts(myConIds));
+    pushGroup("Resulting contracts", data.contracts.filter((c) => myConIds.has(c.id)).map(conRecord));
+    pushGroup("Goods received (GRNs)", grnsForContracts(myConIds));
+    pushGroup("Invoices", invoicesForContracts(myConIds));
     return groups;
   }
 
@@ -287,16 +295,16 @@ export function relatedGroups(data: RelatedDocuments, current: CaseCurrent): Rec
     // fulfillment section, so they are only cross-linked from here.
     const conId = contractIdOf(data, current);
     const { quotation } = contractLineage(data, conId);
-    pushGroup(groups, "Purchase request", [prRecord(data)]);
-    if (quotation) pushGroup(groups, "Quotation", [quoRecord(quotation)]);
+    pushGroup("Purchase request", [prRecord(data)]);
+    if (quotation) pushGroup("Quotation", [quoRecord(quotation)]);
     const grns = data.grns.filter((g) => g.contract_id === conId);
     const invoices = data.invoices.filter((i) => i.contract_id === conId);
     if (current.kind === "grn") {
-      pushGroup(groups, "Other goods received notes for this contract", grns.filter((g) => g.id !== current.id).map(grnRecord));
-      pushGroup(groups, "Invoices for this contract", invoices.map(invRecord));
+      pushGroup("Other goods received notes for this contract", grns.filter((g) => g.id !== current.id).map(grnRecord));
+      pushGroup("Invoices for this contract", invoices.map(invRecord));
     } else {
-      pushGroup(groups, "Goods received notes for this contract", grns.map(grnRecord));
-      pushGroup(groups, "Other invoices for this contract", invoices.filter((i) => i.id !== current.id).map(invRecord));
+      pushGroup("Goods received notes for this contract", grns.map(grnRecord));
+      pushGroup("Other invoices for this contract", invoices.filter((i) => i.id !== current.id).map(invRecord));
     }
     return groups;
   }
@@ -307,7 +315,7 @@ export function relatedGroups(data: RelatedDocuments, current: CaseCurrent): Rec
   // section, so they are not duplicated here.
   const c = data.contracts.find((x) => x.id === current.id);
   const q = c && c.quotation_id != null ? data.quotations.find((x) => x.id === c.quotation_id) : undefined;
-  if (q) pushGroup(groups, "Purchase request", [prRecord(data)]);
-  pushGroup(groups, "Other contracts for this request", data.contracts.filter((x) => x.id !== current.id).map(conRecord));
+  if (q) pushGroup("Purchase request", [prRecord(data)]);
+  pushGroup("Other contracts for this request", data.contracts.filter((x) => x.id !== current.id).map(conRecord));
   return groups;
 }

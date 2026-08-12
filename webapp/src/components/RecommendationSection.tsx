@@ -23,6 +23,7 @@ import {
 import type { Theme } from "@wso2/oxygen-ui";
 import {
   Banknote,
+  ClipboardCheck,
   FileText,
   MessageCircleQuestion,
   Paperclip,
@@ -71,7 +72,7 @@ import { uploadContractDocument } from "../api/contracts";
 import { ContractContent } from "./ContractContent";
 import { EmailAutocomplete } from "./EmailAutocomplete";
 import { CurrencyInput } from "./CurrencyInput";
-import { ConfirmDialog } from "./ConfirmDialog";
+import { ConfirmDialog, useConfirmAction } from "./ConfirmDialog";
 import { EntityStatusBadge } from "./EntityStatusBadge";
 import { conRef, REC_APPROVAL_LABELS, REC_APPROVAL_TYPES } from "../types/api";
 import type {
@@ -112,7 +113,7 @@ function InlineError({ children }: { children: React.ReactNode }) {
 
 // RecommendationSection renders the PR's procurement recommendation: procurement adds
 // or edits it (once at least one quotation exists), and the named actors
-// (legal/security/budget owner) toggle approval and comment on their card.
+// (legal/security/compliance/budget owner) toggle approval and comment on their card.
 export function RecommendationSection({ pr }: { pr: PurchaseRequest }) {
   // Authoring the recommendation requires procurement access AND being on the PR
   // (assignee/collaborator/admin) — the same gate the backend enforces. Approver
@@ -344,6 +345,7 @@ function RecommendationView({
     onSuccess: invalidate,
     onError: (e) => setError(e instanceof ApiError ? e.message : "Failed to remove recommendation"),
   });
+  const [confirmNode, confirmRemove] = useConfirmAction();
 
   if (editing) {
     return (
@@ -414,7 +416,15 @@ function RecommendationView({
               size="small"
               color="error"
               disabled={deleteMutation.isPending}
-              onClick={() => deleteMutation.mutate()}
+              onClick={() =>
+                confirmRemove({
+                  title: "Remove recommendation",
+                  message:
+                    "Remove this recommendation? Its approval cards, comments and any RFI go with it, and a new recommendation starts from scratch.",
+                  confirmLabel: "Remove",
+                  onConfirm: () => deleteMutation.mutate(),
+                })
+              }
             >
               Remove
             </Button>
@@ -451,6 +461,7 @@ function RecommendationView({
 
       <RFICard pr={pr} rec={rec} procurement={procurement} />
       <ContractCard pr={pr} rec={rec} procurement={procurement} />
+      {confirmNode}
     </Stack>
   );
 }
@@ -549,6 +560,7 @@ function SubCardHead({ children }: { children: React.ReactNode }) {
 function ApprovalIcon({ type }: { type: string }) {
   if (type === "legal") return <Scale size={18} />;
   if (type === "security") return <ShieldCheck size={18} />;
+  if (type === "compliance") return <ClipboardCheck size={18} />;
   return <Banknote size={18} />;
 }
 
@@ -616,6 +628,7 @@ function RFICard({
     onSuccess: invalidate,
     onError: (e) => setError(e instanceof ApiError ? e.message : "Failed to remove attachment"),
   });
+  const [confirmNode, confirmRemove] = useConfirmAction();
 
   // Add-attachment shortcut from the read view (no description change).
   const addDocMutation = useMutation({
@@ -724,7 +737,15 @@ function RFICard({
               size="small"
               color="error"
               disabled={removeMutation.isPending}
-              onClick={() => removeMutation.mutate()}
+              onClick={() =>
+                confirmRemove({
+                  title: "Remove RFI",
+                  message:
+                    "Remove this request for information? Its description and all attachments are deleted.",
+                  confirmLabel: "Remove",
+                  onConfirm: () => removeMutation.mutate(),
+                })
+              }
             >
               Remove
             </Button>
@@ -748,7 +769,19 @@ function RFICard({
                       <IconButton
                         size="small"
                         disabled={removeDocMutation.isPending}
-                        onClick={() => removeDocMutation.mutate(d.id)}
+                        onClick={() =>
+                          confirmRemove({
+                            title: "Remove attachment",
+                            message: (
+                              <>
+                                Remove <strong>{d.filename}</strong> from this RFI? The file is
+                                deleted and cannot be recovered.
+                              </>
+                            ),
+                            confirmLabel: "Remove",
+                            onConfirm: () => removeDocMutation.mutate(d.id),
+                          })
+                        }
                         sx={{ ml: 0.25, color: "text.disabled", "&:hover": { color: "error.main" } }}
                       >
                         <X size={14} />
@@ -785,6 +818,7 @@ function RFICard({
             <InlineError>{error}</InlineError>
           </Box>
         )}
+        {confirmNode}
       </SubCardBody>
     </SubCard>
   );
@@ -834,6 +868,7 @@ function ContractCard({
     },
     onError: (e) => setError(e instanceof ApiError ? e.message : "Failed to remove contract"),
   });
+  const [confirmNode, confirmRemove] = useConfirmAction();
 
   if (contract) {
     // The whole contract can be removed only while it has no signed PDF (draft).
@@ -860,7 +895,20 @@ function ContractCard({
                 size="small"
                 color="error"
                 disabled={removeMutation.isPending}
-                onClick={() => removeMutation.mutate()}
+                onClick={() =>
+                  confirmRemove({
+                    title: "Remove contract",
+                    message: (
+                      <>
+                        Remove <strong>{conRef(contract.id)}</strong>? Its draft PDFs and notes are
+                        deleted, it disappears from the Contracts page, and this request goes back to{" "}
+                        <strong>vendor selected</strong>.
+                      </>
+                    ),
+                    confirmLabel: "Remove",
+                    onConfirm: () => removeMutation.mutate(),
+                  })
+                }
               >
                 Remove
               </Button>
@@ -874,6 +922,7 @@ function ContractCard({
             </Box>
           )}
           <ContractContent contract={contract} canEdit={procurement} invalidate={invalidate} />
+          {confirmNode}
         </SubCardBody>
       </SubCard>
     );
@@ -1040,7 +1089,7 @@ function ApprovalCard({
     onError: (e) => setError(e instanceof ApiError ? e.message : "Failed to add comment"),
   });
 
-  // Assignee — legal/security cards only (the budget card has no assignee).
+  // Assignee — team cards only (legal/security/compliance; the budget card has none).
   const assignable = t !== "budget";
   const { data: teams } = useQuery({
     queryKey: ["teams"],
@@ -1287,7 +1336,7 @@ function ApprovalCard({
         />
       )}
 
-      {/* Assignee (legal/security) */}
+      {/* Assignee (team cards: legal/security/compliance) */}
       {assignable && (approval.assignee || approval.can_assign) && (
         <Box
           sx={{
@@ -1386,7 +1435,7 @@ function ApprovalCard({
         />
       )}
 
-      {/* Comments (legal/security card-level; budget comments live on each step) */}
+      {/* Comments (team card-level; budget comments live on each step) */}
       {!isBudget && (approval.comments.length > 0 || approval.can_comment) && (
         <SubCardBody>
           {approval.comments.length > 0 && (
@@ -1820,6 +1869,7 @@ function BudgetStepCard({
     onSuccess: () => setReminded(true),
     onError: (e) => setError(e instanceof ApiError ? e.message : "Failed to send reminder"),
   });
+  const [confirmNode, confirmRemove] = useConfirmAction();
 
   const shownApprover =
     approverText ??
@@ -1980,7 +2030,20 @@ function BudgetStepCard({
                   <IconButton
                     size="small"
                     disabled={remove.isPending}
-                    onClick={() => remove.mutate()}
+                    onClick={() =>
+                      confirmRemove({
+                        title: "Remove approval step",
+                        message: (
+                          <>
+                            Remove the budget approval step for{" "}
+                            <strong>{shownApprover === "—" ? "this approver" : shownApprover}</strong>?
+                            Its decision and comments are deleted.
+                          </>
+                        ),
+                        confirmLabel: "Remove",
+                        onConfirm: () => remove.mutate(),
+                      })
+                    }
                     sx={{ color: "text.secondary", "&:hover": { color: "error.main" } }}
                   >
                     <Trash2 size={14} />
@@ -2026,6 +2089,7 @@ function BudgetStepCard({
           />
         </Box>
       )}
+      {confirmNode}
     </Card>
   );
 }

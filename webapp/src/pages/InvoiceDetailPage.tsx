@@ -16,9 +16,10 @@ import { useInvoice } from "../hooks/useInvoices";
 import { EntityStatusBadge } from "../components/EntityStatusBadge";
 import { InvoiceFields } from "../components/InvoiceFields";
 import { DocumentList } from "../components/DocumentList";
+import { useConfirmAction } from "../components/ConfirmDialog";
 import { ChainStepper } from "../components/ChainStepper";
 import { DirectParentCard } from "../components/CaseSections";
-import { RelatedDocuments } from "../components/RelatedDocuments";
+import { RelatedEntities } from "../components/RelatedEntities";
 import {
   deleteInvoice,
   deleteInvoiceDocument,
@@ -62,6 +63,7 @@ export function InvoiceDetailPage() {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<InvoiceInput | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [confirmNode, confirmDelete] = useConfirmAction();
 
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ["invoices", invId] });
@@ -117,13 +119,13 @@ export function InvoiceDetailPage() {
 
   if (isLoading)
     return (
-      <Box sx={{ maxWidth: 800, mx: "auto", p: { xs: 2, md: 4 } }}>
+      <Box sx={{ maxWidth: 1200, mx: "auto", p: { xs: 2, md: 4 } }}>
         <CircularProgress size={24} />
       </Box>
     );
   if (error || !inv)
     return (
-      <Box sx={{ maxWidth: 800, mx: "auto", p: { xs: 2, md: 4 } }}>
+      <Box sx={{ maxWidth: 1200, mx: "auto", p: { xs: 2, md: 4 } }}>
         <Alert severity="error">Failed to load invoice.</Alert>
       </Box>
     );
@@ -132,7 +134,7 @@ export function InvoiceDetailPage() {
   const setStatus = (s: InvoiceStatus) => statusMutation.mutate(s);
 
   return (
-    <Box sx={{ maxWidth: 800, mx: "auto", p: { xs: 2, md: 4 } }}>
+    <Box sx={{ maxWidth: 1200, mx: "auto", p: { xs: 2, md: 4 } }}>
       <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 2 }}>
         <MuiLink component={Link} to="/invoices" variant="body2">
           Invoices
@@ -223,9 +225,20 @@ export function InvoiceDetailPage() {
               <Button
                 variant="outlined"
                 color="error"
-                onClick={() => {
-                  if (confirm(`Delete ${invRef(inv.id)}? This cannot be undone.`)) deleteInvoiceMutation.mutate();
-                }}
+                onClick={() =>
+                  confirmDelete({
+                    title: "Delete invoice",
+                    message: (
+                      <>
+                        Delete <strong>{invRef(inv.id)}</strong>? Its line items and attached
+                        documents go with it, and the contract's invoiced total drops accordingly.
+                        This cannot be undone.
+                      </>
+                    ),
+                    confirmLabel: "Delete",
+                    onConfirm: () => deleteInvoiceMutation.mutate(),
+                  })
+                }
                 disabled={deleteInvoiceMutation.isPending}
               >
                 Delete
@@ -346,7 +359,8 @@ export function InvoiceDetailPage() {
         />
       </Box>
 
-      <RelatedDocuments prId={inv.purchase_request_id} current={{ kind: "invoice", id: inv.id }} />
+      <RelatedEntities prId={inv.purchase_request_id} current={{ kind: "invoice", id: inv.id }} />
+      {confirmNode}
     </Box>
   );
 }

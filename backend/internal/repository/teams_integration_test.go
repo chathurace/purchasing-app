@@ -21,7 +21,7 @@ func TestTeamsAndAssignee(t *testing.T) {
 	for _, tm := range teams {
 		byKey[tm.Key] = tm
 	}
-	for _, key := range []string{"legal", "security", "procurement"} {
+	for _, key := range []string{"legal", "security", "compliance", "procurement"} {
 		if byKey[key] == nil {
 			t.Fatalf("team %q missing from ListTeams", key)
 		}
@@ -104,10 +104,121 @@ func TestTeamsAndAssignee(t *testing.T) {
 	}
 }
 
+// TestComplianceApprovalCard covers the compliance card end-to-end: a compliance
+// team member is an approver of the PR (the recCardTypes array bind of
+// approvablePredicate), the PR shows up in their Approvals scope as pending, the
+// assignee round-trips, and the card gates RecommendationFullyApproved exactly
+// like legal/security.
+func TestComplianceApprovalCard(t *testing.T) {
+	repo, ctx := newTestRepo(t)
+
+	requester, err := repo.UpsertUser(ctx, "comp-req-"+t.Name(), "comp-req-"+t.Name()+"@example.com", "Requester")
+	if err != nil {
+		t.Fatalf("upsert requester: %v", err)
+	}
+	officer, err := repo.UpsertUser(ctx, "comp-off-"+t.Name(), "comp-off-"+t.Name()+"@example.com", "Officer")
+	if err != nil {
+		t.Fatalf("upsert officer: %v", err)
+	}
+	if err := repo.EnsureUserHasRole(ctx, officer.ID, model.RoleCompliance); err != nil {
+		t.Fatalf("grant compliance role: %v", err)
+	}
+	pr, err := repo.CreatePurchaseRequest(ctx, requester.ID, repository.PurchaseRequestInput{Title: "Compliance test"})
+	if err != nil {
+		t.Fatalf("create PR: %v", err)
+	}
+	vendor, err := repo.CreateVendor(ctx, repository.VendorInput{Name: "CompVendor " + t.Name()}, requester.ID)
+	if err != nil {
+		t.Fatalf("create vendor: %v", err)
+	}
+	t.Cleanup(func() {
+		bg := context.Background()
+		_, _ = repo.Pool().Exec(bg, `DELETE FROM purchase_requests WHERE id = $1`, pr.ID)
+		_, _ = repo.Pool().Exec(bg, `DELETE FROM vendors WHERE id = $1`, vendor.ID)
+		_, _ = repo.Pool().Exec(bg, `DELETE FROM users WHERE id = ANY($1)`, []int64{requester.ID, officer.ID})
+	})
+	if _, err := repo.CreateQuotation(ctx, pr.ID, repository.QuotationInput{VendorID: vendor.ID, TotalAmount: 10, Currency: "USD"}, requester.ID); err != nil {
+		t.Fatalf("create quotation: %v", err)
+	}
+	// Team-lead approval is what makes the PR visible to card actors.
+	if err := repo.RecordTeamLeadDecision(ctx, pr.ID, requester.ID, "approved", ""); err != nil {
+		t.Fatalf("team lead approve: %v", err)
+	}
+	if _, err := repo.CreateRecommendation(ctx, pr.ID, repository.RecommendationInput{
+		VendorID: vendor.ID, Description: "compliance please",
+		RequiredTypes: []string{model.RecApprovalCompliance},
+	}, requester.ID); err != nil {
+		t.Fatalf("create recommendation: %v", err)
+	}
+
+	compTypes := []string{model.RecApprovalCompliance}
+	if ok, err := repo.IsApproverForPR(ctx, pr.ID, officer.ID, officer.Email, compTypes); err != nil || !ok {
+		t.Fatalf("compliance member IsApproverForPR = %v (err %v), want true", ok, err)
+	}
+	// Holding a different team's role must not qualify.
+	if ok, _ := repo.IsApproverForPR(ctx, pr.ID, officer.ID, officer.Email, []string{model.RecApprovalLegal}); ok {
+		t.Fatal("legal role should not approve a compliance-only recommendation")
+	}
+	if ok, err := repo.HasApprovableWork(ctx, officer.ID, officer.Email, compTypes); err != nil || !ok {
+		t.Fatalf("HasApprovableWork = %v (err %v), want true", ok, err)
+	}
+
+	// The PR appears in the officer's Approvals scope, pending their card.
+	prs, err := repo.ListPurchaseRequests(ctx, officer.ID, officer.Email, false, false, compTypes,
+		repository.PRScopeApprovals, repository.PRListFilter{})
+	if err != nil {
+		t.Fatalf("list approvals: %v", err)
+	}
+	var found *repository.PurchaseRequest
+	for _, p := range prs {
+		if p.ID == pr.ID {
+			found = p
+		}
+	}
+	if found == nil {
+		t.Fatalf("PR %d missing from the compliance member's approvals list", pr.ID)
+	}
+	if found.MyApprovalState == nil || *found.MyApprovalState != "pending" {
+		t.Fatalf("my_approval_state = %v, want pending", found.MyApprovalState)
+	}
+
+	// Assignee round-trips, and the pending card blocks quotation selection.
+	if err := repo.SetRecAssignee(ctx, pr.ID, model.RecApprovalCompliance, &officer.ID); err != nil {
+		t.Fatalf("set compliance assignee: %v", err)
+	}
+	rec, err := repo.GetRecommendation(ctx, pr.ID)
+	if err != nil || rec == nil {
+		t.Fatalf("get recommendation: %v", err)
+	}
+	card := findApprovalTest(rec, model.RecApprovalCompliance)
+	if card == nil || card.AssigneeID == nil || *card.AssigneeID != officer.ID {
+		t.Fatalf("compliance assignee not persisted: %+v", card)
+	}
+	if ok, _ := repo.RecommendationFullyApproved(ctx, pr.ID); ok {
+		t.Fatal("fully approved with a pending compliance card")
+	}
+	if err := repo.SetRecApproval(ctx, pr.ID, model.RecApprovalCompliance, officer.ID); err != nil {
+		t.Fatalf("approve compliance card: %v", err)
+	}
+	if ok, err := repo.RecommendationFullyApproved(ctx, pr.ID); err != nil || !ok {
+		t.Fatalf("RecommendationFullyApproved = %v (err %v), want true", ok, err)
+	}
+	prs, err = repo.ListPurchaseRequests(ctx, officer.ID, officer.Email, false, false, compTypes,
+		repository.PRScopeApprovals, repository.PRListFilter{})
+	if err != nil {
+		t.Fatalf("list approvals after approve: %v", err)
+	}
+	for _, p := range prs {
+		if p.ID == pr.ID && (p.MyApprovalState == nil || *p.MyApprovalState != "approved") {
+			t.Fatalf("my_approval_state after approve = %v, want approved", p.MyApprovalState)
+		}
+	}
+}
+
 // TestProcurementTeamAdminMembers verifies that the Procurement team surfaces
 // procurement_admin holders in AdminMembers (they count as members for display)
 // while base Members stays scoped to plain `procurement` holders, and that teams
-// without an admin variant (legal/security) have no admin members.
+// without an admin variant (legal/security/compliance) have no admin members.
 func TestProcurementTeamAdminMembers(t *testing.T) {
 	repo, ctx := newTestRepo(t)
 
@@ -146,13 +257,15 @@ func TestProcurementTeamAdminMembers(t *testing.T) {
 		t.Errorf("base procurement user %d should NOT be in AdminMembers", base.ID)
 	}
 
-	// Legal/security have no admin variant.
-	legal, err := repo.GetTeamByKey(ctx, "legal")
-	if err != nil {
-		t.Fatalf("get legal team: %v", err)
-	}
-	if len(legal.AdminMembers) != 0 {
-		t.Errorf("legal team should have no admin members, got %d", len(legal.AdminMembers))
+	// Legal/security/compliance have no admin variant.
+	for _, key := range []string{"legal", "security", "compliance"} {
+		tm, err := repo.GetTeamByKey(ctx, key)
+		if err != nil {
+			t.Fatalf("get %s team: %v", key, err)
+		}
+		if len(tm.AdminMembers) != 0 {
+			t.Errorf("%s team should have no admin members, got %d", key, len(tm.AdminMembers))
+		}
 	}
 }
 
