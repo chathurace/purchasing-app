@@ -24,6 +24,28 @@ type Config struct {
 		InsecureSkipVerify bool   `yaml:"insecure_skip_verify"`
 	} `yaml:"oidc"`
 
+	// Session configures the backend-issued browser session cookie — the app's
+	// own session, independent of the IdP's token lifetimes (docs/sessions.md).
+	// The SPA logs in through the IdP once and exchanges that token for an
+	// HttpOnly cookie good for TTLDays of *idle* time, which is what stops the
+	// roughly-daily sign-outs. Enabled defaults to true; set `enabled: false` to
+	// fall back to Bearer-token-only auth (the pre-session behaviour).
+	Session struct {
+		Enabled *bool `yaml:"enabled"`  // default true
+		TTLDays int   `yaml:"ttl_days"` // idle lifetime; default 60
+		// CookieSecure defaults to true. Set false ONLY for local dev over
+		// http://localhost — a Secure cookie is not stored on a plain-HTTP page
+		// by every browser, and the __Host- name prefix requires Secure.
+		CookieSecure *bool `yaml:"cookie_secure"`
+		// CookieSameSite is "lax" (default) when the API is same-site with the
+		// SPA — localhost:5173 → localhost:8081 in dev, or a proxied /api in
+		// production — and "none" when the browser talks to the backend
+		// cross-site (e.g. a Choreo web app calling a Choreo API on another
+		// domain). "none" implies Secure and a Partitioned cookie, and is
+		// dropped outright by browsers that block third-party cookies.
+		CookieSameSite string `yaml:"cookie_samesite"`
+	} `yaml:"session"`
+
 	// SCIM configures the connection to the identity server's SCIM2 API, used to
 	// populate user-autocomplete suggestions from the org directory. When
 	// disabled (the default), directory lookups fall back to the local DB users,
@@ -141,6 +163,21 @@ func Load(path string) (*Config, error) {
 	if cfg.Email.SMTPPort == 0 {
 		cfg.Email.SMTPPort = 587
 	}
+	// Sessions are on by default (an absent `session:` block means "60-day
+	// cookie sessions, Secure, Lax"), so an existing deployment gets the fix
+	// without a config edit.
+	if cfg.Session.Enabled == nil {
+		cfg.Session.Enabled = boolPtr(true)
+	}
+	if cfg.Session.TTLDays <= 0 {
+		cfg.Session.TTLDays = 60
+	}
+	if cfg.Session.CookieSecure == nil {
+		cfg.Session.CookieSecure = boolPtr(true)
+	}
+	if cfg.Session.CookieSameSite == "" {
+		cfg.Session.CookieSameSite = "lax"
+	}
 	if cfg.SCIM.CacheTTLSeconds == 0 {
 		cfg.SCIM.CacheTTLSeconds = 600
 	}
@@ -169,6 +206,17 @@ func Load(path string) (*Config, error) {
 	}
 	if cfg.OIDC.ClientID == "" {
 		return nil, fmt.Errorf("oidc.client_id is required")
+	}
+	switch cfg.Session.CookieSameSite {
+	case "lax", "strict":
+	case "none":
+		// SameSite=None is only honoured on a Secure cookie; without this the
+		// browser silently drops it and the session looks broken.
+		if !*cfg.Session.CookieSecure {
+			return nil, fmt.Errorf("session.cookie_secure must be true when session.cookie_samesite is \"none\"")
+		}
+	default:
+		return nil, fmt.Errorf("session.cookie_samesite %q invalid (want \"lax\", \"none\" or \"strict\")", cfg.Session.CookieSameSite)
 	}
 	if cfg.SCIM.Enabled {
 		if cfg.SCIM.BaseURL == "" {
@@ -217,6 +265,10 @@ func Load(path string) (*Config, error) {
 
 	return &cfg, nil
 }
+
+// boolPtr is the defaulting helper for the *bool config fields, where nil means
+// "not set in the YAML" and so must be distinguishable from an explicit false.
+func boolPtr(v bool) *bool { return &v }
 
 // ConfigPath resolves the config file path: the -config flag value if given,
 // else the PURCHASING_CONFIG env var, else ./config.yaml.

@@ -1,0 +1,9 @@
+# Keep the build context small and the image build reproducible: dependencies
+# come from package-lock.json inside the image, never from the host tree, and a
+# stale host dist/ or tsbuildinfo must not shadow the fresh build.
+node_modules
+dist
+tsconfig.tsbuildinfo
+.env
+.env.local
+.DS_Store

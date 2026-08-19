@@ -1,15 +1,82 @@
 # Deployment guide
 
-Operational setup for deploying the purchasing app. This guide currently covers
-the **Google account configuration** only:
+Operational setup for deploying the purchasing app:
 
+- [Frontend — Choreo web app (Dockerfile build)](#frontend--choreo-web-app-dockerfile-build)
 - [Google Drive — document storage](#google-drive--document-storage)
 - [Gmail — outgoing mail](#gmail--outgoing-mail)
 
-Other deployment topics (database, Choreo build/runtime config, OIDC) are covered
-elsewhere and will be folded in here later. For the internals behind Drive
-storage see [file-storage.md](file-storage.md); this guide is the step-by-step
-"how to set up the Google side".
+Other deployment topics (database, OIDC) are covered elsewhere and will be folded
+in here later. For the internals behind Drive storage see
+[file-storage.md](file-storage.md); for session lifetime see
+[sessions.md](sessions.md).
+
+---
+
+## Frontend — Choreo web app (Dockerfile build)
+
+The web app component is built from **`webapp/Dockerfile`**, not from Choreo's
+static-web-app buildpack.
+
+**Why.** The buildpack serves `dist/` from its own server and ignores
+`webapp/public/nginx.conf`, so two things that file provides never took effect:
+
+1. the security headers (CSP, `X-Frame-Options`, `Referrer-Policy`, HSTS,
+   `Permissions-Policy`) — none were being sent;
+2. the **`/api` reverse proxy**, which is what makes the API same-origin with the
+   SPA. That in turn is what lets the 60-day session cookie be a **first-party
+   `SameSite=Lax`** cookie — working in every browser, Safari included — instead
+   of a partitioned third-party one that also needs the API gateway to return
+   `Access-Control-Allow-Credentials`. See [sessions.md](sessions.md).
+
+The image is a two-stage build: `node:20-alpine` runs `npm ci && npm run build`,
+then `nginxinc/nginx-unprivileged:1.27-alpine` serves `dist/` with our own
+`nginx.conf`, listening on **8080** as UID **10014** (Choreo requires a non-root
+UID in the 10000–20000 range). `webapp/.choreo/component.yaml` already declares
+that port.
+
+### Cutover checklist
+
+1. **Choreo component → Build**: set the build preset to **Dockerfile**, with
+   Docker context `apps/purchasing-app/webapp` (or the repo-relative path to
+   `webapp/`) and Dockerfile path `webapp/Dockerfile`. Rebuild + redeploy.
+2. **Proxy target**: `webapp/public/nginx.conf` has the backend base URL inlined
+   in the `/api/` block (`set $backend "…/purchasing-test-backend/v1.0";`).
+   Update it when the backend component or environment changes — it is baked into
+   the image, so this needs a rebuild.
+3. **Frontend config file** (DevOps → Configs & Secrets → Config File, mounted at
+   `/usr/share/nginx/html/config.js`): set **`apiBaseUrl: ''`** so the SPA calls
+   its own origin and the proxy takes over. Template:
+   `webapp/public/config.choreo.js`.
+4. **Backend config**: `session.cookie_samesite: "lax"` (with
+   `cookie_secure: true`). Keep the SPA origin in `cors.allowed_origins` — the
+   proxy passes `Origin` through unchanged and the backend's CSRF check compares
+   it against that list.
+5. **Verify in the browser** (the CSP is only enforced once this build is live):
+   a full login, a page navigation, a **document upload**, and **Settings → File
+   storage → Connect Google account / Choose folder** (the Google Identity
+   Services + Drive Picker scripts and iframes are the most CSP-sensitive part of
+   the app). Any violation prints in the console; to check before enforcing,
+   rename the header in `nginx.conf` to `Content-Security-Policy-Report-Only`,
+   redeploy, then flip it back.
+6. **Confirm the session cookie**: after signing in, DevTools → Application →
+   Cookies should show `__Host-purchasing_session`, `HttpOnly`, `Secure`,
+   `SameSite=Lax`, on the app's own origin. A browser restart should land you
+   straight back in the app without an IdP round trip.
+
+Verified locally against the built image (`docker run` + curl): headers served,
+SPA fallback intact (`/purchase-requests` → 200 `text/html`), `/nginx.conf` not
+exposed, a 5 MB upload passes the proxy (nginx `client_max_body_size` is raised
+to 32 MB for the 20 MB PDF cap), and `/api/v1/me` reached the real Choreo backend
+and returned its own 401.
+
+### If the component ever goes back to the buildpack
+
+`nginx.conf` becomes inert again, so the API is cross-site: set the absolute
+backend URL in `apiBaseUrl`, `apiAllowCredentials: true` in `config.js`,
+`session.cookie_samesite: "none"` on the backend, and have the gateway allow
+credentials — and expect Safari to drop the cookie regardless (it falls back to
+Bearer tokens and the old short sessions).
 
 ---
 

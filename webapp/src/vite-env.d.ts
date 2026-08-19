@@ -20,6 +20,11 @@ interface AppConfig {
   apiBaseUrl?: string;
   oidcAuthority?: string;
   oidcClientId?: string;
+  // Forces the backend session cookie on (true) or off (false) for a
+  // cross-site API. Leave unset to use the automatic rule in api/client.ts:
+  // cookies when the API shares the page's host, Bearer tokens otherwise.
+  // See docs/sessions.md.
+  apiAllowCredentials?: boolean;
 }
 
 interface Window {

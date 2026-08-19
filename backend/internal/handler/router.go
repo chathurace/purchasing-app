@@ -62,11 +62,21 @@ func NewRouter(d Deps) http.Handler {
 		Log:      d.Log,
 	}
 
+	session := &SessionHandler{Repo: d.Repo, Session: d.Auth.SessionConfig(), Log: d.Log}
+
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Group(func(r chi.Router) {
 			r.Use(d.Auth.Authenticate)
 
 			r.Get("/me", users.Me)
+
+			// Backend-issued browser session (migration 052, docs/sessions.md).
+			// Create sits inside this authenticated group on purpose: the caller
+			// proves identity with the IdP token (or an existing cookie) and gets
+			// back the long-lived cookie every later request uses.
+			r.Post("/auth/session", session.Create)
+			r.Delete("/auth/session", session.Delete)     // sign out here
+			r.Delete("/auth/sessions", session.DeleteAll) // sign out everywhere
 
 			// Role-based home dashboard: count tiles + recent-activity feeds,
 			// scoped to the caller's roles (read-only aggregation).

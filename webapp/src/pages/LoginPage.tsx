@@ -51,7 +51,7 @@ function useActiveFlowStep(count: number) {
 }
 
 export function LoginPage() {
-  const { user, loading, loginError, login } = useAuth();
+  const { authenticated, loading, loginError, sessionExpired, login } = useAuth();
   const activeStep = useActiveFlowStep(FLOW_STEPS.length);
 
   if (loading)
@@ -60,7 +60,7 @@ export function LoginPage() {
         <Typography color="text.secondary">Loading…</Typography>
       </Box>
     );
-  if (user) return <Navigate to="/" replace />;
+  if (authenticated) return <Navigate to="/" replace />;
 
   return (
     <Box
@@ -291,6 +291,15 @@ export function LoginPage() {
           <Typography sx={{ fontSize: 14.5, lineHeight: 1.6, color: "text.secondary", mb: 4.25 }}>
             Sign in with your WSO2 account to raise a purchase request or track an existing one.
           </Typography>
+
+          {/* Only shown when a working session was rejected mid-use (a 60-day
+              idle expiry, a revoked session, or "sign out everywhere") — not to
+              a visitor who simply has not signed in yet. */}
+          {sessionExpired && !loginError && (
+            <Alert severity="info" sx={{ mb: 2 }}>
+              Your session has expired. Please sign in again to continue.
+            </Alert>
+          )}
 
           {loginError && (
             <Alert severity="error" sx={{ mb: 2 }}>

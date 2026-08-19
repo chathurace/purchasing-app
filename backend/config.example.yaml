@@ -16,6 +16,23 @@ oidc:
   client_id: "<wso2-client-id>"
   insecure_skip_verify: true   # dev only — trusts the self-signed WSO2 cert
 
+# Backend-issued browser session — the app's own session cookie, independent of
+# the IdP's token lifetimes (see docs/sessions.md). The SPA signs in through the
+# IdP once and exchanges that token for an HttpOnly cookie that survives token
+# expiry and browser restarts, which is what stops the roughly-daily sign-outs.
+# The whole block is optional: omitting it gives 60-day Secure/Lax cookies.
+session:
+  enabled: true
+  ttl_days: 60                 # idle lifetime — every request slides it forward
+  # Dev over http://localhost: Safari (and older Firefox) refuse to store a
+  # Secure cookie on a plain-HTTP page. Set true for any real deployment.
+  cookie_secure: false
+  # "lax" when the API is same-site with the SPA (localhost:5173 → :8081, or a
+  # proxied /api). Use "none" only for a genuinely cross-site API, which also
+  # needs cookie_secure: true, the gateway to allow credentials, and
+  # `apiAllowCredentials: true` in the webapp's config.js.
+  cookie_samesite: "lax"
+
 # User directory (SCIM2) — powers name/email autocomplete from the connected
 # identity server. Needs a machine-to-machine (client-credentials) app in WSO2 IS
 # / Asgardeo holding the `internal_user_mgt_list` scope. When enabled is false
