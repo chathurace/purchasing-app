@@ -79,15 +79,41 @@ func main() {
 		FromAddress: cfg.Email.FromAddress,
 	}, log)
 
+	// Backend-issued browser sessions (migration 052, docs/sessions.md). The SPA
+	// trades its IdP token for an HttpOnly cookie once, then authenticates with
+	// that cookie for session.ttl_days of idle time — so how long a user stays
+	// signed in is this app's decision, not Asgardeo's.
+	sessionCfg := middleware.SessionConfig{
+		Enabled:        *cfg.Session.Enabled,
+		TTL:            time.Duration(cfg.Session.TTLDays) * 24 * time.Hour,
+		Secure:         *cfg.Session.CookieSecure,
+		SameSite:       sameSiteFromConfig(cfg.Session.CookieSameSite),
+		AllowedOrigins: cfg.CORS.AllowedOrigins,
+	}
+	if sessionCfg.Enabled {
+		log.Info().
+			Dur("ttl", sessionCfg.TTL).
+			Str("samesite", cfg.Session.CookieSameSite).
+			Bool("secure", sessionCfg.Secure).
+			Str("cookie", sessionCfg.CookieName()).
+			Msg("cookie sessions enabled")
+	} else {
+		log.Warn().Msg("cookie sessions disabled — clients must present a Bearer token on every request")
+	}
+
 	auth, err := middleware.NewAuth(ctx, middleware.AuthConfig{
 		Issuer:              cfg.OIDC.Issuer,
 		DiscoveryURL:        cfg.OIDC.DiscoveryURL,
 		ClientID:            cfg.OIDC.ClientID,
 		InsecureSkipVerify:  cfg.OIDC.InsecureSkipVerify,
 		BootstrapAdminEmail: cfg.BootstrapAdmin.Email,
+		Session:             sessionCfg,
 	}, repo, log)
 	if err != nil {
 		log.Fatal().Err(err).Msg("init OIDC")
+	}
+	if sessionCfg.Enabled {
+		go pruneSessions(ctx, repo, log)
 	}
 
 	// User directory for name/email autocomplete. When SCIM is disabled, it falls
@@ -173,6 +199,48 @@ func main() {
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer shutdownCancel()
 	_ = srv.Shutdown(shutdownCtx)
+}
+
+// sameSiteFromConfig maps the config.yaml session.cookie_samesite value onto
+// Go's enum. config.Load has already rejected anything else.
+func sameSiteFromConfig(v string) http.SameSite {
+	switch v {
+	case "none":
+		return http.SameSiteNoneMode
+	case "strict":
+		return http.SameSiteStrictMode
+	default:
+		return http.SameSiteLaxMode
+	}
+}
+
+// pruneSessions deletes expired and long-revoked session rows — once at boot,
+// then daily. Nothing depends on this for correctness (TouchUserSession ignores
+// dead rows); it only keeps the table from growing without bound.
+func pruneSessions(ctx context.Context, repo *repository.Repository, log zerolog.Logger) {
+	prune := func() {
+		pruneCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+		n, err := repo.DeleteExpiredUserSessions(pruneCtx)
+		if err != nil {
+			log.Error().Err(err).Msg("session cleanup")
+			return
+		}
+		if n > 0 {
+			log.Info().Int64("deleted", n).Msg("pruned expired/revoked sessions")
+		}
+	}
+	prune()
+	ticker := time.NewTicker(24 * time.Hour)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			prune()
+		}
+	}
 }
 
 // initStorage builds the runtime-swappable StorageManager. For gdrive it prefers

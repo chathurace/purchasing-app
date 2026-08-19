@@ -23,7 +23,12 @@ export const userManager = new UserManager({
   post_logout_redirect_uri: postLogoutRedirectUri,
   scope: import.meta.env.VITE_OIDC_SCOPE || "openid profile email",
   response_type: "code",
-  automaticSilentRenew: true,
+  // Silent renew is deliberately OFF: the app's session is the backend cookie
+  // (docs/sessions.md), so the ID token is needed exactly once — to mint that
+  // cookie — and letting it expire is no longer a logout. Renewing it in a
+  // hidden iframe would also require registering a silent-callback redirect URI
+  // with Asgardeo for no gain.
+  automaticSilentRenew: false,
   // WSO2 IS does not always expose a working end_session endpoint in dev; we
   // log out locally only (see AuthContext.logout).
   userStore: new WebStorageStateStore({ store: window.localStorage }),
@@ -32,7 +37,12 @@ export const userManager = new UserManager({
 // We send the ID token (not the access token) as the API bearer: it is
 // audience-restricted to this client and carries the OIDC profile claims
 // (email, name) that the backend verifies. WSO2 access tokens often omit them.
+//
+// An expired user is treated as no token at all: it would be rejected anyway,
+// and the backend checks the session cookie before the Authorization header, so
+// sending a dead token would only add noise to the logs.
 export async function getAccessToken(): Promise<string | null> {
   const user = await userManager.getUser();
-  return user?.id_token ?? user?.access_token ?? null;
+  if (!user || user.expired) return null;
+  return user.id_token ?? user.access_token ?? null;
 }

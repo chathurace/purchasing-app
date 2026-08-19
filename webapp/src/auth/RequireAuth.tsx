@@ -4,7 +4,9 @@ import { Box, Typography } from "@wso2/oxygen-ui";
 import { useAuth } from "./AuthContext";
 
 export function RequireAuth({ children }: { children: ReactNode }) {
-  const { user, loading } = useAuth();
+  // `authenticated`, not the OIDC user: in the steady state the backend session
+  // cookie is the credential and this tab holds no live IdP token at all.
+  const { authenticated, loading } = useAuth();
   if (loading) {
     return (
       <Box sx={{ p: 4 }}>
@@ -12,7 +14,7 @@ export function RequireAuth({ children }: { children: ReactNode }) {
       </Box>
     );
   }
-  if (!user) {
+  if (!authenticated) {
     return <Navigate to="/login" replace />;
   }
   return <>{children}</>;

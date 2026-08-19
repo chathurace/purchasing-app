@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -46,6 +47,7 @@ type AuthMiddleware struct {
 	verifier            *oidc.IDTokenVerifier
 	repo                *repository.Repository
 	bootstrapAdminEmail string
+	session             SessionConfig
 	log                 zerolog.Logger
 }
 
@@ -56,6 +58,10 @@ type AuthConfig struct {
 	ClientID            string
 	InsecureSkipVerify  bool
 	BootstrapAdminEmail string
+	// Session is the backend-issued cookie session config (see session.go).
+	// A zero value (Enabled false) leaves the middleware Bearer-only, exactly
+	// as it behaved before cookie sessions existed.
+	Session SessionConfig
 }
 
 func NewAuth(ctx context.Context, cfg AuthConfig, repo *repository.Repository, log zerolog.Logger) (*AuthMiddleware, error) {
@@ -100,15 +106,32 @@ func NewAuth(ctx context.Context, cfg AuthConfig, repo *repository.Repository, l
 		verifier:            verifier,
 		repo:                repo,
 		bootstrapAdminEmail: cfg.BootstrapAdminEmail,
+		session:             cfg.Session,
 		log:                 log,
 	}, nil
 }
+
+// SessionConfig exposes the session settings the middleware was built with, so
+// the session handler and the router share exactly one copy.
+func (a *AuthMiddleware) SessionConfig() SessionConfig { return a.session }
 
 func (a *AuthMiddleware) Authenticate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Request-scoped logger installed by middleware.RequestLogger — carries
 		// the request_id, and (once we resolve the caller below) the user.
 		reqLog := zerolog.Ctx(r.Context())
+
+		// Backend-issued session cookie (migration 052, docs/sessions.md).
+		// Checked BEFORE the Bearer path because it is how the SPA authenticates
+		// for the whole life of a session — the IdP token is presented exactly
+		// once, at POST /api/v1/auth/session, to mint this cookie. A stale
+		// Bearer token the browser still happens to hold is therefore ignored
+		// rather than rejected.
+		if a.session.Enabled {
+			if a.authenticateSession(w, r, next, reqLog) {
+				return
+			}
+		}
 
 		rawToken := extractBearerToken(r)
 		if rawToken == "" {
@@ -172,48 +195,111 @@ func (a *AuthMiddleware) Authenticate(next http.Handler) http.Handler {
 			return
 		}
 
-		// Enrich the request-scoped logger in place: every downstream line and
-		// the access-log line now carry the resolved caller.
-		reqLog.UpdateContext(func(c zerolog.Context) zerolog.Context {
-			return c.Int64("user_id", user.ID).Str("user", user.Email)
-		})
-
-		// Deactivated users keep their data and stay linked, but cannot enter.
-		if !user.IsActive {
-			reqLog.Warn().Msg("login refused: account deactivated")
-			http.Error(w, "account deactivated", http.StatusForbidden)
-			return
-		}
-
-		// Auto-provision: first-time users (no roles yet) default to staff.
-		if err := a.repo.GrantDefaultRoleIfNone(r.Context(), user.ID, model.RoleStaff); err != nil {
-			reqLog.Warn().Err(err).Msg("grant default staff role")
-		}
-
-		// Bootstrap admin: idempotently ensure the configured identity is an admin.
-		// Match across the claims that may carry it (email, username, or sub).
-		if a.bootstrapAdminEmail != "" {
-			if email == a.bootstrapAdminEmail ||
+		// Bootstrap admin match: any of the claims that may carry the configured
+		// identity (email, username, or sub).
+		isBootstrapAdmin := a.bootstrapAdminEmail != "" &&
+			(email == a.bootstrapAdminEmail ||
 				claims.PreferredUsername == a.bootstrapAdminEmail ||
 				claims.Username == a.bootstrapAdminEmail ||
-				claims.Sub == a.bootstrapAdminEmail {
-				if err := a.repo.EnsureUserHasRole(r.Context(), user.ID, model.RoleAdmin); err != nil {
-					reqLog.Warn().Err(err).Msg("ensure bootstrap admin role")
-				}
-			}
-		}
+				claims.Sub == a.bootstrapAdminEmail)
 
-		roles, err := a.repo.GetUserRoles(r.Context(), user.ID)
-		if err != nil {
-			reqLog.Error().Err(err).Msg("get user roles")
-			http.Error(w, "internal error", http.StatusInternalServerError)
-			return
-		}
-
-		ctx := context.WithValue(r.Context(), CtxUser, user)
-		ctx = context.WithValue(ctx, CtxRoles, roles)
-		next.ServeHTTP(w, r.WithContext(ctx))
+		a.serveAuthenticated(w, r, next, reqLog, user, "", isBootstrapAdmin)
 	})
+}
+
+// authenticateSession resolves a request carrying a backend-issued session
+// cookie. It reports handled=true once it has either served the request or
+// written a response, so the caller must return immediately. handled=false means
+// "no cookie presented" — fall through to the Bearer path.
+func (a *AuthMiddleware) authenticateSession(w http.ResponseWriter, r *http.Request, next http.Handler, reqLog *zerolog.Logger) (handled bool) {
+	token := SessionTokenFromRequest(r, a.session)
+	if token == "" {
+		return false
+	}
+
+	// CSRF: cookies ride along automatically on cross-site requests, so writes
+	// must additionally prove same-origin. See CheckCSRFOrigin.
+	if !CheckCSRFOrigin(r, a.session.AllowedOrigins) {
+		reqLog.Warn().Str("origin", r.Header.Get("Origin")).Msg("cookie-authenticated write rejected: cross-origin request")
+		http.Error(w, "cross-origin request rejected", http.StatusForbidden)
+		return true
+	}
+
+	userID, err := a.repo.TouchUserSession(r.Context(), HashSessionToken(token), a.session.TTL)
+	if err != nil {
+		// Unknown, expired, or revoked. Clear the cookie so the browser stops
+		// resending a dead token on every request until it ages out.
+		if !errors.Is(err, repository.ErrSessionInvalid) {
+			reqLog.Error().Err(err).Msg("session lookup failed")
+		}
+		ClearSessionCookie(w, a.session)
+		http.Error(w, "session expired", http.StatusUnauthorized)
+		return true
+	}
+
+	user, err := a.repo.GetUserByID(r.Context(), userID)
+	if err != nil || user == nil {
+		// The session outlived its user (deleted account). ON DELETE CASCADE
+		// normally removes the row first, so this is the belt-and-braces branch.
+		ClearSessionCookie(w, a.session)
+		http.Error(w, "session expired", http.StatusUnauthorized)
+		return true
+	}
+
+	a.serveAuthenticated(w, r, next, reqLog, user, token,
+		a.bootstrapAdminEmail != "" && user.Email == a.bootstrapAdminEmail)
+	return true
+}
+
+// serveAuthenticated is the tail both credential paths share: the deactivation
+// gate, default-role provisioning, the bootstrap-admin grant, and the role
+// lookup that populates the request context. sessionToken is the cookie session
+// the request authenticated with ("" for Bearer), carried in the context so the
+// logout handler can revoke exactly that session.
+func (a *AuthMiddleware) serveAuthenticated(
+	w http.ResponseWriter, r *http.Request, next http.Handler, reqLog *zerolog.Logger,
+	user *repository.User, sessionToken string, isBootstrapAdmin bool,
+) {
+	// Enrich the request-scoped logger in place: every downstream line and
+	// the access-log line now carry the resolved caller.
+	reqLog.UpdateContext(func(c zerolog.Context) zerolog.Context {
+		return c.Int64("user_id", user.ID).Str("user", user.Email)
+	})
+
+	// Deactivated users keep their data and stay linked, but cannot enter.
+	if !user.IsActive {
+		reqLog.Warn().Msg("login refused: account deactivated")
+		http.Error(w, "account deactivated", http.StatusForbidden)
+		return
+	}
+
+	// Auto-provision: first-time users (no roles yet) default to staff.
+	if err := a.repo.GrantDefaultRoleIfNone(r.Context(), user.ID, model.RoleStaff); err != nil {
+		reqLog.Warn().Err(err).Msg("grant default staff role")
+	}
+
+	// Bootstrap admin: idempotently ensure the configured identity is an admin.
+	// Applied on the cookie path too, so a 60-day session never becomes a
+	// 60-day window in which that account can stay demoted.
+	if isBootstrapAdmin {
+		if err := a.repo.EnsureUserHasRole(r.Context(), user.ID, model.RoleAdmin); err != nil {
+			reqLog.Warn().Err(err).Msg("ensure bootstrap admin role")
+		}
+	}
+
+	roles, err := a.repo.GetUserRoles(r.Context(), user.ID)
+	if err != nil {
+		reqLog.Error().Err(err).Msg("get user roles")
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	ctx := context.WithValue(r.Context(), CtxUser, user)
+	ctx = context.WithValue(ctx, CtxRoles, roles)
+	if sessionToken != "" {
+		ctx = ContextWithSessionToken(ctx, sessionToken)
+	}
+	next.ServeHTTP(w, r.WithContext(ctx))
 }
 
 func extractBearerToken(r *http.Request) string {
