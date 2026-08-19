@@ -250,6 +250,51 @@ Whenever test data is added by claude, clean up all those test data after testin
   chip; the list page shows a **Priority** column. Process event `update_pr_priority` with the new
   level as the qualifier. Frontend `PRPriority`/`PR_PRIORITIES`/`prPriority`/`prPriorityColor` in
   `types/api.ts` are the one place the levels and their colours are defined.
+- **Sessions (60-day sign-ins)** — see `docs/sessions.md` (migration `052`). Ported from
+  `../finance-apps`. How long a user stays signed in is the **app's** decision, not the IdP's: the
+  SPA logs in through Asgardeo exactly as before, exchanges that token **once** at
+  `POST /api/v1/auth/session` for an **HttpOnly cookie**, and every later request authenticates with
+  the cookie — `middleware.Authenticate` checks it **before** the `Authorization` header, so a stale
+  token the browser still holds is ignored rather than rejected. `user_sessions` stores only the
+  **SHA-256 hash** of a 256-bit token; `Repository.TouchUserSession` resolves it *and* slides
+  `expires_at` forward in one statement, so 60 days means 60 days **idle** (`GREATEST`, so shortening
+  the TTL never extends existing rows; `last_used_at` only rewritten when >1min stale). Backend in
+  `middleware/session.go` + `repository/user_sessions.go` + `handler/auth_session.go`;
+  `DELETE .../auth/session` signs out **server-side** (a cleared cookie alone would leave a captured
+  one working) and `DELETE .../auth/sessions` is sign-out-everywhere — the containment lever that
+  makes a long-lived cookie safe. Cookie-authenticated **writes** are CSRF-guarded twice (SameSite +
+  `CheckCSRFOrigin` against `cors.allowed_origins`); the bootstrap-admin grant and deactivation gate
+  run on the cookie path too (`serveAuthenticated`), and `pruneSessions` deletes dead rows daily.
+  Config is a new **`session:`** block (`enabled` default **true**, `ttl_days` 60, `cookie_secure`
+  true — set **false** for dev over http://localhost, `cookie_samesite` `lax`|`none`, where `none`
+  implies Secure + Partitioned); `enabled: false` is the rollback to Bearer-only. Frontend:
+  `api/session.ts`, `apiCredentials()` in `api/client.ts` (cookie **on** for a same-origin/same-host
+  API, **off** cross-site unless `config.js` sets `apiAllowCredentials` — `credentials: 'include'`
+  makes the browser *require* `Access-Control-Allow-Credentials`, so enabling it against an
+  unprepared gateway breaks every request), a 401 → `session-expired` event → login page with an
+  "expired" notice, and `AuthContext` boots **cookie → token-in-this-tab → login**. Signed-in state
+  is `authenticated`, **not** the OIDC user (the steady-state tab holds no live token);
+  `automaticSilentRenew` is **off** and token expiry is no longer a logout — that was the cause of the
+  daily sign-outs. Same-origin `/api` (below) is what makes the cookie first-party. No new event
+  action (the app does not audit logins).
+- **Frontend deployment (Dockerfile build)** — see
+  `docs/deployment-guide.md` → "Frontend — Choreo web app". The Choreo web app component is built
+  from **`webapp/Dockerfile`** (`node:20-alpine` → `npm ci && npm run build`, then
+  `nginxinc/nginx-unprivileged:1.27-alpine` serving `dist/` on **8080** as UID **10014**), *not* the
+  static-web-app buildpack — which serves `dist/` from its own server and **ignores
+  `webapp/public/nginx.conf`**, so the security headers were never sent and no proxy was possible.
+  Our nginx adds both: the header set (CSP / frame / referrer / HSTS / permissions) and a **`/api`
+  reverse proxy** to the backend, which makes the API **same-origin** so the session cookie is a
+  first-party `SameSite=Lax` one (works in Safari; needs no gateway credentials change) — hence
+  `apiBaseUrl: ''` in the mounted `config.js` and `session.cookie_samesite: "lax"`. The proxy target
+  is inlined in `nginx.conf` (`set $backend …`), so changing environment means a rebuild;
+  `client_max_body_size 32m` covers the 20MB PDF cap and the read timeout outwaits the 180s
+  extraction. The **CSP only becomes real on this build**, so it enumerates what the app actually
+  loads: Google Fonts (`fonts.googleapis.com`/`gstatic`) from `index.html`, Asgardeo, and the
+  `apis.google.com`/`accounts.google.com`/`docs.google.com` scripts + iframe behind
+  **Settings → File storage** (Drive Picker) — a blocked script there fails silently, so re-verify
+  that flow after any CSP edit. `.dockerignore` keeps host `node_modules`/`dist`/`tsbuildinfo` out of
+  the build, and the Dockerfile deletes the `nginx.conf` copy Vite puts in `dist/`.
 - **User management (admin)** — see `docs/user-management.md`. Admins add users *by email* (pending
   invites — `users.sub` is now nullable, claimed on first login by email match), grant/revoke roles
   (`staff` is a non-removable baseline), and deactivate users (`users.is_active`; blocks login). An
