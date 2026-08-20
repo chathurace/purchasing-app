@@ -280,7 +280,7 @@ Whenever test data is added by claude, clean up all those test data after testin
 - **Frontend deployment (Dockerfile build)** — see
   `docs/deployment-guide.md` → "Frontend — Choreo web app". The Choreo web app component is built
   from **`webapp/Dockerfile`** (`node:20-alpine` → `npm ci && npm run build`, then
-  `nginxinc/nginx-unprivileged:1.27-alpine` serving `dist/` on **8080** as UID **10014**), *not* the
+  `nginxinc/nginx-unprivileged:1.30-alpine` serving `dist/` on **8080** as UID **10014**), *not* the
   static-web-app buildpack — which serves `dist/` from its own server and **ignores
   `webapp/public/nginx.conf`**, so the security headers were never sent and no proxy was possible.
   Our nginx adds both: the header set (CSP / frame / referrer / HSTS / permissions) and a **`/api`
@@ -294,7 +294,12 @@ Whenever test data is added by claude, clean up all those test data after testin
   `apis.google.com`/`accounts.google.com`/`docs.google.com` scripts + iframe behind
   **Settings → File storage** (Drive Picker) — a blocked script there fails silently, so re-verify
   that flow after any CSP edit. `.dockerignore` keeps host `node_modules`/`dist`/`tsbuildinfo` out of
-  the build, and the Dockerfile deletes the `nginx.conf` copy Vite puts in `dist/`.
+  the build, and the Dockerfile deletes the `nginx.conf` copy Vite puts in `dist/`. **Choreo scans the
+  final image with Trivy and fails the build on any CRITICAL OS-package finding** — hence the current
+  base tag (the `1.27-alpine`/Alpine 3.21 line fails on openssl CVE-2026-31789) plus
+  `apk upgrade --no-cache libssl3 libcrypto3` so a lagging base can't reintroduce it. On a future
+  failure, bump the tag — don't add an ignore; scan locally with `aquasec/trivy` first
+  (command in `docs/deployment-guide.md`).
 - **User management (admin)** — see `docs/user-management.md`. Admins add users *by email* (pending
   invites — `users.sub` is now nullable, claimed on first login by email match), grant/revoke roles
   (`staff` is a non-removable baseline), and deactivate users (`users.is_active`; blocks login). An

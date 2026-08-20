@@ -30,10 +30,38 @@ static-web-app buildpack.
    `Access-Control-Allow-Credentials`. See [sessions.md](sessions.md).
 
 The image is a two-stage build: `node:20-alpine` runs `npm ci && npm run build`,
-then `nginxinc/nginx-unprivileged:1.27-alpine` serves `dist/` with our own
+then `nginxinc/nginx-unprivileged:1.30-alpine` serves `dist/` with our own
 `nginx.conf`, listening on **8080** as UID **10014** (Choreo requires a non-root
 UID in the 10000–20000 range). `webapp/.choreo/component.yaml` already declares
 that port.
+
+### The image scan gate
+
+Choreo scans the built image with **Trivy and fails the build on any CRITICAL
+OS-package finding** — the report appears in the build log, no deploy happens.
+Only the *final* stage is scanned, so the Node build stage doesn't matter, and
+because it is a multi-stage build no JS dependencies are in the scanned image
+either (`Number of language-specific files num=0`).
+
+Two things in the Dockerfile keep that gate green, and both are load-bearing:
+
+- **The base tag must be current.** `1.27-alpine` is pinned to Alpine 3.21,
+  whose openssl (3.3.3-r0) is behind the CVE-2026-31789 fix — that is 2 CRITICALs
+  and a failed build. `1.30-alpine` is Alpine 3.24 with openssl 3.5.x.
+- **`apk upgrade --no-cache libssl3 libcrypto3`** in the final stage picks up any
+  patch published after the base image was built, so a base tag that lags by a
+  few weeks cannot reintroduce the same class of finding.
+
+When a future build fails this way, bump the base tag rather than adding an
+ignore. To check before pushing:
+
+```bash
+docker build -t purchasing-web:scan webapp
+docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+  aquasec/trivy:latest image --scanners vuln --severity CRITICAL,HIGH purchasing-web:scan
+```
+
+Verified on `1.30-alpine`: 0 findings, nginx 1.30.4, openssl 3.5.7-r0.
 
 ### Cutover checklist
 

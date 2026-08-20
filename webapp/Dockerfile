@@ -32,9 +32,19 @@ RUN npm run build
 # nginx-unprivileged: listens on 8080 and writes its temp/pid files under /tmp,
 # so it runs fine as an arbitrary non-root UID. Choreo requires the container
 # user to be non-root with a UID in the 10000-20000 range.
-FROM nginxinc/nginx-unprivileged:1.27-alpine
+#
+# Keep this tag current: Choreo scans the built image with Trivy and **fails the
+# build on any CRITICAL OS-package finding**. The 1.27-alpine line is pinned to
+# Alpine 3.21, whose openssl (3.3.3-r0) is short of the CVE-2026-31789 fix, so it
+# no longer passes. 1.30-alpine is Alpine 3.24 with openssl 3.5.x.
+FROM nginxinc/nginx-unprivileged:1.30-alpine
 
 USER root
+# Belt and braces for the same gate: pick up any openssl/libssl patch released
+# after this base image was built, so a lagging tag cannot reintroduce a
+# CRITICAL. Targeted rather than a blanket `apk upgrade`, to keep the layer
+# small and the image predictable.
+RUN apk upgrade --no-cache libssl3 libcrypto3
 COPY --from=build /app/dist /usr/share/nginx/html
 COPY public/nginx.conf /etc/nginx/conf.d/default.conf
 # nginx.conf lives in public/, so Vite also copies it into dist/ — delete that
