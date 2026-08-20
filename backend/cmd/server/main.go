@@ -86,6 +86,7 @@ func main() {
 	sessionCfg := middleware.SessionConfig{
 		Enabled:        *cfg.Session.Enabled,
 		TTL:            time.Duration(cfg.Session.TTLDays) * 24 * time.Hour,
+		MaxLifetime:    time.Duration(*cfg.Session.MaxDays) * 24 * time.Hour,
 		Secure:         *cfg.Session.CookieSecure,
 		SameSite:       sameSiteFromConfig(cfg.Session.CookieSameSite),
 		AllowedOrigins: cfg.CORS.AllowedOrigins,
@@ -93,10 +94,17 @@ func main() {
 	if sessionCfg.Enabled {
 		log.Info().
 			Dur("ttl", sessionCfg.TTL).
+			Dur("max_lifetime", sessionCfg.MaxLifetime).
 			Str("samesite", cfg.Session.CookieSameSite).
 			Bool("secure", sessionCfg.Secure).
 			Str("cookie", sessionCfg.CookieName()).
 			Msg("cookie sessions enabled")
+		if sessionCfg.MaxLifetime <= 0 {
+			// Deliberate but worth shouting about: with no ceiling, a session
+			// used at least once per idle window never expires on its own, so an
+			// IdP-side disable is only honoured once someone revokes by hand.
+			log.Warn().Msg("session.max_days is 0 — sessions have NO absolute lifetime cap")
+		}
 	} else {
 		log.Warn().Msg("cookie sessions disabled — clients must present a Bearer token on every request")
 	}
@@ -113,7 +121,7 @@ func main() {
 		log.Fatal().Err(err).Msg("init OIDC")
 	}
 	if sessionCfg.Enabled {
-		go pruneSessions(ctx, repo, log)
+		go pruneSessions(ctx, repo, sessionCfg.MaxLifetime, log)
 	}
 
 	// User directory for name/email autocomplete. When SCIM is disabled, it falls
@@ -214,14 +222,15 @@ func sameSiteFromConfig(v string) http.SameSite {
 	}
 }
 
-// pruneSessions deletes expired and long-revoked session rows — once at boot,
-// then daily. Nothing depends on this for correctness (TouchUserSession ignores
-// dead rows); it only keeps the table from growing without bound.
-func pruneSessions(ctx context.Context, repo *repository.Repository, log zerolog.Logger) {
+// pruneSessions deletes expired, long-revoked and over-cap session rows — once
+// at boot, then daily. Nothing depends on this for correctness (TouchUserSession
+// enforces both deadlines itself); it only keeps the table from growing without
+// bound.
+func pruneSessions(ctx context.Context, repo *repository.Repository, maxLifetime time.Duration, log zerolog.Logger) {
 	prune := func() {
 		pruneCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 		defer cancel()
-		n, err := repo.DeleteExpiredUserSessions(pruneCtx)
+		n, err := repo.DeleteExpiredUserSessions(pruneCtx, maxLifetime)
 		if err != nil {
 			log.Error().Err(err).Msg("session cleanup")
 			return

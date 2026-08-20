@@ -24,6 +24,13 @@ oidc:
 session:
   enabled: true
   ttl_days: 60                 # idle lifetime — every request slides it forward
+  # Absolute ceiling from when the session started, regardless of activity.
+  # Without it the sliding idle window above never ends for a regularly-used
+  # session — and since the IdP is not consulted after the cookie is minted, this
+  # is also the longest an account disabled at the IdP keeps working (short of an
+  # admin ending their sessions, or back-channel logout firing). 0 disables it,
+  # which the server warns about at startup.
+  max_days: 90
   # Dev over http://localhost: Safari (and older Firefox) refuse to store a
   # Secure cookie on a plain-HTTP page. Set true for any real deployment.
   cookie_secure: false

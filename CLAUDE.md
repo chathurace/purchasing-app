@@ -265,9 +265,24 @@ Whenever test data is added by claude, clean up all those test data after testin
   makes a long-lived cookie safe. Cookie-authenticated **writes** are CSRF-guarded twice (SameSite +
   `CheckCSRFOrigin` against `cors.allowed_origins`); the bootstrap-admin grant and deactivation gate
   run on the cookie path too (`serveAuthenticated`), and `pruneSessions` deletes dead rows daily.
-  Config is a new **`session:`** block (`enabled` default **true**, `ttl_days` 60, `cookie_secure`
-  true — set **false** for dev over http://localhost, `cookie_samesite` `lax`|`none`, where `none`
-  implies Secure + Partitioned); `enabled: false` is the rollback to Bearer-only. Frontend:
+  Config is a new **`session:`** block (`enabled` default **true**, `ttl_days` 60, `max_days` 90,
+  `cookie_secure` true — set **false** for dev over http://localhost, `cookie_samesite` `lax`|`none`,
+  where `none` implies Secure + Partitioned); `enabled: false` is the rollback to Bearer-only.
+  Because the IdP is **not consulted after mint**, three things bound/close that gap:
+  an **absolute cap** (`max_days`, enforced in the same `TouchUserSession` statement and in the
+  purge; `0` disables it and is warned about at startup), an **admin kill switch**
+  (`DELETE /users/{id}/sessions` → Users page "End sessions" button, admin-only, audit
+  `revoke_user_sessions`/`admin`; 404 on an unknown id), and **OIDC back-channel logout**
+  (`POST /auth/backchannel-logout` — the **only route outside the authenticated group**, since the
+  signed logout token *is* the credential: `middleware.VerifyLogoutToken` in `logout_token.go`
+  checks signature/iss/aud/`events`/no-`nonce`/`iat` freshness, deliberately **not** reusing
+  `provider.Verifier`, which would accept an ID token as a logout instruction). Revocation prefers
+  the token's `sid` — captured from the ID token into `user_sessions.idp_sid` at mint time
+  (migration `053`), so one browser is ended rather than all — and falls back to `sub`; it returns
+  **200 even when nothing matched** (the IdP broadcasts to every app) and `400`, detail-free, on an
+  unverifiable token. Front-channel logout was rejected: it only fires with a tab open, missing the
+  offboarding case. In-app **role/deactivation** changes need none of this — both are re-read per
+  request. Frontend:
   `api/session.ts`, `apiCredentials()` in `api/client.ts` (cookie **on** for a same-origin/same-host
   API, **off** cross-site unless `config.js` sets `apiAllowCredentials` — `credentials: 'include'`
   makes the browser *require* `Access-Control-Allow-Credentials`, so enabling it against an

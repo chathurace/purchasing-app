@@ -23,7 +23,14 @@ import {
 import { useUsers } from "../hooks/useUsers";
 import { useIsAdmin } from "../hooks/useIsAdmin";
 import { useMe } from "../hooks/useMe";
-import { addUserRole, createUser, removeUserRole, setUserActive, updateUser } from "../api/users";
+import {
+  addUserRole,
+  createUser,
+  endUserSessions,
+  removeUserRole,
+  setUserActive,
+  updateUser,
+} from "../api/users";
 import { ApiError } from "../api/client";
 import { useDirectory } from "../hooks/useDirectory";
 import { useConfirmAction } from "../components/ConfirmDialog";
@@ -108,6 +115,19 @@ export function UserManagementPage() {
     mutationFn: ({ id, email, name }: { id: number; email: string; name: string }) =>
       updateUser(id, { email, name }),
     onSuccess: invalidate,
+  });
+  // Ending sessions changes nothing the users list shows, so instead of an
+  // invalidate this reports the count back — otherwise the click looks inert.
+  const [sessionsEnded, setSessionsEnded] = useState<string | null>(null);
+  const endSessions = useMutation({
+    mutationFn: (id: number) => endUserSessions(id),
+    onSuccess: ({ revoked }) =>
+      setSessionsEnded(
+        revoked === 0
+          ? "That user had no active sessions."
+          : `Ended ${revoked} session${revoked === 1 ? "" : "s"}.`,
+      ),
+    onError: onActionError,
   });
 
   if (!isAdmin) {
@@ -200,6 +220,12 @@ export function UserManagementPage() {
         </Alert>
       )}
 
+      {sessionsEnded && (
+        <Alert severity="success" sx={{ mb: 2 }} onClose={() => setSessionsEnded(null)}>
+          {sessionsEnded}
+        </Alert>
+      )}
+
       <Stack direction="row" spacing={1.5} sx={{ mb: 2, flexWrap: "wrap", alignItems: "center" }}>
         <TextField
           size="small"
@@ -251,6 +277,10 @@ export function UserManagementPage() {
                   onAddRole={(role) => addRole.mutate({ id: u.id, role })}
                   onRemoveRole={(role) => removeRole.mutate({ id: u.id, role })}
                   onToggleActive={() => toggleActive.mutate({ id: u.id, active: !u.is_active })}
+                  onEndSessions={() => {
+                    setSessionsEnded(null);
+                    endSessions.mutate(u.id);
+                  }}
                   onSave={(email, name) => update.mutateAsync({ id: u.id, email, name })}
                 />
               ))}
@@ -268,6 +298,7 @@ function UserRow({
   onAddRole,
   onRemoveRole,
   onToggleActive,
+  onEndSessions,
   onSave,
 }: {
   user: AdminUser;
@@ -275,6 +306,7 @@ function UserRow({
   onAddRole: (role: Role) => void;
   onRemoveRole: (role: Role) => void;
   onToggleActive: () => void;
+  onEndSessions: () => void;
   onSave: (email: string, name: string) => Promise<unknown>;
 }) {
   const addable = ASSIGNABLE_ROLES.filter((r) => !user.roles.includes(r));
@@ -468,6 +500,35 @@ function UserRow({
               >
                 {user.is_active ? "Deactivate" : "Reactivate"}
               </Button>
+              {/* Signs them out everywhere without blocking a future login —
+                  the lever for an account disabled or offboarded at the IdP,
+                  since a minted session cookie never re-checks with it. Hidden
+                  for a pending invite, who cannot have a session yet. */}
+              {!user.pending && (
+                <Button
+                  size="small"
+                  variant="outlined"
+                  color="inherit"
+                  onClick={() =>
+                    confirmAction({
+                      title: "End sessions",
+                      message: (
+                        <>
+                          Sign <strong>{user.email || user.name || `#${user.id}`}</strong> out of
+                          every browser? They can sign in again straight away — use Deactivate to
+                          stop that. Do this when their identity-provider account has been disabled,
+                          since the app does not re-check with it.
+                        </>
+                      ),
+                      confirmLabel: "End sessions",
+                      onConfirm: onEndSessions,
+                    })
+                  }
+                  title="Sign this user out of every browser"
+                >
+                  End sessions
+                </Button>
+              )}
             </>
           )}
         </Stack>

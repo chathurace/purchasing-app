@@ -63,8 +63,15 @@ func NewRouter(d Deps) http.Handler {
 	}
 
 	session := &SessionHandler{Repo: d.Repo, Session: d.Auth.SessionConfig(), Log: d.Log}
+	backchannelLogout := &BackchannelLogoutHandler{Repo: d.Repo, Auth: d.Auth, Log: d.Log}
 
 	r.Route("/api/v1", func(r chi.Router) {
+		// OIDC back-channel logout — the ONLY route outside the authenticated
+		// group. The caller is the IdP's server, which presents no cookie and no
+		// Bearer token; the signed logout token in the body is the credential
+		// (verified in middleware.VerifyLogoutToken). See docs/sessions.md.
+		r.Post("/auth/backchannel-logout", backchannelLogout.Post)
+
 		r.Group(func(r chi.Router) {
 			r.Use(d.Auth.Authenticate)
 
@@ -98,6 +105,10 @@ func NewRouter(d Deps) http.Handler {
 			r.Get("/users", users.List)
 			r.Post("/users", users.Create)
 			r.Put("/users/{id}", users.Update)
+			// End someone else's browser sessions on every device (admin only).
+			// The manual lever for an IdP-side disable/offboard, since after the
+			// cookie is minted the IdP is never consulted again.
+			r.Delete("/users/{id}/sessions", session.DeleteForUser)
 			r.Post("/users/{id}/roles", users.AddRole)
 			r.Delete("/users/{id}/roles/{role}", users.RemoveRole)
 			r.Put("/users/{id}/active", users.SetActive)

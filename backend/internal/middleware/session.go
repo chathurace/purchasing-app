@@ -33,6 +33,12 @@ type SessionConfig struct {
 	// TTL is the *idle* lifetime of a session: every authenticated request
 	// slides it forward (see Repository.TouchUserSession).
 	TTL time.Duration
+	// MaxLifetime is the absolute ceiling from session creation, regardless of
+	// activity (0 disables it). It stops the sliding window from keeping a
+	// frequently-used session alive forever, which also bounds how long an
+	// account disabled at the IdP keeps working here — after the cookie is
+	// minted the IdP is never consulted again.
+	MaxLifetime time.Duration
 	// Secure sets the cookie's Secure attribute. Only ever false for local dev
 	// over http://localhost.
 	Secure bool
@@ -204,4 +210,21 @@ func ContextWithSessionToken(ctx context.Context, token string) context.Context 
 func SessionTokenFromContext(ctx context.Context) string {
 	t, _ := ctx.Value(ctxKeySessionToken{}).(string)
 	return t
+}
+
+// ctxKeyIdPSessionID carries the `sid` claim of the ID token a Bearer request
+// presented, so the session-minting handler can record which IdP session the
+// browser session belongs to (used by back-channel logout).
+type ctxKeyIdPSessionID struct{}
+
+// ContextWithIdPSessionID returns a copy of ctx carrying the IdP session id.
+func ContextWithIdPSessionID(ctx context.Context, sid string) context.Context {
+	return context.WithValue(ctx, ctxKeyIdPSessionID{}, sid)
+}
+
+// IdPSessionIDFromContext returns the `sid` of the ID token this request
+// presented, or "" (cookie-authenticated requests, or an IdP that omits it).
+func IdPSessionIDFromContext(ctx context.Context) string {
+	s, _ := ctx.Value(ctxKeyIdPSessionID{}).(string)
+	return s
 }
