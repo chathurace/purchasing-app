@@ -167,6 +167,73 @@ func TestUserSessionAbsoluteCap(t *testing.T) {
 	}
 }
 
+// TestUsersWithLiveSessions covers the candidate set the IdP offboarding sweep
+// works from: only users who actually hold a live session, once each.
+func TestUsersWithLiveSessions(t *testing.T) {
+	repo, ctx := newTestRepo(t)
+	user := newSessionTestUser(t, repo, ctx)
+	const ttl = 60 * 24 * time.Hour
+	slug := strings.ToLower(t.Name())
+
+	contains := func(list []repository.UserSummary, id int64) bool {
+		for _, u := range list {
+			if u.ID == id {
+				return true
+			}
+		}
+		return false
+	}
+
+	// No sessions yet: not a candidate.
+	before, err := repo.UsersWithLiveSessions(ctx)
+	if err != nil {
+		t.Fatalf("list candidates: %v", err)
+	}
+	if contains(before, user.ID) {
+		t.Fatal("a user with no sessions is a candidate")
+	}
+
+	// Two live sessions must still yield exactly one candidate row (DISTINCT).
+	for _, h := range []string{"one-" + slug, "two-" + slug} {
+		if err := repo.CreateUserSession(ctx, h, user.ID, time.Now().Add(ttl), "", "", ""); err != nil {
+			t.Fatalf("create session: %v", err)
+		}
+	}
+	// Plus a dead one, which must not resurrect anybody.
+	if err := repo.CreateUserSession(ctx, "dead-"+slug, user.ID, time.Now().Add(-time.Hour), "", "", ""); err != nil {
+		t.Fatalf("create expired session: %v", err)
+	}
+
+	during, err := repo.UsersWithLiveSessions(ctx)
+	if err != nil {
+		t.Fatalf("list candidates: %v", err)
+	}
+	seen := 0
+	for _, u := range during {
+		if u.ID == user.ID {
+			seen++
+			if u.Email != user.Email {
+				t.Errorf("candidate email = %q, want %q", u.Email, user.Email)
+			}
+		}
+	}
+	if seen != 1 {
+		t.Fatalf("user appeared %d times, want exactly 1", seen)
+	}
+
+	// Revoked ⇒ no longer a candidate.
+	if _, err := repo.RevokeAllUserSessions(ctx, user.ID); err != nil {
+		t.Fatalf("revoke all: %v", err)
+	}
+	after, err := repo.UsersWithLiveSessions(ctx)
+	if err != nil {
+		t.Fatalf("list candidates: %v", err)
+	}
+	if contains(after, user.ID) {
+		t.Fatal("a user whose sessions are revoked is still a candidate")
+	}
+}
+
 // TestRevokeSessionsByIdPSIDAndSub covers what back-channel logout does with a
 // verified token: a `sid` ends exactly that browser, a `sub` ends all of them.
 func TestRevokeSessionsByIdPSIDAndSub(t *testing.T) {

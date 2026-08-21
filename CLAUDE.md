@@ -281,8 +281,21 @@ Whenever test data is added by claude, clean up all those test data after testin
   (migration `053`), so one browser is ended rather than all — and falls back to `sub`; it returns
   **200 even when nothing matched** (the IdP broadcasts to every app) and `400`, detail-free, on an
   unverifiable token. Front-channel logout was rejected: it only fires with a tab open, missing the
-  offboarding case. In-app **role/deactivation** changes need none of this — both are re-read per
-  request. Frontend:
+  offboarding case. Because Asgardeo's console exposes no logout-URL field for **SPA-template** apps
+  (a pure SPA has no server to call back; this one does), a fourth, pull-based mechanism closes the
+  case that actually matters — **`internal/offboard`**, the IdP offboarding sweep: every
+  `session.idp_offboarding.interval_minutes` (default 10) it compares the users holding live sessions
+  (`UsersWithLiveSessions`) against the **SCIM directory snapshot the pickers already cache**
+  (`forceRefresh=false`, so no extra SCIM traffic) and revokes the sessions of anyone **absent**
+  (deleted) or **`active: false`** (disabled at the IdP), matched by lowercased email. It revokes
+  **sessions only, never deactivating the app user** (revocation is self-correcting; auto-deactivation
+  would need auto-reactivation and would fight an admin). It **requires `scim.enabled`** — the DB
+  fallback would make "missing" self-referential — and `Decide` (pure, unit-tested) refuses to act on
+  an untrustworthy snapshot: empty, no usable emails, or a run that would sign out >50% of signed-in
+  users once ≥5 are involved. `dry_run` logs without revoking; each revocation audits
+  `revoke_user_sessions`/`idp_offboard` with a **NULL actor**. It does *not* catch a plain IdP
+  sign-out — no directory trace — which is what back-channel logout is for. In-app
+  **role/deactivation** changes need none of this — both are re-read per request. Frontend:
   `api/session.ts`, `apiCredentials()` in `api/client.ts` (cookie **on** for a same-origin/same-host
   API, **off** cross-site unless `config.js` sets `apiAllowCredentials` — `credentials: 'include'`
   makes the browser *require* `Access-Control-Allow-Credentials`, so enabling it against an

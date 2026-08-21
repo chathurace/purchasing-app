@@ -26,6 +26,7 @@ import (
 	"github.com/cs/purchasing-app/internal/extraction"
 	"github.com/cs/purchasing-app/internal/handler"
 	"github.com/cs/purchasing-app/internal/middleware"
+	"github.com/cs/purchasing-app/internal/offboard"
 	"github.com/cs/purchasing-app/internal/repository"
 	"github.com/cs/purchasing-app/internal/storage"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -148,13 +149,30 @@ func main() {
 				if s.Email == "" {
 					continue
 				}
-				users = append(users, directory.User{Name: s.Name, Email: s.Email})
+				// Active: these are already the app's *active* users. It also
+				// keeps the fallback from ever looking like a directory full of
+				// disabled accounts, though the offboarding sweep refuses to run
+				// on fallback data anyway (it requires SCIM).
+				users = append(users, directory.User{Name: s.Name, Email: s.Email, Active: true})
 			}
 			return users, nil
 		},
 		log,
 	)
 	log.Info().Bool("scim_enabled", dirSvc.Enabled()).Msg("user directory initialized")
+
+	// Sign out users the identity server no longer vouches for (deleted or
+	// disabled accounts). Pull-based, riding the directory cache above — see
+	// internal/offboard for why this exists rather than back-channel logout.
+	if sessionCfg.Enabled && *cfg.Session.IdPOffboarding.Enabled {
+		sweeper := offboard.New(repo, dirSvc, offboard.Config{
+			Interval: time.Duration(cfg.Session.IdPOffboarding.IntervalMinutes) * time.Minute,
+			DryRun:   cfg.Session.IdPOffboarding.DryRun,
+		}, log)
+		go sweeper.Run(ctx)
+	} else if sessionCfg.Enabled {
+		log.Warn().Msg("idp offboarding sweep is disabled in config — a disabled IdP account keeps its app session until an admin ends it or session.max_days lapses")
+	}
 
 	// Quotation PDF extraction (Claude). Disabled unless anthropic.enabled is set,
 	// in which case the endpoints 503 and the UI hides the feature.

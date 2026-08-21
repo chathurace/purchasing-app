@@ -103,6 +103,38 @@ func (r *Repository) RevokeAllUserSessions(ctx context.Context, userID int64) (i
 	return tag.RowsAffected(), nil
 }
 
+// UsersWithLiveSessions lists the users who currently hold at least one live
+// session, with their email. The candidate set for the IdP offboarding sweep
+// (internal/offboard): users without a session need no action, so scanning the
+// whole users table would be wasted work.
+//
+// Users with no email are skipped — the sweep matches identities by email, so
+// there is nothing to compare them against.
+func (r *Repository) UsersWithLiveSessions(ctx context.Context) ([]UserSummary, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT DISTINCT u.id, u.email, COALESCE(u.name, '')
+		  FROM user_sessions s
+		  JOIN users u ON u.id = s.user_id
+		 WHERE s.revoked_at IS NULL
+		   AND s.expires_at > NOW()
+		   AND u.email IS NOT NULL
+		   AND u.email <> ''
+		 ORDER BY u.id`)
+	if err != nil {
+		return nil, fmt.Errorf("users with live sessions: %w", err)
+	}
+	defer rows.Close()
+	var out []UserSummary
+	for rows.Next() {
+		var u UserSummary
+		if err := rows.Scan(&u.ID, &u.Email, &u.Name); err != nil {
+			return nil, fmt.Errorf("users with live sessions: %w", err)
+		}
+		out = append(out, u)
+	}
+	return out, rows.Err()
+}
+
 // RevokeUserSessionsByIdPSID revokes the sessions minted from one IdP session,
 // returning how many were live. Used by back-channel logout when the logout
 // token names a `sid`: the person may be signed in from several browsers, and

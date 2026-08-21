@@ -79,6 +79,7 @@ automatically felt here. These are all the ways a session ends:
 | **Admin ends someone's sessions** | All of that user's sessions revoked; they may sign in again | `DELETE /users/{id}/sessions`, Users page → **End sessions** |
 | Admin **deactivates** the user | Cut off on the next request (`is_active` is re-read every request) *and* login blocked | Users page → Deactivate |
 | **User signs out at the IdP**, or an IdP admin kills their IdP session | The matching session revoked (by `sid`), or all of them when no `sid` is known | `POST /auth/backchannel-logout` |
+| **Account deleted or disabled at the IdP** | All their sessions revoked within one sweep interval (~10 min) | `internal/offboard`, no request involved |
 | Idle for `ttl_days` | Expires | — |
 | Older than `max_days` | Expires regardless of activity | — |
 
@@ -131,7 +132,49 @@ signed **logout token** (form field `logout_token`) when a session ends there;
 Registering the callback URL in Asgardeo is a deployment step — see
 [deployment-guide.md](deployment-guide.md#frontend--choreo-web-app-dockerfile-build).
 Until it is registered, nothing breaks; IdP logout simply isn't propagated, and
-the admin control plus `max_days` remain the backstop.
+the sweep below plus the admin control and `max_days` are the backstop.
+
+**Asgardeo caveat**: its console exposes logout URLs only for some application
+templates, and **not for a single-page application** — reasonably, since a pure
+SPA has no server to receive a callback. This app does have one (it is a BFF), so
+the mechanism is right even though the console field is missing; it can be set
+through the Management API on the app's OIDC inbound config. That gap is exactly
+why the pull-based sweep below exists.
+
+## IdP offboarding sweep
+
+`internal/offboard` closes the gap that matters most — an account **deleted or
+disabled at the identity server** keeping its app session — with no per-app IdP
+configuration at all.
+
+- **How**: every `interval_minutes` (default 10), list the users holding a live
+  session (`UsersWithLiveSessions`), compare them against the SCIM directory
+  snapshot the autocomplete pickers already cache, and revoke the sessions of
+  anyone **absent** (deleted) or **`active: false`** (disabled). Matching is by
+  lowercased email, like every other identity check in the app.
+- **Costs no extra SCIM traffic**: it reads that same cache
+  (`forceRefresh=false`). A stale snapshot is safe — it can hide a *new* deletion
+  until the next run, but it can never invent one.
+- **Sessions only, never deactivation.** Revoking is self-correcting: if the IdP
+  account comes back, the person signs in again and nothing needs undoing. An
+  automated in-app deactivation would need an automated reactivation to match, and
+  would fight an admin who re-enabled someone by hand.
+- **Requires SCIM.** With `scim.enabled: false` the directory falls back to the
+  app's own users, so "missing from the directory" would be self-referential —
+  the sweep refuses to run and says so at startup.
+- **Guards against a bad snapshot**, because the failure mode is a mass logout:
+  an empty snapshot, or one with no usable emails, is never acted on; and a run
+  that would sign out more than half the signed-in users (once at least 5 are
+  involved) refuses entirely and logs why. Even then the blast radius is bounded —
+  revocation does not block signing back in.
+- `dry_run: true` logs every account it *would* sign out and revokes nothing.
+- Each revocation is audited as `revoke_user_sessions` / `idp_offboard` with a
+  **NULL actor** — the trigger is the identity server, not a person — and the
+  reason in the detail column.
+
+What it deliberately does **not** cover: a user simply pressing sign-out at the
+IdP. That is a session-level event with no trace in the directory, so only
+back-channel logout can deliver it.
 
 ## Config (`config.yaml`)
 
@@ -144,6 +187,10 @@ session:
   max_days: 90             # absolute ceiling from session start; 0 disables (warned at startup)
   cookie_secure: false     # dev over http://localhost only; true everywhere real
   cookie_samesite: "lax"   # "none" only for a cross-site API (implies secure)
+  idp_offboarding:         # sign out accounts deleted/disabled at the IdP
+    enabled: true          # no-op unless scim.enabled is also true
+    interval_minutes: 10
+    dry_run: false
 ```
 
 `cookie_samesite: "none"` also marks the cookie **Partitioned** (CHIPS), without

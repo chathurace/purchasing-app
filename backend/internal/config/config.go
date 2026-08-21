@@ -53,6 +53,28 @@ type Config struct {
 		// domain). "none" implies Secure and a Partitioned cookie, and is
 		// dropped outright by browsers that block third-party cookies.
 		CookieSameSite string `yaml:"cookie_samesite"`
+
+		// IdPOffboarding periodically signs out users the identity server no
+		// longer vouches for — deleted or disabled accounts — by comparing the
+		// users holding live sessions against the SCIM directory snapshot
+		// (internal/offboard). It is the pull-based substitute for OIDC
+		// back-channel logout, which needs a callback URL that Asgardeo does not
+		// expose for SPA registrations.
+		//
+		// Enabled defaults to **true** but is a no-op unless `scim.enabled` is
+		// also set: without SCIM the directory falls back to the app's own users,
+		// so "missing from the directory" would always be false. Dev is therefore
+		// unaffected.
+		IdPOffboarding struct {
+			Enabled *bool `yaml:"enabled"` // default true (needs scim.enabled)
+			// IntervalMinutes between sweeps; default 10. Running much more often
+			// than scim.cache_ttl_seconds buys nothing — that is how fresh the
+			// snapshot can be.
+			IntervalMinutes int `yaml:"interval_minutes"`
+			// DryRun logs what would be signed out and revokes nothing. Worth one
+			// cycle on a new deployment to see what the sweep sees.
+			DryRun bool `yaml:"dry_run"`
+		} `yaml:"idp_offboarding"`
 	} `yaml:"session"`
 
 	// SCIM configures the connection to the identity server's SCIM2 API, used to
@@ -191,6 +213,12 @@ func Load(path string) (*Config, error) {
 	}
 	if cfg.Session.CookieSameSite == "" {
 		cfg.Session.CookieSameSite = "lax"
+	}
+	if cfg.Session.IdPOffboarding.Enabled == nil {
+		cfg.Session.IdPOffboarding.Enabled = boolPtr(true)
+	}
+	if cfg.Session.IdPOffboarding.IntervalMinutes <= 0 {
+		cfg.Session.IdPOffboarding.IntervalMinutes = 10
 	}
 	if cfg.SCIM.CacheTTLSeconds == 0 {
 		cfg.SCIM.CacheTTLSeconds = 600

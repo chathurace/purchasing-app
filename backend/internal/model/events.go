@@ -108,10 +108,12 @@ const (
 	QualifierActive   = "active"
 	QualifierInactive = "inactive"
 
-	// revoke_user_sessions — who ended them: an admin from the Users page, or
-	// the IdP telling us its session ended (back-channel logout).
-	QualifierAdmin     = "admin"
-	QualifierIdPLogout = "idp_logout"
+	// revoke_user_sessions — who ended them: an admin from the Users page, the
+	// IdP telling us its session ended (back-channel logout), or the offboarding
+	// sweep finding the account gone/disabled at the IdP.
+	QualifierAdmin       = "admin"
+	QualifierIdPLogout   = "idp_logout"
+	QualifierIdPOffboard = "idp_offboard"
 )
 
 // Audit actions — non-business-process (master-data / admin / config) mutations.
