@@ -24,6 +24,23 @@ oidc:
 session:
   enabled: true
   ttl_days: 60                 # idle lifetime — every request slides it forward
+  # Absolute ceiling from when the session started, regardless of activity.
+  # Without it the sliding idle window above never ends for a regularly-used
+  # session — and since the IdP is not consulted after the cookie is minted, this
+  # is also the longest an account disabled at the IdP keeps working (short of an
+  # admin ending their sessions, or back-channel logout firing). 0 disables it,
+  # which the server warns about at startup.
+  max_days: 90
+  # Signs out users the identity server no longer vouches for — deleted or
+  # disabled accounts — by comparing everyone holding a live session against the
+  # SCIM directory snapshot. This is the substitute for OIDC back-channel logout,
+  # which needs a callback URL Asgardeo does not expose for SPA registrations.
+  # Enabled by default, but a **no-op unless `scim.enabled` is true**, so dev is
+  # unaffected. Set dry_run for a cycle to log what it would sign out first.
+  idp_offboarding:
+    enabled: true
+    interval_minutes: 10       # no point going below scim.cache_ttl_seconds
+    dry_run: false
   # Dev over http://localhost: Safari (and older Firefox) refuse to store a
   # Secure cookie on a plain-HTTP page. Set true for any real deployment.
   cookie_secure: false

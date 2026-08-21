@@ -80,17 +80,30 @@ Verified on `1.30-alpine`: 0 findings, nginx 1.30.4, openssl 3.5.7-r0.
    `cookie_secure: true`). Keep the SPA origin in `cors.allowed_origins` — the
    proxy passes `Origin` through unchanged and the backend's CSRF check compares
    it against that list.
-5. **Verify in the browser** (the CSP is only enforced once this build is live):
+5. **Migrations**: `052` (`user_sessions`) and `053` (`idp_sid`) must be applied
+   before the backend serves traffic, or every request fails resolving its
+   session. See [sessions.md](sessions.md).
+6. **Asgardeo — back-channel logout** (once per environment): on the SPA app,
+   enable back-channel logout and set the channel URL to
+   `https://<origin>/api/v1/auth/backchannel-logout` — through the SPA origin, so
+   the nginx proxy forwards it to the backend. This is what makes a sign-out *at
+   the IdP* (or an IdP admin terminating a session) end the purchasing session
+   too; see [sessions.md](sessions.md#back-channel-logout). Skipping it breaks
+   nothing — IdP logout simply isn't propagated, leaving the Users page → **End
+   sessions** control and the `max_days` ceiling as the backstop.
+7. **Verify in the browser** (the CSP is only enforced once this build is live):
    a full login, a page navigation, a **document upload**, and **Settings → File
    storage → Connect Google account / Choose folder** (the Google Identity
    Services + Drive Picker scripts and iframes are the most CSP-sensitive part of
    the app). Any violation prints in the console; to check before enforcing,
    rename the header in `nginx.conf` to `Content-Security-Policy-Report-Only`,
    redeploy, then flip it back.
-6. **Confirm the session cookie**: after signing in, DevTools → Application →
+8. **Confirm the session cookie**: after signing in, DevTools → Application →
    Cookies should show `__Host-purchasing_session`, `HttpOnly`, `Secure`,
    `SameSite=Lax`, on the app's own origin. A browser restart should land you
-   straight back in the app without an IdP round trip.
+   straight back in the app without an IdP round trip. Then sign out at Asgardeo
+   in another tab and reload the app — with step 6 done you should be bounced to
+   the login page.
 
 Verified locally against the built image (`docker run` + curl): headers served,
 SPA fallback intact (`/purchase-requests` → 200 `text/html`), `/nginx.conf` not

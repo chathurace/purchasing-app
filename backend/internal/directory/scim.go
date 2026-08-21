@@ -23,6 +23,15 @@ import (
 type User struct {
 	Name  string `json:"name"`
 	Email string `json:"email"`
+	// Active mirrors the SCIM `active` attribute — false for an account the
+	// identity server has disabled. Deliberately NOT serialized: this type is
+	// the response body of GET /users/directory, and the browser has no business
+	// knowing who is disabled upstream. It exists for the offboarding sweep
+	// (internal/offboard), which signs disabled accounts out of the app.
+	//
+	// Absent in the SCIM payload ⇒ true. Treating "not stated" as disabled would
+	// sign out the entire directory against an IdP that omits the attribute.
+	Active bool `json:"-"`
 }
 
 // SCIMConfig configures the SCIM2 client.
@@ -86,6 +95,8 @@ type scimResource struct {
 		FamilyName string `json:"familyName"`
 	} `json:"name"`
 	Emails []scimEmail `json:"emails"`
+	// Pointer so "attribute absent" is distinguishable from "active: false".
+	Active *bool `json:"active"`
 }
 
 // scimEmail tolerates both shapes SCIM allows: a bare string ("a@b.com") or an
@@ -190,7 +201,9 @@ func toUser(r scimResource) (User, bool) {
 			name = email[:at]
 		}
 	}
-	return User{Name: name, Email: strings.ToLower(strings.TrimSpace(email))}, true
+	// Absent `active` means active — see the note on User.Active.
+	active := r.Active == nil || *r.Active
+	return User{Name: name, Email: strings.ToLower(strings.TrimSpace(email)), Active: active}, true
 }
 
 func primaryEmail(emails []scimEmail) string {

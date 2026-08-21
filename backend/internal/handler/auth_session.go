@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/cs/purchasing-app/internal/middleware"
+	"github.com/cs/purchasing-app/internal/model"
 	"github.com/cs/purchasing-app/internal/repository"
 	"github.com/rs/zerolog"
 )
@@ -60,7 +61,11 @@ func (h *SessionHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	expiresAt := time.Now().Add(h.Session.TTL)
-	if err := h.Repo.CreateUserSession(r.Context(), hash, user.ID, expiresAt, r.UserAgent(), middleware.ClientIP(r)); err != nil {
+	// The ID token's `sid` ties this browser session to the IdP session behind
+	// it, so a back-channel logout can end exactly this one. Empty when the IdP
+	// omits the claim — revocation then falls back to sub-wide.
+	idpSID := middleware.IdPSessionIDFromContext(r.Context())
+	if err := h.Repo.CreateUserSession(r.Context(), hash, user.ID, expiresAt, r.UserAgent(), middleware.ClientIP(r), idpSID); err != nil {
 		reqLog(r).Error().Err(err).Msg("create session")
 		writeError(w, http.StatusInternalServerError, "could not start session")
 		return
@@ -110,6 +115,42 @@ func (h *SessionHandler) DeleteAll(w http.ResponseWriter, r *http.Request) {
 	}
 	middleware.ClearSessionCookie(w, h.Session)
 	reqLog(r).Info().Int64("revoked", n).Msg("all sessions ended")
+	writeJSON(w, http.StatusOK, map[string]int64{"revoked": n})
+}
+
+// DeleteForUser handles DELETE /api/v1/users/{id}/sessions — an admin ending
+// someone else's sessions on every device.
+//
+// This is the manual half of honouring an IdP-side change. After the cookie is
+// minted the IdP is never consulted again, so a disabled or offboarded Asgardeo
+// account would otherwise keep working until the absolute cap
+// (session.max_days) lapsed. Deactivating the user also cuts access
+// immediately — it is checked on every request — but that is a heavier act; this
+// signs them out without blocking a future login.
+func (h *SessionHandler) DeleteForUser(w http.ResponseWriter, r *http.Request) {
+	if !middleware.HasRole(r.Context(), model.RoleAdmin) {
+		writeError(w, http.StatusForbidden, "admin role required")
+		return
+	}
+	userID, err := parseID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid user id")
+		return
+	}
+	// Reject an unknown id rather than reporting "0 revoked", which reads as
+	// "that account has no sessions" and hides a typo'd id.
+	if _, err := h.Repo.GetUserByID(r.Context(), userID); err != nil {
+		writeError(w, http.StatusNotFound, "user not found")
+		return
+	}
+	n, err := h.Repo.RevokeAllUserSessions(r.Context(), userID)
+	if err != nil {
+		reqLog(r).Error().Err(err).Int64("target_user_id", userID).Msg("admin revoke sessions")
+		writeError(w, http.StatusInternalServerError, "could not end sessions")
+		return
+	}
+	recordAuditEvent(r, h.Repo, model.AuditRevokeUserSessions, model.QualifierAdmin, model.EntityUser, &userID, "")
+	reqLog(r).Info().Int64("target_user_id", userID).Int64("revoked", n).Msg("admin ended user sessions")
 	writeJSON(w, http.StatusOK, map[string]int64{"revoked": n})
 }
 

@@ -26,6 +26,7 @@ import (
 	"github.com/cs/purchasing-app/internal/extraction"
 	"github.com/cs/purchasing-app/internal/handler"
 	"github.com/cs/purchasing-app/internal/middleware"
+	"github.com/cs/purchasing-app/internal/offboard"
 	"github.com/cs/purchasing-app/internal/repository"
 	"github.com/cs/purchasing-app/internal/storage"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -86,6 +87,7 @@ func main() {
 	sessionCfg := middleware.SessionConfig{
 		Enabled:        *cfg.Session.Enabled,
 		TTL:            time.Duration(cfg.Session.TTLDays) * 24 * time.Hour,
+		MaxLifetime:    time.Duration(*cfg.Session.MaxDays) * 24 * time.Hour,
 		Secure:         *cfg.Session.CookieSecure,
 		SameSite:       sameSiteFromConfig(cfg.Session.CookieSameSite),
 		AllowedOrigins: cfg.CORS.AllowedOrigins,
@@ -93,10 +95,17 @@ func main() {
 	if sessionCfg.Enabled {
 		log.Info().
 			Dur("ttl", sessionCfg.TTL).
+			Dur("max_lifetime", sessionCfg.MaxLifetime).
 			Str("samesite", cfg.Session.CookieSameSite).
 			Bool("secure", sessionCfg.Secure).
 			Str("cookie", sessionCfg.CookieName()).
 			Msg("cookie sessions enabled")
+		if sessionCfg.MaxLifetime <= 0 {
+			// Deliberate but worth shouting about: with no ceiling, a session
+			// used at least once per idle window never expires on its own, so an
+			// IdP-side disable is only honoured once someone revokes by hand.
+			log.Warn().Msg("session.max_days is 0 — sessions have NO absolute lifetime cap")
+		}
 	} else {
 		log.Warn().Msg("cookie sessions disabled — clients must present a Bearer token on every request")
 	}
@@ -113,7 +122,7 @@ func main() {
 		log.Fatal().Err(err).Msg("init OIDC")
 	}
 	if sessionCfg.Enabled {
-		go pruneSessions(ctx, repo, log)
+		go pruneSessions(ctx, repo, sessionCfg.MaxLifetime, log)
 	}
 
 	// User directory for name/email autocomplete. When SCIM is disabled, it falls
@@ -140,13 +149,30 @@ func main() {
 				if s.Email == "" {
 					continue
 				}
-				users = append(users, directory.User{Name: s.Name, Email: s.Email})
+				// Active: these are already the app's *active* users. It also
+				// keeps the fallback from ever looking like a directory full of
+				// disabled accounts, though the offboarding sweep refuses to run
+				// on fallback data anyway (it requires SCIM).
+				users = append(users, directory.User{Name: s.Name, Email: s.Email, Active: true})
 			}
 			return users, nil
 		},
 		log,
 	)
 	log.Info().Bool("scim_enabled", dirSvc.Enabled()).Msg("user directory initialized")
+
+	// Sign out users the identity server no longer vouches for (deleted or
+	// disabled accounts). Pull-based, riding the directory cache above — see
+	// internal/offboard for why this exists rather than back-channel logout.
+	if sessionCfg.Enabled && *cfg.Session.IdPOffboarding.Enabled {
+		sweeper := offboard.New(repo, dirSvc, offboard.Config{
+			Interval: time.Duration(cfg.Session.IdPOffboarding.IntervalMinutes) * time.Minute,
+			DryRun:   cfg.Session.IdPOffboarding.DryRun,
+		}, log)
+		go sweeper.Run(ctx)
+	} else if sessionCfg.Enabled {
+		log.Warn().Msg("idp offboarding sweep is disabled in config — a disabled IdP account keeps its app session until an admin ends it or session.max_days lapses")
+	}
 
 	// Quotation PDF extraction (Claude). Disabled unless anthropic.enabled is set,
 	// in which case the endpoints 503 and the UI hides the feature.
@@ -214,14 +240,15 @@ func sameSiteFromConfig(v string) http.SameSite {
 	}
 }
 
-// pruneSessions deletes expired and long-revoked session rows — once at boot,
-// then daily. Nothing depends on this for correctness (TouchUserSession ignores
-// dead rows); it only keeps the table from growing without bound.
-func pruneSessions(ctx context.Context, repo *repository.Repository, log zerolog.Logger) {
+// pruneSessions deletes expired, long-revoked and over-cap session rows — once
+// at boot, then daily. Nothing depends on this for correctness (TouchUserSession
+// enforces both deadlines itself); it only keeps the table from growing without
+// bound.
+func pruneSessions(ctx context.Context, repo *repository.Repository, maxLifetime time.Duration, log zerolog.Logger) {
 	prune := func() {
 		pruneCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 		defer cancel()
-		n, err := repo.DeleteExpiredUserSessions(pruneCtx)
+		n, err := repo.DeleteExpiredUserSessions(pruneCtx, maxLifetime)
 		if err != nil {
 			log.Error().Err(err).Msg("session cleanup")
 			return

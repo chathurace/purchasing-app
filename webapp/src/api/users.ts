@@ -37,3 +37,11 @@ export const removeUserRole = (id: number, role: Role) =>
 
 export const setUserActive = (id: number, active: boolean) =>
   apiFetch<AdminUser>(`/api/v1/users/${id}/active`, { method: "PUT", body: { active } });
+
+// endUserSessions signs a user out of every browser (admin only). Needed because
+// the app's session is a 60-day cookie that no longer consults the IdP after it
+// is minted — so an account disabled or offboarded at Asgardeo keeps working
+// until this is called (or the absolute cap lapses). Unlike deactivating, it
+// does not block them signing in again. See docs/sessions.md.
+export const endUserSessions = (id: number) =>
+  apiFetch<{ revoked: number }>(`/api/v1/users/${id}/sessions`, { method: "DELETE" });

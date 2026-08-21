@@ -107,6 +107,13 @@ const (
 	// set_user_active
 	QualifierActive   = "active"
 	QualifierInactive = "inactive"
+
+	// revoke_user_sessions — who ended them: an admin from the Users page, the
+	// IdP telling us its session ended (back-channel logout), or the offboarding
+	// sweep finding the account gone/disabled at the IdP.
+	QualifierAdmin       = "admin"
+	QualifierIdPLogout   = "idp_logout"
+	QualifierIdPOffboard = "idp_offboard"
 )
 
 // Audit actions — non-business-process (master-data / admin / config) mutations.
@@ -127,6 +134,10 @@ const (
 	AuditGrantRole     = "grant_role"      // qualifier: role name
 	AuditRevokeRole    = "revoke_role"     // qualifier: role name
 	AuditSetUserActive = "set_user_active" // qualifier: active | inactive
+	// AuditRevokeUserSessions covers ending someone else's browser sessions —
+	// admin sign-out-everywhere, and the IdP's back-channel logout callback.
+	// qualifier: admin | idp_logout
+	AuditRevokeUserSessions = "revoke_user_sessions"
 
 	AuditConnectStorage   = "connect_storage"
 	AuditSetStorageFolder = "set_storage_folder"
@@ -168,6 +179,7 @@ var ValidAuditActions = setOf(
 	AuditCreateBusinessUnit, AuditUpdateBusinessUnit,
 	AuditCreateConfigOption, AuditUpdateConfigOption, AuditDeleteConfigOption,
 	AuditCreateUser, AuditUpdateUser, AuditGrantRole, AuditRevokeRole, AuditSetUserActive,
+	AuditRevokeUserSessions,
 	AuditConnectStorage, AuditSetStorageFolder,
 )
 

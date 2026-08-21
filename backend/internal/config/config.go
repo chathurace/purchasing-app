@@ -33,6 +33,15 @@ type Config struct {
 	Session struct {
 		Enabled *bool `yaml:"enabled"`  // default true
 		TTLDays int   `yaml:"ttl_days"` // idle lifetime; default 60
+		// MaxDays is the absolute ceiling measured from when the session was
+		// created, regardless of activity. Default 90; an explicit 0 disables it
+		// (logged as a warning at startup), hence the pointer — nil means "not
+		// set in the YAML" and must be distinguishable from a deliberate 0.
+		// Without a cap the sliding idle window lets a session that is used often
+		// enough live forever — and because the IdP is never consulted after the
+		// cookie is minted, an account disabled at Asgardeo would keep working
+		// for exactly that long. See docs/sessions.md.
+		MaxDays *int `yaml:"max_days"`
 		// CookieSecure defaults to true. Set false ONLY for local dev over
 		// http://localhost — a Secure cookie is not stored on a plain-HTTP page
 		// by every browser, and the __Host- name prefix requires Secure.
@@ -44,6 +53,28 @@ type Config struct {
 		// domain). "none" implies Secure and a Partitioned cookie, and is
 		// dropped outright by browsers that block third-party cookies.
 		CookieSameSite string `yaml:"cookie_samesite"`
+
+		// IdPOffboarding periodically signs out users the identity server no
+		// longer vouches for — deleted or disabled accounts — by comparing the
+		// users holding live sessions against the SCIM directory snapshot
+		// (internal/offboard). It is the pull-based substitute for OIDC
+		// back-channel logout, which needs a callback URL that Asgardeo does not
+		// expose for SPA registrations.
+		//
+		// Enabled defaults to **true** but is a no-op unless `scim.enabled` is
+		// also set: without SCIM the directory falls back to the app's own users,
+		// so "missing from the directory" would always be false. Dev is therefore
+		// unaffected.
+		IdPOffboarding struct {
+			Enabled *bool `yaml:"enabled"` // default true (needs scim.enabled)
+			// IntervalMinutes between sweeps; default 10. Running much more often
+			// than scim.cache_ttl_seconds buys nothing — that is how fresh the
+			// snapshot can be.
+			IntervalMinutes int `yaml:"interval_minutes"`
+			// DryRun logs what would be signed out and revokes nothing. Worth one
+			// cycle on a new deployment to see what the sweep sees.
+			DryRun bool `yaml:"dry_run"`
+		} `yaml:"idp_offboarding"`
 	} `yaml:"session"`
 
 	// SCIM configures the connection to the identity server's SCIM2 API, used to
@@ -172,11 +203,22 @@ func Load(path string) (*Config, error) {
 	if cfg.Session.TTLDays <= 0 {
 		cfg.Session.TTLDays = 60
 	}
+	// Absent (nil) means "use the default"; an explicit 0 disables the cap. A
+	// negative value is meaningless, so it falls back to the default too.
+	if cfg.Session.MaxDays == nil || *cfg.Session.MaxDays < 0 {
+		cfg.Session.MaxDays = intPtr(90)
+	}
 	if cfg.Session.CookieSecure == nil {
 		cfg.Session.CookieSecure = boolPtr(true)
 	}
 	if cfg.Session.CookieSameSite == "" {
 		cfg.Session.CookieSameSite = "lax"
+	}
+	if cfg.Session.IdPOffboarding.Enabled == nil {
+		cfg.Session.IdPOffboarding.Enabled = boolPtr(true)
+	}
+	if cfg.Session.IdPOffboarding.IntervalMinutes <= 0 {
+		cfg.Session.IdPOffboarding.IntervalMinutes = 10
 	}
 	if cfg.SCIM.CacheTTLSeconds == 0 {
 		cfg.SCIM.CacheTTLSeconds = 600
@@ -266,9 +308,11 @@ func Load(path string) (*Config, error) {
 	return &cfg, nil
 }
 
-// boolPtr is the defaulting helper for the *bool config fields, where nil means
-// "not set in the YAML" and so must be distinguishable from an explicit false.
+// boolPtr / intPtr are the defaulting helpers for the pointer config fields,
+// where nil means "not set in the YAML" and so must be distinguishable from an
+// explicit false / 0.
 func boolPtr(v bool) *bool { return &v }
+func intPtr(v int) *int    { return &v }
 
 // ConfigPath resolves the config file path: the -config flag value if given,
 // else the PURCHASING_CONFIG env var, else ./config.yaml.

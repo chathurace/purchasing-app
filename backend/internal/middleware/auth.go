@@ -49,6 +49,13 @@ type AuthMiddleware struct {
 	bootstrapAdminEmail string
 	session             SessionConfig
 	log                 zerolog.Logger
+	// keySet / issuer / clientID back VerifyLogoutToken (see logout_token.go).
+	// A back-channel logout token is a different artifact from an ID token, so it
+	// cannot go through `verifier` — we verify its signature against the same
+	// JWKS and check its own claim rules.
+	keySet   oidc.KeySet
+	issuer   string
+	clientID string
 }
 
 // AuthConfig carries the OIDC settings (sourced from config.yaml).
@@ -91,12 +98,20 @@ func NewAuth(ctx context.Context, cfg AuthConfig, repo *repository.Repository, l
 		return nil, err
 	}
 	verifier := provider.Verifier(&oidc.Config{ClientID: cfg.ClientID})
+	// Key set for back-channel logout tokens. A failure here is not fatal: the
+	// app authenticates fine without it, only the logout callback is unavailable
+	// (and it reports that), so a discovery quirk must not stop the server.
+	keySet, jwksURL, keyErr := keySetFromProvider(ctx, provider)
+	if keyErr != nil {
+		log.Warn().Err(keyErr).Msg("back-channel logout unavailable: could not resolve jwks_uri")
+	}
 	// Log the EFFECTIVE OIDC config the running server loaded, so "is the deploy
 	// actually using my config.yaml?" is answerable from the boot logs alone.
 	log.Info().
 		Str("issuer", cfg.Issuer).
 		Str("discovery_url", discoveryURL).
 		Str("client_id", cfg.ClientID).
+		Str("jwks_url", jwksURL).
 		Bool("insecure_skip_verify", cfg.InsecureSkipVerify).
 		Msg("OIDC initialized")
 	if cfg.BootstrapAdminEmail != "" {
@@ -108,8 +123,15 @@ func NewAuth(ctx context.Context, cfg AuthConfig, repo *repository.Repository, l
 		bootstrapAdminEmail: cfg.BootstrapAdminEmail,
 		session:             cfg.Session,
 		log:                 log,
+		keySet:              keySet,
+		issuer:              cfg.Issuer,
+		clientID:            cfg.ClientID,
 	}, nil
 }
+
+// BackchannelLogoutReady reports whether logout tokens can be verified — false
+// when the IdP's jwks_uri could not be resolved at startup.
+func (a *AuthMiddleware) BackchannelLogoutReady() bool { return a.keySet != nil }
 
 // SessionConfig exposes the session settings the middleware was built with, so
 // the session handler and the router share exactly one copy.
@@ -160,6 +182,10 @@ func (a *AuthMiddleware) Authenticate(next http.Handler) http.Handler {
 			Name              string `json:"name"`
 			PreferredUsername string `json:"preferred_username"`
 			Username          string `json:"username"`
+			// SID is the IdP session this token came from. Recorded on the
+			// session row at mint time so a back-channel logout naming that sid
+			// can revoke exactly this browser (see logout_token.go).
+			SID string `json:"sid"`
 		}
 		if err := idToken.Claims(&claims); err != nil {
 			reqLog.Warn().Err(err).Msg("auth rejected: invalid token claims")
@@ -203,7 +229,11 @@ func (a *AuthMiddleware) Authenticate(next http.Handler) http.Handler {
 				claims.Username == a.bootstrapAdminEmail ||
 				claims.Sub == a.bootstrapAdminEmail)
 
-		a.serveAuthenticated(w, r, next, reqLog, user, "", isBootstrapAdmin)
+		// Carry the token's sid so POST /auth/session can stamp it on the row it
+		// creates. Only the Bearer path has it — a cookie-authenticated request
+		// presents no token.
+		ctx := ContextWithIdPSessionID(r.Context(), claims.SID)
+		a.serveAuthenticated(w, r.WithContext(ctx), next, reqLog, user, "", isBootstrapAdmin)
 	})
 }
 
@@ -225,7 +255,7 @@ func (a *AuthMiddleware) authenticateSession(w http.ResponseWriter, r *http.Requ
 		return true
 	}
 
-	userID, err := a.repo.TouchUserSession(r.Context(), HashSessionToken(token), a.session.TTL)
+	userID, err := a.repo.TouchUserSession(r.Context(), HashSessionToken(token), a.session.TTL, a.session.MaxLifetime)
 	if err != nil {
 		// Unknown, expired, or revoked. Clear the cookie so the browser stops
 		// resending a dead token on every request until it ages out.
