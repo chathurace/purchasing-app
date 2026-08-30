@@ -137,6 +137,34 @@ export interface EventFilters {
   pr_id?: string;
 }
 
+// ── BPM analytics (docs/bpm-analytics.md) ───────────────────────────────────
+// A cross-organisation window on the purchase-request process, gated like the
+// audit log (admin / procurement_admin) because it reads the same event rows.
+
+// AnalyticsPR is one request as the analytics views see it — identity, when it
+// started, and the two people who own it. `assignee` is null while unassigned.
+export interface AnalyticsPR {
+  id: number;
+  reference?: string | null;
+  title: string;
+  status: PRStatus;
+  priority: PRPriority;
+  created_at: string;
+  requester: UserSummary | null;
+  assignee: UserSummary | null;
+}
+
+// The sortable columns of the analytics PR list. The server whitelists these
+// names, so they are the wire values — not display labels.
+export type AnalyticsPRSort = "created_at" | "requester" | "assignee";
+
+// PRFlow is the per-PR analytics page: the header plus the full process-event
+// timeline, oldest-first (the order the server returns).
+export interface PRFlow {
+  purchase_request: AnalyticsPR;
+  events: ProcessEvent[];
+}
+
 // A directory entry from the connected identity server (SCIM), used for
 // name/email autocomplete. Not necessarily a provisioned app user — they may
 // never have logged in — so it carries no id.

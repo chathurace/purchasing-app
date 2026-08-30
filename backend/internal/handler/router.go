@@ -52,6 +52,7 @@ func NewRouter(d Deps) http.Handler {
 	configOptions := &ConfigOptionsHandler{Repo: d.Repo, Log: d.Log}
 	teams := &TeamsHandler{Repo: d.Repo, Log: d.Log}
 	events := &EventsHandler{Repo: d.Repo, Log: d.Log}
+	analytics := &AnalyticsHandler{Repo: d.Repo, Log: d.Log}
 	storageH := &StorageHandler{
 		Repo:     d.Repo,
 		Manager:  d.StorageManager,
@@ -248,6 +249,13 @@ func NewRouter(d Deps) http.Handler {
 			r.Get("/events/process", events.ListProcess)
 			r.Get("/events/audit", events.ListAudit)
 			r.Get("/events/actions", events.Actions)
+
+			// BPM analytics (admin/procurement_admin — the same gate, over the
+			// same process_events rows). Cross-organisation by design: the PR
+			// list applies no visibility gate, and the per-PR flow does not go
+			// through the gated PR read. See docs/bpm-analytics.md.
+			r.Get("/analytics/purchase-requests", analytics.ListPRs)
+			r.Get("/analytics/purchase-requests/{id}", analytics.PRFlow)
 
 			// File storage configuration (admin only — enforced in the handlers).
 			r.Get("/storage/status", storageH.Status)

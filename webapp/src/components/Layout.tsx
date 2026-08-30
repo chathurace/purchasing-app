@@ -20,6 +20,7 @@ import { useIsAdmin } from "../hooks/useIsAdmin";
 import { useCanManageVendors } from "../hooks/useCanManageVendors";
 import { useCanManageBusinessUnits } from "../hooks/useCanManageBusinessUnits";
 import { useCanViewAuditLog } from "../hooks/useCanViewAuditLog";
+import { useCanViewAnalytics } from "../hooks/useAnalytics";
 import { getNavGroups } from "../lib/nav/navModel";
 import type { NavGroup } from "../lib/nav/navModel";
 
@@ -92,6 +93,7 @@ export function Layout() {
   const canManageVendors = useCanManageVendors();
   const canManageBusinessUnits = useCanManageBusinessUnits();
   const canViewAuditLog = useCanViewAuditLog();
+  const canViewAnalytics = useCanViewAnalytics();
   const isMobile = useMediaQuery(MOBILE_QUERY);
   const [desktopCollapsed, setDesktopCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -102,6 +104,7 @@ export function Layout() {
     canManageVendors,
     canManageBusinessUnits,
     canViewAuditLog,
+    canViewAnalytics,
   });
   const activeId = resolveActiveId(location.pathname, groups);
   const closeMobileDrawer = () => setMobileOpen(false);

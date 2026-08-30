@@ -21,6 +21,8 @@ import { InvoiceDetailPage } from "./pages/InvoiceDetailPage";
 import { InvoiceListPage } from "./pages/InvoiceListPage";
 import { UserManagementPage } from "./pages/UserManagementPage";
 import { AuditEventsPage } from "./pages/AuditEventsPage";
+import { AnalyticsPRListPage } from "./pages/AnalyticsPRListPage";
+import { PRAnalyticsPage } from "./pages/PRAnalyticsPage";
 import { VendorListPage } from "./pages/VendorListPage";
 import { VendorDetailPage } from "./pages/VendorDetailPage";
 import { BusinessUnitListPage } from "./pages/BusinessUnitListPage";
@@ -67,6 +69,10 @@ export default function App() {
 
         <Route path="/business-units" element={<BusinessUnitListPage />} />
         <Route path="/business-units/:id" element={<BusinessUnitDetailPage />} />
+
+        {/* BPM analytics (docs/bpm-analytics.md) — admin / procurement_admin. */}
+        <Route path="/analytics/purchase-requests" element={<AnalyticsPRListPage />} />
+        <Route path="/analytics/purchase-requests/:id" element={<PRAnalyticsPage />} />
 
         <Route path="/users" element={<UserManagementPage />} />
         <Route path="/audit" element={<AuditEventsPage />} />

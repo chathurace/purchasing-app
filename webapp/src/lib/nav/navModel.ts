@@ -13,6 +13,7 @@ import {
   Users,
   ScrollText,
   Settings,
+  Activity,
 } from "@wso2/oxygen-ui-icons-react";
 
 // ── Sidebar navigation model (Oxygen UI retheme, docs/plans/19) ─────────────
@@ -33,9 +34,11 @@ import {
 //   - Business units, Settings     → canManageBusinessUnits (admin / procurement_admin)
 //   - Users                        → admin
 //   - Audit log                    → canViewAuditLog (admin / procurement_admin)
+//   - Analytics/*                  → canViewAnalytics (admin / procurement_admin)
 //
-// Master-data / admin destinations are collected under a cosmetic "Admin"
-// group header, appended only when it would contain at least one visible item.
+// Master-data / admin destinations are collected under a cosmetic "Admin" group
+// header, and the BPM analytics views under an "Analytics" one directly above it;
+// each group is appended only when it would contain at least one visible item.
 
 export interface NavPermissions {
   procurement: boolean;
@@ -43,6 +46,7 @@ export interface NavPermissions {
   canManageVendors: boolean;
   canManageBusinessUnits: boolean;
   canViewAuditLog: boolean;
+  canViewAnalytics: boolean;
 }
 
 export interface NavDestination {
@@ -61,8 +65,14 @@ export interface NavGroup {
 }
 
 export function getNavGroups(perms: NavPermissions): NavGroup[] {
-  const { procurement, isAdmin, canManageVendors, canManageBusinessUnits, canViewAuditLog } =
-    perms;
+  const {
+    procurement,
+    isAdmin,
+    canManageVendors,
+    canManageBusinessUnits,
+    canViewAuditLog,
+    canViewAnalytics,
+  } = perms;
 
   const mainItems: NavDestination[] = [
     { id: "home", to: "/", label: "Home", icon: Home },
@@ -83,6 +93,19 @@ export function getNavGroups(perms: NavPermissions): NavGroup[] {
       : []),
   ];
 
+  // Analytics subsections. Purchase requests is the first; more will join it, so
+  // this is a group rather than a single top-level item.
+  const analyticsItems: NavDestination[] = canViewAnalytics
+    ? [
+        {
+          id: "analytics-prs",
+          to: "/analytics/purchase-requests",
+          label: "Purchase requests",
+          icon: Activity,
+        },
+      ]
+    : [];
+
   const adminItems: NavDestination[] = [
     ...(canManageVendors ? [{ id: "vendors", to: "/vendors", label: "Vendors", icon: Store }] : []),
     ...(canManageBusinessUnits
@@ -96,6 +119,9 @@ export function getNavGroups(perms: NavPermissions): NavGroup[] {
   ];
 
   const groups: NavGroup[] = [{ id: "main", items: mainItems }];
+  if (analyticsItems.length > 0) {
+    groups.push({ id: "analytics", label: "Analytics", items: analyticsItems });
+  }
   if (adminItems.length > 0) {
     groups.push({ id: "admin", label: "Admin", items: adminItems });
   }

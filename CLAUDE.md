@@ -351,6 +351,35 @@ Whenever test data is added by claude, clean up all those test data after testin
   `GET /api/v1/events/{process,audit,actions}`, gated by `requireAccess` (`HasRole(admin) ||
   HasRole(procurement_admin)`; frontend `useCanViewAuditLog`/`canViewAuditLog` nav flag); capped at
   the latest 2000 rows/section. Read-only — no new event action.
+- **BPM analytics** — see `docs/bpm-analytics.md`. An **Analytics** nav group (sidebar, directly
+  above **Admin**; a group, not a single item, because more subsections are expected) over the
+  process data the app already records. Read-only: no migration, no new event action, no writes.
+  Phase 1 is one subsection, **Purchase requests**: the list of every PR (id/reference, title,
+  priority, created, requester, assignee) and, per PR, its **process-event flow** drawn top-to-bottom.
+  Gated to **admin/procurement_admin** by the *same* function as the audit log —
+  `handler.hasEventLogAccess`, extracted from `EventsHandler.requireAccess` and shared — because the
+  flow view returns the **same `process_events` rows**; frontend `useCanViewAnalytics` +
+  `canViewAnalytics` nav flag. Deliberately applies **no visibility gate**: `repository/analytics.go`
+  takes no caller args at all, so the list includes PRs still awaiting team-lead approval and the flow
+  read bypasses the gated PR read (a `procurement_admin` can analyse a request they can't open) —
+  sound only because that audience already sees every PR's events in the audit log. Backend
+  `ListAnalyticsPRs`/`GetAnalyticsPR` + `handler/analytics.go` at
+  `GET /api/v1/analytics/purchase-requests[/{id}]` (the detail returns header **and** events in one
+  round trip). **Sorting is server-side** (`?sort=created_at|requester|assignee&dir=asc|desc`, unknown
+  values falling back rather than erroring, each column defaulting to its natural direction) because
+  the list is capped at 500/2000 — sorting the page locally would reorder a slice of the data and call
+  it an ordering; `analyticsPROrderBy` resolves the column through a `switch` (never interpolated),
+  sorts people on the rendered `COALESCE(NULLIF(name,''), email)` string, keeps assignee `NULLS LAST`
+  in **both** directions, and breaks every tie on `id`. `Repository.ListProcessEvents` (the per-PR
+  oldest-first read) gained the `users` LEFT JOIN for `actor_name` and stays **unbounded** — one
+  request's own history, and a truncated flow diagram would misstate the process. Frontend
+  `components/ProcessFlowTimeline.tsx`: one continuous rail, one node per event, and the **elapsed
+  time on the connector** between two nodes (the wait is a property of the gap, not of either step).
+  Colour carries **outcome only**, from the reserved status roles and derived from the *qualifier*
+  (`eventOutcome` in the new shared `lib/eventLabels.ts`, which also holds the `humanizeEventToken`
+  the Audit log page previously kept a local copy of); tiles are outlined not filled so the glyph
+  keeps contrast in both themes, and every node pairs colour with an icon **and** the visible
+  qualifier chip, so nothing is colour-alone.
 - **Teams & approval assignees** — see `docs/teams-approval-assignee.md` (migrations `038` teams,
   `039` assignee, `047` the Compliance team + `compliance` role). A **team** (`teams` table, seeded
   fixed set Legal/Security/Compliance/Procurement) is a name

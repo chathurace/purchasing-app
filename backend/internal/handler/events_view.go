@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/cs/purchasing-app/internal/middleware"
@@ -19,9 +20,16 @@ type EventsHandler struct {
 	Log  zerolog.Logger
 }
 
+// hasEventLogAccess reports whether the caller may read the append-only logs:
+// admin or procurement_admin only. Shared with the Analytics views, which read
+// the same process_events rows (see analytics.go) and so must not be reachable by
+// anyone this rule excludes.
+func hasEventLogAccess(ctx context.Context) bool {
+	return middleware.HasRole(ctx, model.RoleAdmin) || middleware.HasRole(ctx, model.RoleProcurementAdmin)
+}
+
 func (h *EventsHandler) requireAccess(w http.ResponseWriter, r *http.Request) bool {
-	ctx := r.Context()
-	if !middleware.HasRole(ctx, model.RoleAdmin) && !middleware.HasRole(ctx, model.RoleProcurementAdmin) {
+	if !hasEventLogAccess(r.Context()) {
 		writeError(w, http.StatusForbidden, "admin or procurement_admin access required")
 		return false
 	}

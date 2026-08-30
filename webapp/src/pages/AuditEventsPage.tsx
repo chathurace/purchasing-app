@@ -21,6 +21,7 @@ import {
   Typography,
 } from "@wso2/oxygen-ui";
 import { useCanViewAuditLog } from "../hooks/useCanViewAuditLog";
+import { humanizeEventToken } from "../lib/eventLabels";
 import { useAuditEvents, useEventActions, useProcessEvents } from "../hooks/useEvents";
 import type { AuditEvent, EventFilters, ProcessEvent } from "../types/api";
 
@@ -34,13 +35,9 @@ import type { AuditEvent, EventFilters, ProcessEvent } from "../types/api";
 
 type Section = "process" | "system";
 
-// humanize turns a snake_case action/entity token into a readable label. Keeping
-// this derived (not a hand-maintained map) means the dropdowns stay in sync with
-// the Go action catalog automatically.
-function humanize(s: string): string {
-  if (!s) return "";
-  return s.replace(/_/g, " ").replace(/^\w/, (c) => c.toUpperCase());
-}
+// Action/entity tokens are humanized by the shared helper — the analytics flow
+// view labels the same tokens.
+const humanize = humanizeEventToken;
 
 function formatWhen(iso: string): string {
   const d = new Date(iso);

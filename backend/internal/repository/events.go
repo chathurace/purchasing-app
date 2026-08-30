@@ -103,14 +103,20 @@ func (r *Repository) AddAuditEvent(ctx context.Context, action, qualifier, entit
 }
 
 // ListProcessEvents returns a purchase request's process events oldest-first —
-// the BPMN-style task timeline. No API exposes this yet (v1 is write-only); it
-// backs verification and future analysis reads.
+// the BPMN-style task timeline. It backs the per-PR flow view under Analytics
+// (docs/bpm-analytics.md) and the integration tests' verification reads;
+// FilterProcessEvents is the cross-PR, newest-first counterpart.
+//
+// Unbounded on purpose: this is one request's own history, not a table scan, and
+// truncating a flow diagram would misrepresent the process.
 func (r *Repository) ListProcessEvents(ctx context.Context, prID int64) ([]ProcessEvent, error) {
 	rows, err := r.pool.Query(ctx, `
-		SELECT id, purchase_request_id, action, qualifier, actor_id, actor_email, created_at
-		FROM process_events
-		WHERE purchase_request_id = $1
-		ORDER BY created_at, id`, prID)
+		SELECT e.id, e.purchase_request_id, e.action, e.qualifier, e.actor_id,
+		       e.actor_email, COALESCE(u.name, ''), e.created_at
+		FROM process_events e
+		LEFT JOIN users u ON u.id = e.actor_id
+		WHERE e.purchase_request_id = $1
+		ORDER BY e.created_at, e.id`, prID)
 	if err != nil {
 		return nil, err
 	}
@@ -118,7 +124,8 @@ func (r *Repository) ListProcessEvents(ctx context.Context, prID int64) ([]Proce
 	var out []ProcessEvent
 	for rows.Next() {
 		var e ProcessEvent
-		if err := rows.Scan(&e.ID, &e.PurchaseRequestID, &e.Action, &e.Qualifier, &e.ActorID, &e.ActorEmail, &e.CreatedAt); err != nil {
+		if err := rows.Scan(&e.ID, &e.PurchaseRequestID, &e.Action, &e.Qualifier,
+			&e.ActorID, &e.ActorEmail, &e.ActorName, &e.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, e)
