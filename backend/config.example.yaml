@@ -14,6 +14,19 @@ oidc:
   issuer: "https://localhost:9443/oauth2/token"
   discovery_url: ""
   client_id: "<wso2-client-id>"
+  # Extra audiences accepted on incoming ID tokens — one per ADDITIONAL front end
+  # that signs the same people in through its own IdP application (the One WSO2
+  # portal; see docs/plans/21-one-wso2-port.md). An ID token's `aud` is the client
+  # id that minted it, so a front end absent from this list has every request
+  # rejected as `invalid token`.
+  #
+  # This grants that application full access to this app: its tokens authenticate
+  # here, and the identity they resolve to is matched on the `email` claim. Only
+  # list applications in the same IdP organisation that you mean to trust that
+  # far. Omit or leave empty for single-front-end deployments — that is the
+  # original behaviour, and the rollback position.
+  # additional_client_ids:
+  #   - "<one-wso2-client-id>"
   insecure_skip_verify: true   # dev only — trusts the self-signed WSO2 cert
 
 # Backend-issued browser session — the app's own session cookie, independent of
@@ -119,9 +132,13 @@ security:
 bootstrap_admin:
   email: "chathura@wso2.com"
 
+# Every browser origin that may call this API. Also the allowlist
+# CheckCSRFOrigin compares cookie-authenticated writes against, so a missing
+# entry fails those with 403 rather than a CORS error.
 cors:
   allowed_origins:
-    - "http://localhost:5173"
+    - "http://localhost:5173"        # this app's own webapp (vite dev)
+    - "http://localhost:3000"        # One WSO2 webapp (vite dev) — see docs/plans/21
 
 # Optional. When enabled is false (the default), approval-request notifications
 # are written to the log instead of emailed, so dev needs no SMTP server.

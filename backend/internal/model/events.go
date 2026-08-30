@@ -139,6 +139,13 @@ const (
 	// qualifier: admin | idp_logout
 	AuditRevokeUserSessions = "revoke_user_sessions"
 
+	// A second OIDC subject was attached to an existing account — the same
+	// person signing in from another front end, each with its own Asgardeo
+	// application and so potentially its own `sub`. Recorded with a NULL actor:
+	// the identity server triggered it, not a person. Detail holds the new
+	// subject. See repository.ProvisionUserOnLogin.
+	AuditLinkIdentity = "link_identity"
+
 	AuditConnectStorage   = "connect_storage"
 	AuditSetStorageFolder = "set_storage_folder"
 )
@@ -179,7 +186,7 @@ var ValidAuditActions = setOf(
 	AuditCreateBusinessUnit, AuditUpdateBusinessUnit,
 	AuditCreateConfigOption, AuditUpdateConfigOption, AuditDeleteConfigOption,
 	AuditCreateUser, AuditUpdateUser, AuditGrantRole, AuditRevokeRole, AuditSetUserActive,
-	AuditRevokeUserSessions,
+	AuditRevokeUserSessions, AuditLinkIdentity,
 	AuditConnectStorage, AuditSetStorageFolder,
 )
 

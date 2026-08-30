@@ -18,10 +18,20 @@ type Config struct {
 	} `yaml:"database"`
 
 	OIDC struct {
-		Issuer             string `yaml:"issuer"`
-		DiscoveryURL       string `yaml:"discovery_url"`
-		ClientID           string `yaml:"client_id"`
-		InsecureSkipVerify bool   `yaml:"insecure_skip_verify"`
+		Issuer       string `yaml:"issuer"`
+		DiscoveryURL string `yaml:"discovery_url"`
+		ClientID     string `yaml:"client_id"`
+		// AdditionalClientIDs are further audiences accepted on incoming ID
+		// tokens — one per extra front end that signs the same people in
+		// through its own Asgardeo application (the One WSO2 portal). An ID
+		// token's `aud` is the client id that minted it, so without listing it
+		// here every request from that front end is rejected as `invalid token`.
+		//
+		// Only add applications in the SAME Asgardeo organisation that you
+		// intend to grant full access to this app: an accepted audience means
+		// that application's tokens authenticate here.
+		AdditionalClientIDs []string `yaml:"additional_client_ids"`
+		InsecureSkipVerify  bool     `yaml:"insecure_skip_verify"`
 	} `yaml:"oidc"`
 
 	// Session configures the backend-issued browser session cookie — the app's

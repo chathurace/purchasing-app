@@ -114,6 +114,7 @@ func main() {
 		Issuer:              cfg.OIDC.Issuer,
 		DiscoveryURL:        cfg.OIDC.DiscoveryURL,
 		ClientID:            cfg.OIDC.ClientID,
+		AdditionalClientIDs: cfg.OIDC.AdditionalClientIDs,
 		InsecureSkipVerify:  cfg.OIDC.InsecureSkipVerify,
 		BootstrapAdminEmail: cfg.BootstrapAdmin.Email,
 		Session:             sessionCfg,

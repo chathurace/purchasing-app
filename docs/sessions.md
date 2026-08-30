@@ -241,3 +241,109 @@ instead (which ignores `nginx.conf`), is a cross-site cookie:
 Safari drops it regardless, so that path degrades to Bearer tokens and short
 sessions — which is also exactly what the app does when nothing is configured, so
 shipping the backend change on its own is harmless.
+
+## A second front end (the One WSO2 portal)
+
+The purchasing UI is being duplicated into the One WSO2 portal
+([plan 21](plans/21-one-wso2-port.md)), so the same people reach this backend from
+two web apps at once for as long as the standalone app runs. The portal is a
+different Asgardeo **application** and a different **origin**, and it holds no
+cookie session — three consequences.
+
+### Two audiences
+
+An ID token's `aud` is the client id that minted it, so the portal's tokens do
+not verify against `oidc.client_id`. `oidc.additional_client_ids` lists the extra
+audiences accepted:
+
+```yaml
+oidc:
+  client_id: "<this-app's-client-id>"
+  additional_client_ids:
+    - "<one-wso2-client-id>"
+```
+
+- One `*oidc.IDTokenVerifier` per entry, tried in configured order with this
+  app's own client first. Each applies the **full** ID-token rule set, so
+  "accepted" always means signature, issuer, expiry *and* audience checked. It is
+  deliberately not one verifier with `SkipClientIDCheck` plus a hand-rolled
+  audience test: every application in the Asgardeo organisation shares this
+  issuer and signing key, so that form accepts tokens from all of them the moment
+  the hand-rolled half is dropped.
+- An accepted audience is a **trust grant**: that application's tokens
+  authenticate here, and resolve to an identity by `email`. List only
+  applications you mean to trust that far.
+- Empty (the default) is exactly the previous single-audience behaviour, and the
+  rollback position.
+- The startup `OIDC initialized` line logs `accepted_client_ids`, and a rejected
+  token's warning prints the token's actual `aud` beside that list — the common
+  failure is an audience nobody configured, and comparing the two answers it.
+- **Back-channel logout is not widened.** `VerifyLogoutToken` stays bound to
+  `oidc.client_id`, because its job is to revoke *this app's* cookie sessions,
+  which only this app's own front end holds.
+
+### One person, several OIDC subjects
+
+Asgardeo may issue an **application-scoped `sub`**, so the same person arriving
+from the portal can carry a subject this app has never seen. Identity therefore
+resolves through **`user_identities`** (migration `054`), not `users.sub`:
+
+| Step | Condition | Result |
+| --- | --- | --- |
+| 1 | subject in `user_identities` | that user; refresh email/name |
+| 2 | pending invite (`sub IS NULL`) with this email | claim it, fill in `users.sub` |
+| 3 | existing account with this email, unknown subject | **adopt** — record the subject as an additional identity |
+| 4 | none of the above | new self-provisioned user |
+
+Steps 2–4 also write the `user_identities` row, so the next request takes step 1.
+
+- Without step 3 that login fell through to step 4's `INSERT`, whose
+  `ON CONFLICT (sub)` does **not** catch the collision that actually happens —
+  `users_email_lower_key` — so the request 500s and the person is locked out of
+  the app entirely. That is the bug this exists to prevent.
+- **`users.sub` is unchanged** and keeps whichever subject was seen first:
+  `pending` is derived from it (`sub IS NULL` = invited, never signed in) and
+  `UpdateInvitedUser` gates on it. `user_identities` is the authoritative
+  *lookup*; that column is the primary subject. One visible consequence:
+  `GET /api/v1/me` reports `sub` as the primary subject, not necessarily the one
+  you authenticated with. Nothing reads it.
+- **Adoption trusts the `email` claim**, as step 2 already did. The boundary is
+  the audience allowlist above: only configured applications can present an
+  accepted token at all. Step 3 differs from step 2 in reaching an *active*
+  account rather than a never-used invite, so it is audited — `link_identity`,
+  NULL actor (the identity server triggered it, not a person), the new subject in
+  the detail column.
+- **Concurrency**: an unknown subject takes a `pg_advisory_xact_lock` on the
+  email before resolving. Two front ends open at once, each firing several
+  parallel requests, otherwise race between the email lookup and the insert and
+  one loses on `users_email_lower_key` — a 500 at exactly the moment someone
+  first opens the portal. The lock is on that cold path only; the hot path
+  (step 1) never takes it.
+- `RevokeUserSessionsBySub` resolves through `user_identities` too, so a
+  back-channel logout naming *either* subject finds the user.
+- `UpsertUser` writes an identity row as well. It is a test fixture today, but a
+  write path that set `users.sub` without one would produce a user whose own
+  subject does not resolve.
+
+### No cookie session for portal users
+
+The portal is served from its own origin and shares no proxy with this API, so
+the session cookie cannot be first-party there — and the portal's shared HTTP
+layer sends no credentials. Its requests present a Bearer ID token and fall
+straight through to the Bearer path, which is the pre-session behaviour this
+middleware was written to preserve. `session.enabled` stays `true` for the
+standalone app.
+
+So portal users get **Asgardeo-lifetime sessions, not 60-day ones**, and the
+teardown table above reads differently for them:
+
+| Mechanism | Portal users |
+| --- | --- |
+| `DELETE /auth/session` | not called — no cookie exists |
+| Back-channel logout | inert (revokes cookie sessions; they hold none). Their IdP session ending is what actually gates them |
+| IdP offboarding sweep | inert, same reason — a deleted/disabled Asgardeo account can no longer mint a token |
+| Admin **End sessions** | **no effect.** Deactivating still works: `is_active` is re-read every request, so `serveAuthenticated` cuts them off on the Bearer path too |
+| Idle timeout | the portal's own 25-minute warning / 30-minute optional sign-out |
+
+The control an admin actually reaches for — deactivate — is unchanged. What moves
+is the session's kill switch, from this database to Asgardeo.

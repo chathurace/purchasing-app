@@ -36,12 +36,28 @@ type User struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+// UpsertUser creates or refreshes a user keyed on the OIDC subject. Login does
+// NOT come through here — that is ProvisionUserOnLogin, which also resolves
+// invites and additional subjects; this is the direct form, used by tests to
+// establish a user.
+//
+// It records the subject in user_identities too, because that table — not
+// users.sub — is what resolves a subject to a user (migration 054). A write path
+// that set users.sub without it would produce a user whose own subject does not
+// resolve, which back-channel logout and the next login would both then miss.
 func (r *Repository) UpsertUser(ctx context.Context, sub, email, name string) (*User, error) {
 	// Pass NULL instead of "" so IdPs that don't emit email/name don't collide
 	// on the empty string. Emails are stored lowercased so the case-insensitive
 	// unique index and the login email-match resolve to one row.
 	emailArg, nameArg := emailArgOf(email), nilIfEmpty(name)
-	row := r.pool.QueryRow(ctx, `
+
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+
+	row := tx.QueryRow(ctx, `
 		INSERT INTO users (sub, email, name)
 		VALUES ($1, $2, $3)
 		ON CONFLICT (sub) DO UPDATE
@@ -49,7 +65,19 @@ func (r *Repository) UpsertUser(ctx context.Context, sub, email, name string) (*
 		    name  = COALESCE(EXCLUDED.name, users.name),
 		    updated_at = NOW()
 		RETURNING id, sub, email, name, is_active, created_at, updated_at`, sub, emailArg, nameArg)
-	return scanUser(row)
+	u, err := scanUser(row)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO user_identities (sub, user_id) VALUES ($1, $2)
+		ON CONFLICT (sub) DO NOTHING`, sub, u.ID); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return u, nil
 }
 
 func (r *Repository) GetUserByID(ctx context.Context, id int64) (*User, error) {
@@ -102,37 +130,78 @@ func (r *Repository) GrantDefaultRoleIfNone(ctx context.Context, userID int64, r
 
 // ProvisionUserOnLogin resolves the OIDC identity to a user row, in one tx:
 //
-//  1. Known sub      → refresh email/name, return the row.
-//  2. Pending invite → an admin-created row (sub IS NULL) whose email matches:
+//  1. Known sub       → refresh email/name, return the row.
+//  2. Pending invite  → an admin-created row (sub IS NULL) whose email matches:
 //     claim it by filling in the real sub. This is how "add user by email"
 //     links to the eventual login.
-//  3. Otherwise       → insert a brand-new self-provisioned user.
+//  3. Same person, new subject → a row whose email matches but whose subject
+//     this app has never seen. Record the subject as an ADDITIONAL identity
+//     rather than inserting a second row (see linkIdentity for why).
+//  4. Otherwise        → insert a brand-new self-provisioned user.
+//
+// Subjects are resolved through `user_identities` (migration 054), not through
+// `users.sub`, so one person can sign in from more than one front end — each with
+// its own Asgardeo application, and so potentially its own `sub`. `users.sub`
+// still holds whichever subject was seen first, because `pending` is derived from
+// it.
 //
 // It does NOT enforce is_active — the caller gates login on the returned flag so
 // a deactivated user is still resolved (and stays linked) but refused entry.
-func (r *Repository) ProvisionUserOnLogin(ctx context.Context, sub, email, name string) (*User, error) {
+//
+// linked reports that step 3 attached a new subject to an existing account. The
+// caller audits it; it is a new credential on an existing account and so worth a
+// trail.
+func (r *Repository) ProvisionUserOnLogin(ctx context.Context, sub, email, name string) (u *User, linked bool, err error) {
 	emailArg, nameArg := emailArgOf(email), nilIfEmpty(name)
 
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	defer tx.Rollback(ctx)
 
 	var id int64
-	err = tx.QueryRow(ctx, `SELECT id FROM users WHERE sub = $1`, sub).Scan(&id)
+	err = tx.QueryRow(ctx, `SELECT user_id FROM user_identities WHERE sub = $1`, sub).Scan(&id)
 	switch {
 	case err == nil:
 		// (1) Existing user — refresh profile fields if the IdP supplied them.
+		// This is the path essentially every request takes, and it touches no
+		// lock beyond the row itself.
 		if _, err = tx.Exec(ctx, `
 			UPDATE users
 			SET email = COALESCE($2, email), name = COALESCE($3, name), updated_at = NOW()
 			WHERE id = $1`, id, emailArg, nameArg); err != nil {
-			return nil, err
+			return nil, false, err
 		}
 	case errors.Is(err, pgx.ErrNoRows):
-		// (2) Try to claim a pending invite by email.
-		claimed := false
+		// An unknown subject: either a first-ever login, or a known person
+		// arriving from a second front end. Both resolve by email, so serialize
+		// on it — otherwise two concurrent unknown-subject requests for the same
+		// person (which is exactly what a first page load produces, and what two
+		// open front ends make likelier) race between the SELECT and the INSERT
+		// below and one loses on users_email_lower_key. The lock is taken ONLY on
+		// this cold path, never on the hot path above, and is released at commit.
+		if emailArg != nil {
+			// hashtext() is cast explicitly: the parameter arrives untyped, and
+			// pg_advisory_xact_lock has both a 1-arg and a 2-arg form, so
+			// without it Postgres cannot resolve the overload.
+			if _, err = tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1::text))`, emailArg); err != nil {
+				return nil, false, err
+			}
+			// Re-check: a concurrent request holding the lock first may have
+			// created the identity while we waited.
+			err = tx.QueryRow(ctx, `SELECT user_id FROM user_identities WHERE sub = $1`, sub).Scan(&id)
+			if err == nil {
+				break
+			}
+			if !errors.Is(err, pgx.ErrNoRows) {
+				return nil, false, err
+			}
+		}
+
+		// (2) Claim a pending invite: a row an admin created by email that has
+		// never been signed into.
+		resolved := false
 		if emailArg != nil {
 			err = tx.QueryRow(ctx, `
 				UPDATE users
@@ -141,18 +210,42 @@ func (r *Repository) ProvisionUserOnLogin(ctx context.Context, sub, email, name 
 				RETURNING id`, sub, emailArg, nameArg).Scan(&id)
 			switch {
 			case err == nil:
-				claimed = true
+				resolved = true
 			case errors.Is(err, pgx.ErrNoRows):
-				// fall through to insert
+				// fall through
 			default:
-				return nil, err
+				return nil, false, err
 			}
 		}
-		// (3) Brand-new user. Upsert on sub so concurrent first-login requests
+
+		// (3) An existing, already-signed-into account with this email, reached
+		// with a subject we have not seen. Adopt it.
+		if !resolved && emailArg != nil {
+			err = tx.QueryRow(ctx, `
+				UPDATE users
+				SET name = COALESCE($2, name), updated_at = NOW()
+				WHERE lower(email) = $1
+				RETURNING id`, emailArg, nameArg).Scan(&id)
+			switch {
+			case err == nil:
+				resolved, linked = true, true
+			case errors.Is(err, pgx.ErrNoRows):
+				// fall through
+			default:
+				return nil, false, err
+			}
+		}
+
+		// (4) Brand-new user. Upsert on sub so concurrent first-login requests
 		// (the frontend fires several API calls in parallel, none of which find
 		// the user by sub yet) don't collide on the users_sub_key unique
 		// constraint — the losers take the DO UPDATE path instead of erroring.
-		if !claimed {
+		if !resolved {
+			// The guard rail. Every branch above resolved an EXISTING user, none
+			// of which needs an email. Only creation does — see ErrNoEmailClaim.
+			if emailArg == nil {
+				return nil, false, ErrNoEmailClaim
+			}
 			if err = tx.QueryRow(ctx, `
 				INSERT INTO users (sub, email, name) VALUES ($1, $2, $3)
 				ON CONFLICT (sub) DO UPDATE
@@ -160,23 +253,34 @@ func (r *Repository) ProvisionUserOnLogin(ctx context.Context, sub, email, name 
 					    name = COALESCE($3, users.name),
 					    updated_at = NOW()
 				RETURNING id`, sub, emailArg, nameArg).Scan(&id); err != nil {
-				return nil, err
+				return nil, false, err
 			}
 		}
+
+		// Record the subject for every path that got here, so the next request
+		// takes step 1. DO UPDATE (a no-op write of the existing user_id) rather
+		// than DO NOTHING so RETURNING always yields a row; a loser in a race
+		// adopts the winner's user instead of erroring.
+		if err = tx.QueryRow(ctx, `
+			INSERT INTO user_identities (sub, user_id) VALUES ($1, $2)
+			ON CONFLICT (sub) DO UPDATE SET user_id = user_identities.user_id
+			RETURNING user_id`, sub, id).Scan(&id); err != nil {
+			return nil, false, err
+		}
 	default:
-		return nil, err
+		return nil, false, err
 	}
 
 	row := tx.QueryRow(ctx, `
 		SELECT id, sub, email, name, is_active, created_at, updated_at FROM users WHERE id = $1`, id)
-	u, err := scanUser(row)
+	u, err = scanUser(row)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	return u, nil
+	return u, linked, nil
 }
 
 // --- Admin user management ---
@@ -222,6 +326,20 @@ func (r *Repository) ListUsersWithRoles(ctx context.Context) ([]*AdminUser, erro
 }
 
 // ErrEmailExists is returned when an admin invites an email already on file.
+// ErrNoEmailClaim refuses to CREATE a user whose token carried no email-like
+// claim. Resolving an existing user needs no email (their subject is already
+// recorded), so this only ever blocks self-provisioning.
+//
+// This deliberately narrows migration 005, which made email nullable so "first
+// login never fails on a missing profile field". That was right when identity was
+// `sub` alone and a missing email cost only a blank profile. It is wrong now that
+// identity RESOLUTION depends on email: with no email, ProvisionUserOnLogin
+// cannot claim an invite (step 2) or recognise a person arriving from a second
+// front end (step 3), so it would insert a second, roleless account beside the
+// real one and nothing would say so. A refusal names the problem; a silent
+// duplicate does not. See docs/plans/21-one-wso2-port.md.
+var ErrNoEmailClaim = errors.New("the identity provider released no email claim, so this user cannot be created")
+
 var ErrEmailExists = errors.New("a user with this email already exists")
 
 // ErrNotProcurementUser is returned when a PR assignee/collaborator does not hold

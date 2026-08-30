@@ -36,7 +36,7 @@ func TestInviteThenLoginLinksBySub(t *testing.T) {
 
 	// First login with a differently-cased email claims the same row.
 	sub := "oidc-sub-" + t.Name()
-	linked, err := repo.ProvisionUserOnLogin(ctx, sub, strings.ToUpper(email), "Invitee Real")
+	linked, _, err := repo.ProvisionUserOnLogin(ctx, sub, strings.ToUpper(email), "Invitee Real")
 	if err != nil {
 		t.Fatalf("provision on login: %v", err)
 	}
@@ -48,7 +48,7 @@ func TestInviteThenLoginLinksBySub(t *testing.T) {
 	}
 
 	// A second login with the same sub is idempotent (no new row).
-	again, err := repo.ProvisionUserOnLogin(ctx, sub, email, "Invitee Real")
+	again, _, err := repo.ProvisionUserOnLogin(ctx, sub, email, "Invitee Real")
 	if err != nil || again.ID != invited.ID {
 		t.Fatalf("second login not idempotent: id=%d err=%v", again.ID, err)
 	}
@@ -105,7 +105,7 @@ func TestUpdateInvitedUser(t *testing.T) {
 	}
 
 	// Once the user logs in (sub set), editing is refused.
-	if _, err := repo.ProvisionUserOnLogin(ctx, "oidc-sub-"+t.Name(), "new-"+email, "Invitee"); err != nil {
+	if _, _, err := repo.ProvisionUserOnLogin(ctx, "oidc-sub-"+t.Name(), "new-"+email, "Invitee"); err != nil {
 		t.Fatalf("provision on login: %v", err)
 	}
 	if err := repo.UpdateInvitedUser(ctx, u.ID, "changed-"+email, "Nope"); !errors.Is(err, repository.ErrUserAlreadyLoggedIn) {

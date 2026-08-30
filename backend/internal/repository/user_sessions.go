@@ -165,8 +165,13 @@ func (r *Repository) RevokeUserSessionsByIdPSID(ctx context.Context, sid string)
 // subject. The fallback for a back-channel logout with no `sid` (or a `sid` we
 // never recorded), where the spec's intent is "this subject's session(s) are
 // over" — so signing them out everywhere is the safe reading.
+//
+// Resolved through user_identities (migration 054), not users.sub, so a logout
+// token naming EITHER of a person's subjects finds them. users.sub only ever
+// holds the first subject seen, so matching on it would silently miss a logout
+// naming the other one.
 func (r *Repository) RevokeUserSessionsBySub(ctx context.Context, sub string) (revoked int64, userID int64, err error) {
-	err = r.pool.QueryRow(ctx, `SELECT id FROM users WHERE sub = $1`, sub).Scan(&userID)
+	err = r.pool.QueryRow(ctx, `SELECT user_id FROM user_identities WHERE sub = $1`, sub).Scan(&userID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		// Unknown subject: nobody by that sub has ever signed in here. Not an
 		// error — the IdP broadcasts to every registered app.
