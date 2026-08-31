@@ -1,3 +1,7 @@
+# Global instructions
+
+Provide short answers and explanation. Do not provide internal thinking process unless explicitly asked.
+
 # Purchasing App — contributor onboarding
 
 Internal app to manage the company's purchasing function. Greenfield sibling of `../finance-apps`
