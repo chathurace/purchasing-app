@@ -635,6 +635,40 @@ effort until it lands.
 | 8 | Gateway **payload / timeout ceilings** ≥ 32MB and 300s? (Decision 7) | **needs Choreo** |
 | 9 | Publish the API on `apis[-stg].wso2.com` (Decision 7) | **done** — `https://apis-stg.wso2.com/llkq/purchasing-test-backend/v1.0` |
 
+#### Third probe, after a rebuild + redeploy (2026-08-30, evening)
+
+Both symptoms UNCHANGED after the redeploy:
+
+| Probe | Result |
+|---|---|
+| `apis-stg` + fresh portal Bearer | **503**, ECONNREFUSED (now raw Envoy text, not the JSON `102503` wrapper) |
+| Direct `*.choreoapis.dev` + same token | **401** `invalid token` — still the old audience config |
+
+**A single hypothesis now explains both**, and it is more likely than the two
+independent faults assumed above: *the new revision is not serving.* The old
+revision still answers the direct route (hence the old config and `invalid token`),
+while `apis-stg` is wired to the new one, which is not accepting connections (hence
+ECONNREFUSED, on every path, unchanged across two redeploys). Check the component's
+deployment status and startup logs in Choreo before changing anything else — in
+particular whether the process logs `OIDC initialized` with `accepted_client_ids`,
+which is exactly the line that answers "did my config land". A crash on start is
+consistent with everything seen: a malformed pasted YAML block or an unreachable
+database would both produce it.
+
+**Correction to an earlier assumption in this document.** The direct
+`*.choreoapis.dev` route does NOT bypass the gateway entirely: the gateway answers
+CORS preflight there too (its allow-headers list carries `x-choreo-test-session-id`
+and `apikey`, and it echoes ANY origin, including one that is not in our config).
+What that route skips is OAuth *enforcement* on the actual request, which is why an
+unauthenticated GET still reaches our code. So preflight against that host cannot be
+used to inspect the deployed `cors.allowed_origins`.
+
+**Operational note:** the `*.prod.wdt.choreoapis.dev` wildcard certificate EXPIRED at
+`Aug 30 13:59:15 2026 GMT`, mid-session. The standalone webapp is unaffected — its
+nginx proxies to that host and sets no `proxy_ssl_verify`, which defaults to *off* —
+but direct curl now needs `-k`. Another reason not to depend on that route: its TLS
+is not ours to renew, and it is already failing.
+
 #### Re-probe after the redeploy (2026-08-30)  — two SEPARATE blockers
 
 | Probe | Result | Reads as |
