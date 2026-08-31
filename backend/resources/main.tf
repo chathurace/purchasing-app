@@ -139,4 +139,13 @@ resource "azurerm_linux_virtual_machine" "db" {
   custom_data = base64encode(templatefile("${path.module}/scripts/init-postgres.sh.tpl", {
     choreo_cidrs = var.choreo_cidrs
   }))
+
+  # custom_data only ever runs on FIRST boot, so editing choreo_cidrs cannot
+  # change a running VM's pg_hba.conf — but Terraform still treats the new
+  # base64 blob as a replacement trigger, which would destroy the database.
+  # Adding an environment is therefore two steps: the NSG rule below (Terraform)
+  # and a pg_hba.conf edit over SSH (see references/postgres-setup.md).
+  lifecycle {
+    ignore_changes = [custom_data]
+  }
 }

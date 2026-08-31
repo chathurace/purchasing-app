@@ -2,7 +2,11 @@
 subscription_id     = "754affde-02df-4fa8-8219-2be190c1330c"  # iam-cs-general
 resource_group_name = "rg-perftest-chathura"
 location            = "eastus"
-choreo_cidrs        = ["20.22.170.144/28"]  # confirm against the Choreo console egress
+choreo_cidrs = [     # one per deployment environment; confirm in the Choreo console
+  "20.0.0.0/8",      # env 1 (exact egress 20.22.170.144/28, kept wide deliberately)
+  "203.94.95.136/32", # env 2 (post-DNAT)
+  "203.94.95.137/32", # env 2 (post-DNAT)
+]
 admin_ip_cidr       = "112.134.207.3/32"    # your public IP (curl ifconfig.me)/32
 admin_username      = "azureuser"
 ssh_public_key_path = "~/.ssh/id_rsa.pub"

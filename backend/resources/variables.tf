@@ -17,9 +17,9 @@ variable "location" {
 }
 
 variable "choreo_cidrs" {
-  description = "Choreo outbound NAT IP CIDR blocks allowed to reach PostgreSQL (US data plane egress). Confirm the exact range in the Choreo console before apply."
+  description = "Choreo outbound NAT IP CIDR blocks allowed to reach PostgreSQL — one entry per environment the backend is deployed to. Confirm the exact ranges in the Choreo console before apply."
   type        = list(string)
-  default     = ["20.22.170.144/28"]
+  default     = ["20.0.0.0/8", "203.94.95.136/32", "203.94.95.137/32"]
 }
 
 variable "admin_ip_cidr" {
